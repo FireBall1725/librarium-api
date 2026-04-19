@@ -30,7 +30,7 @@ Once the pod is ready, port-forward or set up ingress:
 
 ```bash
 kubectl -n librarium port-forward svc/librarium-api 8080:8080
-# then open http://localhost:8080/api/v1/version
+# then open http://localhost:8080/health
 ```
 
 ## Upgrade

@@ -31,4 +31,4 @@ at an external Postgres that already exists.
 Access the api:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "common.names.fullname" . }} 8080:8080
 
-Then open http://localhost:8080/api/v1/version
+Then open http://localhost:8080/health
