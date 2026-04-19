@@ -184,9 +184,12 @@ func (s *AIService) TestProvider(ctx context.Context, name string) (string, erro
 	if !p.Enabled() {
 		return "", fmt.Errorf("provider is disabled — save config and enable it first")
 	}
+	// Budget is generous because thinking models (qwen3, deepseek-r1, etc.)
+	// burn hundreds of tokens on reasoning before emitting the visible reply;
+	// a 20-token cap makes their message.content come back empty.
 	resp, err := p.Generate(ctx, ai.GenerateRequest{
 		Prompt:    "Reply with the single word: ready.",
-		MaxTokens: 20,
+		MaxTokens: 2048,
 	})
 	if err != nil {
 		return "", err

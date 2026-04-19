@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -133,10 +134,18 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (*Ge
 		return nil, fmt.Errorf("ollama decode: %w", err)
 	}
 
+	text := stripThinkTags(decoded.Message.Content)
+	// Some thinking models (qwen3, deepseek-r1) return their reasoning in a
+	// separate field. If the visible content is empty but the server gave us
+	// thinking text, surface that so the test probe isn't misleading.
+	if strings.TrimSpace(text) == "" && decoded.Message.Thinking != "" {
+		text = decoded.Message.Thinking
+	}
+
 	// Ollama is local — cost is always 0. Token counts come from the server
 	// when the model reports them.
 	return &GenerateResponse{
-		Text: decoded.Message.Content,
+		Text: text,
 		Usage: UsageInfo{
 			ModelID:          p.model,
 			InputTokens:      decoded.PromptEvalCount,
@@ -144,6 +153,15 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (*Ge
 			EstimatedCostUSD: 0,
 		},
 	}, nil
+}
+
+// thinkTagRE removes inline <think>…</think> blocks. Thinking models may emit
+// reasoning before the reply in a single content string; the JSON-parsing
+// suggestion pipeline can't digest those tags.
+var thinkTagRE = regexp.MustCompile(`(?is)<think>.*?</think>\s*`)
+
+func stripThinkTags(s string) string {
+	return strings.TrimSpace(thinkTagRE.ReplaceAllString(s, ""))
 }
 
 // truncate clips s to at most n runes, appending "…" if truncated. Used for
@@ -158,8 +176,9 @@ func truncate(s string, n int) string {
 // ─── Ollama API types ─────────────────────────────────────────────────────────
 
 type ollamaMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role     string `json:"role"`
+	Content  string `json:"content"`
+	Thinking string `json:"thinking,omitempty"`
 }
 
 type ollamaOptions struct {
