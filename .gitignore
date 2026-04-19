@@ -62,4 +62,4 @@ Temporary Items
 # local docker data
 data/
 internal/db/migrations_archive/
-librarium-api
+/librarium-api

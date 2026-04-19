@@ -1,0 +1,2 @@
+# Pulled in by `helm dependency update`. Tracked via Chart.lock for reproducibility.
+charts/
