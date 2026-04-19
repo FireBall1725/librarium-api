@@ -13,7 +13,7 @@ docker compose up -d --build
 The API listens on `:8080`. A healthy response:
 
 ```bash
-curl http://localhost:8080/api/v1/version
+curl http://localhost:8080/health
 ```
 
 API documentation is served at `http://localhost:8080/swagger/index.html` once the container is up.
