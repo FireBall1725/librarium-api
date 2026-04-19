@@ -1,0 +1,212 @@
+# Default values for librarium-api.
+#
+# This chart uses firelabs-helm-common as a library chart, so most keys under
+# the top level (image, service, ingress, persistence, env, envFrom, secret,
+# configmap, probes, ...) are interpreted by the common chart. See:
+#   https://github.com/FireBall1725/firelabs-helm-common
+
+global:
+  # Keep release names predictable (otherwise common prepends the release name).
+  fullnameOverride: librarium-api
+
+image:
+  repository: ghcr.io/fireball1725/librarium-api
+  # Pin to a release in production. `latest` is fine for trying the chart.
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Cover and media PVCs are ReadWriteOnce by default, so we can only run one pod.
+# If you switch `persistence.media` to RWX (NFS, CephFS, Longhorn RWX), bump this
+# and drop the Recreate strategy below.
+controller:
+  replicas: 1
+  strategy: Recreate
+
+# -----------------------------------------------------------------------------
+# HTTP service
+# -----------------------------------------------------------------------------
+service:
+  main:
+    enabled: true
+    type: ClusterIP
+    ports:
+      http:
+        enabled: true
+        primary: true
+        port: 8080
+
+# -----------------------------------------------------------------------------
+# Ingress (disabled by default - most homelabs wire this up separately)
+# -----------------------------------------------------------------------------
+ingress:
+  main:
+    enabled: false
+    # ingressClassName: nginx
+    # annotations: {}
+    # hosts:
+    #   - host: librarium-api.example.com
+    #     paths:
+    #       - path: /
+    #         pathType: Prefix
+    # tls:
+    #   - secretName: librarium-api-tls
+    #     hosts: [librarium-api.example.com]
+
+# -----------------------------------------------------------------------------
+# Health probes - point at the api version endpoint
+# -----------------------------------------------------------------------------
+probes:
+  liveness:
+    enabled: true
+    custom: true
+    spec:
+      httpGet:
+        path: /api/v1/version
+        port: http
+      initialDelaySeconds: 30
+      periodSeconds: 30
+  readiness:
+    enabled: true
+    custom: true
+    spec:
+      httpGet:
+        path: /api/v1/version
+        port: http
+      initialDelaySeconds: 5
+      periodSeconds: 10
+  startup:
+    enabled: false
+
+# -----------------------------------------------------------------------------
+# Storage
+#   covers - small, server-managed, fast local block is ideal
+#   media  - ebooks/audiobooks, can grow large; point at NAS/NFS via
+#            `existingClaim` or switch accessMode to ReadWriteMany on an
+#            RWX-capable StorageClass
+# -----------------------------------------------------------------------------
+persistence:
+  covers:
+    enabled: true
+    type: pvc
+    mountPath: /data/covers
+    accessMode: ReadWriteOnce
+    size: 5Gi
+    # storageClass: ""
+    # existingClaim: ""
+  media:
+    enabled: true
+    type: pvc
+    mountPath: /data/media
+    accessMode: ReadWriteOnce
+    size: 100Gi
+    # storageClass: ""
+    # existingClaim: librarium-media-nfs   # bind to a pre-created NFS PV
+
+# -----------------------------------------------------------------------------
+# Non-sensitive configuration - rendered as a ConfigMap and mounted via envFrom
+# -----------------------------------------------------------------------------
+configmap:
+  config:
+    enabled: true
+    data:
+      LOG_LEVEL: info
+      COVER_STORAGE_PATH: /data/covers
+      EBOOK_STORAGE_PATH: /data/media/ebooks
+      AUDIOBOOK_STORAGE_PATH: /data/media/audiobooks
+      EBOOK_PATH_TEMPLATE: "{title}"
+      AUDIOBOOK_PATH_TEMPLATE: "{title}"
+      JWT_ACCESS_TTL: 15m
+      JWT_REFRESH_TTL: 168h
+      REGISTRATION_ENABLED: "true"
+
+# -----------------------------------------------------------------------------
+# Sensitive configuration: JWT_SECRET
+#
+# The api signs access/refresh tokens with JWT_SECRET. You have two equally
+# supported ways to provide it — pick one.
+#
+# Path A — inline (simple): let Helm render the Secret from values.
+#
+#   secret:
+#     JWT_SECRET: "<openssl rand -base64 48>"
+#
+#   The common chart renders a Secret named after the release and auto-wires
+#   it into the container via envFrom. Helm owns the Secret lifecycle.
+#
+# Path B — externally-managed (recommended for GitOps): bring your own
+# Secret (SealedSecret, ExternalSecret, SOPS-decrypted, ...) and reference
+# it here.
+#
+#   secret: {}                          # leave empty so the chart skips it
+#   env:
+#     JWT_SECRET:
+#       valueFrom:
+#         secretKeyRef:
+#           name: librarium-api-jwt     # your Secret
+#           key: JWT_SECRET
+#
+#   Plaintext never appears in Helm values. The Secret outlives the release.
+#
+# The chart validates at render time and fails the install if JWT_SECRET is
+# missing (or still set to the literal placeholder "CHANGE_ME").
+#
+# Generate a strong value with:   openssl rand -base64 48
+# -----------------------------------------------------------------------------
+secret: {}
+
+# Pull every ConfigMap key into the container as env vars. The common chart
+# already attaches the release Secret to envFrom automatically when `secret`
+# above is non-empty, so we only add the ConfigMap here.
+envFrom:
+  - configMapRef:
+      name: librarium-api-config
+
+# DATABASE_URL comes from the CNPG-generated <clusterName>-app secret. CNPG
+# writes the full DSN to the `uri` key. If you disable `postgres.create` and
+# bring your own Postgres, set `env.DATABASE_URL` to a literal value instead.
+#
+# If you use Path B above for JWT_SECRET, add its `valueFrom` block here too.
+env:
+  DATABASE_URL:
+    valueFrom:
+      secretKeyRef:
+        name: librarium-db-app
+        key: uri
+
+# -----------------------------------------------------------------------------
+# Resources
+# -----------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+# -----------------------------------------------------------------------------
+# CloudNativePG-managed Postgres cluster
+#
+# When `postgres.create=true` (default), this chart renders a
+# postgresql.cnpg.io/v1 Cluster CR. CNPG will:
+#   - provision Postgres with the given instance count and storage
+#   - create a database + role named after `postgres.database` / `postgres.owner`
+#   - generate a Secret named `<clusterName>-app` with a `uri` key the api reads
+#
+# Requires the CloudNativePG operator to be installed in the cluster:
+#   https://cloudnative-pg.io/documentation/current/installation_upgrade/
+#
+# To use an external Postgres instead, set `postgres.create=false` and override
+# `env.DATABASE_URL` with a literal DSN.
+# -----------------------------------------------------------------------------
+postgres:
+  create: true
+  clusterName: librarium-db
+  instances: 1
+  imageName: ""   # leave blank to let CNPG pick its default
+  database: librarium
+  owner: librarium
+  storage:
+    size: 10Gi
+    # storageClass: ""
+  # Extra Cluster spec fields merged verbatim into spec: (backup config, etc.)
+  extraSpec: {}
