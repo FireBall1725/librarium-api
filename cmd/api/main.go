@@ -217,7 +217,10 @@ func main() {
 	if collector != nil {
 		metrics = collector
 	}
-	handler := api.NewRouter(baseCtx, pool, cfg, riverClient, metrics)
+	handler := api.NewRouter(baseCtx, pool, cfg, riverClient, metrics, api.RouterDeps{
+		AISvc:       aiSvc,
+		ProviderSvc: providerSvc,
+	})
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      handler,

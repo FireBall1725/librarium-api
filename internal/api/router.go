@@ -6,19 +6,14 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
-	"github.com/fireball1725/librarium-api/internal/ai"
 	"github.com/fireball1725/librarium-api/internal/api/handlers"
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/auth"
 	"github.com/fireball1725/librarium-api/internal/background"
 	"github.com/fireball1725/librarium-api/internal/config"
-	"github.com/fireball1725/librarium-api/internal/providers"
-	bookProviders "github.com/fireball1725/librarium-api/internal/providers/books"
-	mangaProviders "github.com/fireball1725/librarium-api/internal/providers/manga"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
 	"github.com/jackc/pgx/v5"
@@ -32,7 +27,17 @@ type MetricsCollector interface {
 	RecordRequest(method, path, remoteAddr, client, errMsg string, status int, duration time.Duration)
 }
 
-func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverClient *river.Client[pgx.Tx], metrics MetricsCollector) http.Handler {
+// RouterDeps holds the singleton services the HTTP layer must share with the
+// worker process. In particular: any service that caches mutable state (like
+// the AI or book provider registries) must be the same instance everywhere,
+// otherwise changes made via the HTTP admin endpoints won't be visible to
+// background jobs.
+type RouterDeps struct {
+	AISvc       *service.AIService
+	ProviderSvc *service.ProviderService
+}
+
+func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverClient *river.Client[pgx.Tx], metrics MetricsCollector, deps RouterDeps) http.Handler {
 	jwtSvc := auth.NewJWTService(cfg.JWTSecret, cfg.JWTAccessTTL)
 
 	userRepo := repository.NewUserRepo(db)
@@ -59,41 +64,20 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mediaTypeRepo := repository.NewMediaTypeRepo(db)
 	importJobRepo := repository.NewImportJobRepo(db)
 
-	// Build provider registry
-	registry := providers.NewRegistry()
-	registry.Register(bookProviders.NewTestProvider())
-	registry.Register(bookProviders.NewOpenLibraryProvider())
-	registry.Register(bookProviders.NewGoogleBooksProvider())
-	registry.Register(bookProviders.NewISBNdbProvider())
-	registry.Register(bookProviders.NewHardcoverProvider())
-	registry.Register(mangaProviders.NewMangaDexProvider())
+	// Book and AI provider services are built in main.go and passed in so the
+	// HTTP handlers and the worker share the same registry instances — that's
+	// required for SetActiveProvider / ConfigureProvider to affect what the
+	// worker sees on its next job.
+	providerSvc := deps.ProviderSvc
+	aiSvc := deps.AISvc
 
-	providerSvc := service.NewProviderService(registry, settingsRepo)
-	if err := providerSvc.LoadAll(context.Background()); err != nil {
-		log.Printf("warning: failed to load provider settings: %v", err)
-	}
-
-	// AI providers (Anthropic / OpenAI / Ollama). Exactly one is active at a
-	// time; admin picks via the Connections page.
-	aiRegistry := ai.NewRegistry()
-	aiRegistry.Register(ai.NewAnthropicProvider())
-	aiRegistry.Register(ai.NewOpenAIProvider())
-	aiRegistry.Register(ai.NewOllamaProvider())
-	aiSvc := service.NewAIService(aiRegistry, settingsRepo)
-	if err := aiSvc.LoadAll(context.Background()); err != nil {
-		log.Printf("warning: failed to load AI provider settings: %v", err)
-	}
 	aiUserSvc := service.NewAIUserService(repository.NewUserAISettingsRepo(db))
 	jobSvc := service.NewJobService(settingsRepo)
 	aiSuggestionsRepo := repository.NewAISuggestionsRepo(db)
-	suggestionsSvc := service.NewSuggestionsService(
-		aiSuggestionsRepo, aiRegistry, aiSvc, jobSvc, aiUserSvc, providerSvc,
-	)
-	_ = suggestionsSvc // direct-call path (not used by HTTP handlers — jobs go through River)
 
 	seriesVolumesRepo := repository.NewSeriesVolumesRepo(db)
 
-	contributorSvc := service.NewContributorService(contributorRepo, bookRepo, coverRepo, registry, cfg.CoverStoragePath)
+	contributorSvc := service.NewContributorService(contributorRepo, bookRepo, coverRepo, providerSvc.Registry(), cfg.CoverStoragePath)
 
 	loanSvc := service.NewLoanService(loanRepo, tagRepo)
 	seriesSvc := service.NewSeriesService(seriesRepo, seriesVolumesRepo, tagRepo)
