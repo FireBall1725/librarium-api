@@ -469,6 +469,46 @@ definitions:
       opt_in:
         type: boolean
     type: object
+  internal_api_handlers.EventView:
+    properties:
+      content:
+        items:
+          type: integer
+        type: array
+      created_at:
+        type: string
+      seq:
+        type: integer
+      type:
+        type: string
+    type: object
+  internal_api_handlers.RunView:
+    properties:
+      error:
+        type: string
+      estimated_cost_usd:
+        type: number
+      finished_at:
+        type: string
+      id:
+        type: string
+      model_id:
+        type: string
+      provider_type:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+      tokens_in:
+        type: integer
+      tokens_out:
+        type: integer
+      triggered_by:
+        type: string
+      user_id:
+        type: string
+    type: object
   internal_api_handlers.SuggestionView:
     properties:
       author:
@@ -1198,6 +1238,62 @@ paths:
       security:
       - BearerAuth: []
       summary: Trigger a suggestions run for every opted-in user (admin)
+      tags:
+      - admin
+      - jobs
+  /admin/jobs/ai-suggestions/runs:
+    get:
+      description: Returns the most recent suggestion runs with cost, status, and
+        owning user. Used by the admin jobs page.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api_handlers.RunView'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List recent AI suggestion runs across all users (admin)
+      tags:
+      - admin
+      - jobs
+  /admin/jobs/ai-suggestions/runs/{id}:
+    get:
+      description: Returns the run metadata plus every pipeline event. Admin can view
+        any user's run.
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              events:
+                items:
+                  $ref: '#/definitions/internal_api_handlers.EventView'
+                type: array
+              run:
+                $ref: '#/definitions/internal_api_handlers.RunView'
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get any AI suggestion run (admin)
       tags:
       - admin
       - jobs
@@ -6838,6 +6934,63 @@ paths:
       security:
       - BearerAuth: []
       summary: Trigger a suggestions run for the caller
+      tags:
+      - me
+      - ai
+  /me/suggestions/runs:
+    get:
+      description: Returns the caller's most recent suggestion runs with cost and
+        status. Newest first.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api_handlers.RunView'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List my recent AI suggestion runs
+      tags:
+      - me
+      - ai
+  /me/suggestions/runs/{id}:
+    get:
+      description: Returns the run metadata plus every pipeline event emitted during
+        execution (prompt, AI responses, enrichment decisions, read_next matches,
+        backfill passes).
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              events:
+                items:
+                  $ref: '#/definitions/internal_api_handlers.EventView'
+                type: array
+              run:
+                $ref: '#/definitions/internal_api_handlers.RunView'
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get one of my AI suggestion runs
       tags:
       - me
       - ai

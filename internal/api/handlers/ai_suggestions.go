@@ -267,6 +267,205 @@ func (h *AISuggestionsHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// ─── Run observability ────────────────────────────────────────────────────────
+
+// RunView is the JSON shape for a single suggestions run — shared by user and
+// admin endpoints. UserID is only populated for admin-scoped responses.
+type RunView struct {
+	ID               uuid.UUID `json:"id"`
+	UserID           string    `json:"user_id,omitempty"`
+	TriggeredBy      string    `json:"triggered_by"`
+	ProviderType     string    `json:"provider_type"`
+	ModelID          string    `json:"model_id,omitempty"`
+	Status           string    `json:"status"`
+	Error            string    `json:"error,omitempty"`
+	TokensIn         int       `json:"tokens_in"`
+	TokensOut        int       `json:"tokens_out"`
+	EstimatedCostUSD float64   `json:"estimated_cost_usd"`
+	StartedAt        string    `json:"started_at"`
+	FinishedAt       string    `json:"finished_at,omitempty"`
+}
+
+// EventView is the JSON shape for one pipeline event. Content is emitted as
+// raw JSON so the UI can interpret each type however it likes.
+type EventView struct {
+	Seq       int             `json:"seq"`
+	Type      string          `json:"type"`
+	Content   json.RawMessage `json:"content"`
+	CreatedAt string          `json:"created_at"`
+}
+
+func runToView(r *models.AISuggestionRun, includeUser bool) RunView {
+	v := RunView{
+		ID:               r.ID,
+		TriggeredBy:      r.TriggeredBy,
+		ProviderType:     r.ProviderType,
+		ModelID:          r.ModelID,
+		Status:           r.Status,
+		Error:            r.Error,
+		TokensIn:         r.TokensIn,
+		TokensOut:        r.TokensOut,
+		EstimatedCostUSD: r.EstimatedCostUSD,
+		StartedAt:        r.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if includeUser {
+		v.UserID = r.UserID.String()
+	}
+	if r.FinishedAt != nil {
+		v.FinishedAt = r.FinishedAt.Format("2006-01-02T15:04:05Z07:00")
+	}
+	return v
+}
+
+// ListMyRuns godoc
+//
+//	@Summary     List my recent AI suggestion runs
+//	@Description Returns the caller's most recent suggestion runs with cost and status. Newest first.
+//	@Tags        me,ai
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Success     200  {array}  handlers.RunView
+//	@Router      /me/suggestions/runs [get]
+func (h *AISuggestionsHandler) ListMyRuns(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	runs, err := h.repo.ListRunsByUser(r.Context(), claims.UserID, 25)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	out := make([]RunView, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, runToView(run, false))
+	}
+	respond.JSON(w, http.StatusOK, out)
+}
+
+// GetMyRun godoc
+//
+//	@Summary     Get one of my AI suggestion runs
+//	@Description Returns the run metadata plus every pipeline event emitted during execution (prompt, AI responses, enrichment decisions, read_next matches, backfill passes).
+//	@Tags        me,ai
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Param       id   path    string  true  "Run ID"
+//	@Success     200  {object}  object{run=handlers.RunView,events=[]handlers.EventView}
+//	@Failure     404  {object}  object{error=string}
+//	@Router      /me/suggestions/runs/{id} [get]
+func (h *AISuggestionsHandler) GetMyRun(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	run, err := h.repo.GetRun(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respond.Error(w, http.StatusNotFound, "run not found")
+			return
+		}
+		respond.ServerError(w, r, err)
+		return
+	}
+	if run.UserID != claims.UserID {
+		respond.Error(w, http.StatusNotFound, "run not found")
+		return
+	}
+	events, err := h.repo.ListEventsByRun(r.Context(), id)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"run":    runToView(run, false),
+		"events": toEventViews(events),
+	})
+}
+
+// AdminListRuns godoc
+//
+//	@Summary     List recent AI suggestion runs across all users (admin)
+//	@Description Returns the most recent suggestion runs with cost, status, and owning user. Used by the admin jobs page.
+//	@Tags        admin,jobs
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Success     200  {array}  handlers.RunView
+//	@Router      /admin/jobs/ai-suggestions/runs [get]
+func (h *AISuggestionsHandler) AdminListRuns(w http.ResponseWriter, r *http.Request) {
+	runs, err := h.repo.ListRecentRuns(r.Context(), 50)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	out := make([]RunView, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, runToView(run, true))
+	}
+	respond.JSON(w, http.StatusOK, out)
+}
+
+// AdminGetRun godoc
+//
+//	@Summary     Get any AI suggestion run (admin)
+//	@Description Returns the run metadata plus every pipeline event. Admin can view any user's run.
+//	@Tags        admin,jobs
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Param       id   path    string  true  "Run ID"
+//	@Success     200  {object}  object{run=handlers.RunView,events=[]handlers.EventView}
+//	@Failure     404  {object}  object{error=string}
+//	@Router      /admin/jobs/ai-suggestions/runs/{id} [get]
+func (h *AISuggestionsHandler) AdminGetRun(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	run, err := h.repo.GetRun(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respond.Error(w, http.StatusNotFound, "run not found")
+			return
+		}
+		respond.ServerError(w, r, err)
+		return
+	}
+	events, err := h.repo.ListEventsByRun(r.Context(), id)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"run":    runToView(run, true),
+		"events": toEventViews(events),
+	})
+}
+
+func toEventViews(events []*models.AIRunEvent) []EventView {
+	out := make([]EventView, 0, len(events))
+	for _, e := range events {
+		content := e.Content
+		if len(content) == 0 {
+			content = json.RawMessage("{}")
+		}
+		out = append(out, EventView{
+			Seq:       e.Seq,
+			Type:      e.Type,
+			Content:   content,
+			CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+	return out
+}
+
 // AdminRunSuggestions godoc
 //
 //	@Summary     Trigger a suggestions run for every opted-in user (admin)

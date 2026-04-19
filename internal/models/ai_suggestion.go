@@ -67,6 +67,19 @@ type AIBlockedItem struct {
 	BlockedAt  time.Time
 }
 
+// AIRunEvent is a single observable step within a suggestions run — the
+// pipeline emits these as it builds prompts, calls the AI, enriches candidates,
+// and resolves read_next matches. Content is raw JSON so new event kinds
+// don't require code changes on the read path.
+type AIRunEvent struct {
+	ID        uuid.UUID
+	RunID     uuid.UUID
+	Seq       int
+	Type      string
+	Content   []byte // JSONB
+	CreatedAt time.Time
+}
+
 // AISuggestionsJobArgs is the River job payload for a per-user suggestions run.
 // TriggeredBy distinguishes scheduler/admin/user for cost-attribution display.
 type AISuggestionsJobArgs struct {

@@ -436,6 +436,92 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/jobs/ai-suggestions/runs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the most recent suggestion runs with cost, status, and owning user. Used by the admin jobs page.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "jobs"
+                ],
+                "summary": "List recent AI suggestion runs across all users (admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api_handlers.RunView"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/jobs/ai-suggestions/runs/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the run metadata plus every pipeline event. Admin can view any user's run.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "jobs"
+                ],
+                "summary": "Get any AI suggestion run (admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "events": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/internal_api_handlers.EventView"
+                                    }
+                                },
+                                "run": {
+                                    "$ref": "#/definitions/internal_api_handlers.RunView"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/providers": {
             "get": {
                 "security": [
@@ -9117,6 +9203,92 @@ const docTemplate = `{
                 }
             }
         },
+        "/me/suggestions/runs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the caller's most recent suggestion runs with cost and status. Newest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "List my recent AI suggestion runs",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api_handlers.RunView"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/suggestions/runs/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the run metadata plus every pipeline event emitted during execution (prompt, AI responses, enrichment decisions, read_next matches, backfill passes).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Get one of my AI suggestion runs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "events": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/internal_api_handlers.EventView"
+                                    }
+                                },
+                                "run": {
+                                    "$ref": "#/definitions/internal_api_handlers.RunView"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/me/suggestions/{id}/block": {
             "post": {
                 "security": [
@@ -10489,6 +10661,67 @@ const docTemplate = `{
             "properties": {
                 "opt_in": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_api_handlers.EventView": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.RunView": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "estimated_cost_usd": {
+                    "type": "number"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "model_id": {
+                    "type": "string"
+                },
+                "provider_type": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tokens_in": {
+                    "type": "integer"
+                },
+                "tokens_out": {
+                    "type": "integer"
+                },
+                "triggered_by": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
                 }
             }
         },

@@ -414,6 +414,128 @@ func (r *AISuggestionsRepo) GetSuggestion(ctx context.Context, id, userID uuid.U
 	return s, nil
 }
 
+// ─── Run events (observability) ───────────────────────────────────────────────
+
+// AppendEvent writes one pipeline event tied to a run. Sequence is computed
+// server-side via COALESCE(MAX(seq)+1, 0) so callers don't race each other.
+// content is marshaled to JSON; nil is stored as '{}'.
+func (r *AISuggestionsRepo) AppendEvent(ctx context.Context, runID uuid.UUID, eventType string, content any) error {
+	var payload []byte
+	if content == nil {
+		payload = []byte("{}")
+	} else if b, ok := content.([]byte); ok {
+		payload = b
+	} else {
+		b, err := json.Marshal(content)
+		if err != nil {
+			return fmt.Errorf("marshal event content: %w", err)
+		}
+		payload = b
+	}
+	const q = `
+		INSERT INTO ai_run_events (run_id, seq, type, content)
+		VALUES ($1,
+		        COALESCE((SELECT MAX(seq) + 1 FROM ai_run_events WHERE run_id = $1), 0),
+		        $2, $3::jsonb)`
+	if _, err := r.db.Exec(ctx, q, runID, eventType, payload); err != nil {
+		return fmt.Errorf("append run event: %w", err)
+	}
+	return nil
+}
+
+// ListEventsByRun returns every event recorded for a run, ordered by seq.
+func (r *AISuggestionsRepo) ListEventsByRun(ctx context.Context, runID uuid.UUID) ([]*models.AIRunEvent, error) {
+	const q = `
+		SELECT id, run_id, seq, type, content, created_at
+		FROM ai_run_events WHERE run_id = $1 ORDER BY seq ASC`
+	rows, err := r.db.Query(ctx, q, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list run events: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.AIRunEvent
+	for rows.Next() {
+		e := &models.AIRunEvent{}
+		if err := rows.Scan(&e.ID, &e.RunID, &e.Seq, &e.Type, &e.Content, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// GetRun fetches a single run row by ID. Returns ErrNotFound when missing.
+// Callers that need per-user scoping should check UserID after fetching.
+func (r *AISuggestionsRepo) GetRun(ctx context.Context, runID uuid.UUID) (*models.AISuggestionRun, error) {
+	const q = `
+		SELECT id, user_id, triggered_by, provider_type, model_id, status,
+		       COALESCE(error,''), tokens_in, tokens_out, estimated_cost_usd,
+		       started_at, finished_at
+		FROM ai_suggestion_runs WHERE id = $1`
+	run := &models.AISuggestionRun{}
+	err := r.db.QueryRow(ctx, q, runID).Scan(
+		&run.ID, &run.UserID, &run.TriggeredBy, &run.ProviderType, &run.ModelID,
+		&run.Status, &run.Error, &run.TokensIn, &run.TokensOut, &run.EstimatedCostUSD,
+		&run.StartedAt, &run.FinishedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
+// ListRunsByUser returns the caller's most recent suggestion runs, newest first.
+func (r *AISuggestionsRepo) ListRunsByUser(ctx context.Context, userID uuid.UUID, limit int) ([]*models.AISuggestionRun, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	const q = `
+		SELECT id, user_id, triggered_by, provider_type, model_id, status,
+		       COALESCE(error,''), tokens_in, tokens_out, estimated_cost_usd,
+		       started_at, finished_at
+		FROM ai_suggestion_runs WHERE user_id = $1
+		ORDER BY started_at DESC LIMIT $2`
+	return scanRuns(r.db.Query(ctx, q, userID, limit))
+}
+
+// ListRecentRuns returns the most recent suggestion runs across every user.
+// Admin-scoped — used by the jobs page.
+func (r *AISuggestionsRepo) ListRecentRuns(ctx context.Context, limit int) ([]*models.AISuggestionRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	const q = `
+		SELECT id, user_id, triggered_by, provider_type, model_id, status,
+		       COALESCE(error,''), tokens_in, tokens_out, estimated_cost_usd,
+		       started_at, finished_at
+		FROM ai_suggestion_runs
+		ORDER BY started_at DESC LIMIT $1`
+	return scanRuns(r.db.Query(ctx, q, limit))
+}
+
+func scanRuns(rows pgx.Rows, err error) ([]*models.AISuggestionRun, error) {
+	if err != nil {
+		return nil, fmt.Errorf("query runs: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.AISuggestionRun
+	for rows.Next() {
+		run := &models.AISuggestionRun{}
+		if err := rows.Scan(
+			&run.ID, &run.UserID, &run.TriggeredBy, &run.ProviderType, &run.ModelID,
+			&run.Status, &run.Error, &run.TokensIn, &run.TokensOut, &run.EstimatedCostUSD,
+			&run.StartedAt, &run.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
 // ─── Blocked items ────────────────────────────────────────────────────────────
 
 // AddBlock records a "never suggest this again" entry.

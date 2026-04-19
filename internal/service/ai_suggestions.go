@@ -123,6 +123,23 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	}
 	start := time.Now()
 
+	s.emit(ctx, runID, "pipeline_start", map[string]any{
+		"triggered_by":    triggeredBy,
+		"provider":        info.Name,
+		"library_titles":  len(titles),
+		"blocks":          len(blocks),
+		"permissions":     perms,
+		"max_buy":         cfg.MaxBuyPerUser,
+		"max_read_next":   cfg.MaxReadNextPerUser,
+		"include_taste":   cfg.IncludeTasteProfile,
+	})
+	s.emit(ctx, runID, "prompt", map[string]any{
+		"pass":       "initial",
+		"system":     suggestionsSystemPrompt,
+		"prompt":     prompt,
+		"max_tokens": 2000,
+	})
+
 	// ── Pass 1: generate candidates ──────────────────────────────────────────
 	resp, err := provider.Generate(ctx, ai.GenerateRequest{
 		System:    suggestionsSystemPrompt,
@@ -132,19 +149,27 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	totalIn, totalOut := 0, 0
 	totalCost := 0.0
 	if err != nil {
+		s.emit(ctx, runID, "error", map[string]any{"stage": "ai_generate_initial", "error": err.Error()})
 		_ = s.repo.FinishRun(ctx, runID, "failed", err.Error(), totalIn, totalOut, totalCost)
 		return nil, fmt.Errorf("ai generate: %w", err)
 	}
 	totalIn += resp.Usage.InputTokens
 	totalOut += resp.Usage.OutputTokens
 	totalCost += resp.Usage.EstimatedCostUSD
+	s.emit(ctx, runID, "ai_response", map[string]any{
+		"pass":             "initial",
+		"text":             resp.Text,
+		"tokens_in":        resp.Usage.InputTokens,
+		"tokens_out":       resp.Usage.OutputTokens,
+		"cost_usd":         resp.Usage.EstimatedCostUSD,
+	})
 
 	parsed := ParseSuggestions(resp.Text)
 	buyParsed, readNextParsed := splitByHeading(resp.Text, parsed)
 
 	// ── Pass 2: enrich & filter ──────────────────────────────────────────────
-	buyItems, rejectedBuyTitles := s.enrichBuy(ctx, user.LibraryID, buyParsed, cfg.MaxBuyPerUser)
-	readNextItems := s.resolveReadNext(user.LibraryID, titles, readNextParsed, cfg.MaxReadNextPerUser)
+	buyItems, rejectedBuyTitles := s.enrichBuy(ctx, runID, user.LibraryID, buyParsed, cfg.MaxBuyPerUser)
+	readNextItems := s.resolveReadNext(ctx, runID, user.LibraryID, titles, readNextParsed, cfg.MaxReadNextPerUser)
 
 	// ── Pass 3: backfill if buy fell short ───────────────────────────────────
 	backfillAttempts := 0
@@ -152,6 +177,13 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		backfillAttempts++
 		exclusions := strings.Join(rejectedBuyTitles, "\n- ")
 		backfill := buildBackfillPrompt(prompt, cfg.MaxBuyPerUser-len(buyItems), exclusions)
+		s.emit(ctx, runID, "backfill_prompt", map[string]any{
+			"attempt":    backfillAttempts,
+			"need":       cfg.MaxBuyPerUser - len(buyItems),
+			"exclusions": rejectedBuyTitles,
+			"prompt":     backfill,
+			"max_tokens": 1000,
+		})
 		bfResp, bfErr := provider.Generate(ctx, ai.GenerateRequest{
 			System:    suggestionsSystemPrompt,
 			Prompt:    backfill,
@@ -159,14 +191,22 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		})
 		if bfErr != nil {
 			slog.Warn("ai suggestions backfill failed", "user_id", userID, "attempt", backfillAttempts, "error", bfErr)
+			s.emit(ctx, runID, "error", map[string]any{"stage": "ai_generate_backfill", "attempt": backfillAttempts, "error": bfErr.Error()})
 			break
 		}
 		totalIn += bfResp.Usage.InputTokens
 		totalOut += bfResp.Usage.OutputTokens
 		totalCost += bfResp.Usage.EstimatedCostUSD
+		s.emit(ctx, runID, "backfill_response", map[string]any{
+			"attempt":    backfillAttempts,
+			"text":       bfResp.Text,
+			"tokens_in":  bfResp.Usage.InputTokens,
+			"tokens_out": bfResp.Usage.OutputTokens,
+			"cost_usd":   bfResp.Usage.EstimatedCostUSD,
+		})
 
 		bfParsed := ParseSuggestions(bfResp.Text)
-		bfItems, bfRejected := s.enrichBuy(ctx, user.LibraryID, bfParsed, cfg.MaxBuyPerUser-len(buyItems))
+		bfItems, bfRejected := s.enrichBuy(ctx, runID, user.LibraryID, bfParsed, cfg.MaxBuyPerUser-len(buyItems))
 		buyItems = append(buyItems, bfItems...)
 		rejectedBuyTitles = append(rejectedBuyTitles, bfRejected...)
 	}
@@ -175,6 +215,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	all := append([]repository.SuggestionInput{}, buyItems...)
 	all = append(all, readNextItems...)
 	if err := s.repo.ReplaceSuggestions(ctx, userID, runID, all); err != nil {
+		s.emit(ctx, runID, "error", map[string]any{"stage": "persist", "error": err.Error()})
 		_ = s.repo.FinishRun(ctx, runID, "failed", err.Error(), totalIn, totalOut, totalCost)
 		return nil, err
 	}
@@ -182,6 +223,16 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	if err := s.repo.FinishRun(ctx, runID, "completed", "", totalIn, totalOut, totalCost); err != nil {
 		return nil, err
 	}
+
+	s.emit(ctx, runID, "pipeline_end", map[string]any{
+		"buy_count":       len(buyItems),
+		"read_next_count": len(readNextItems),
+		"tokens_in":       totalIn,
+		"tokens_out":      totalOut,
+		"cost_usd":        totalCost,
+		"duration_ms":     time.Since(start).Milliseconds(),
+		"backfill_passes": backfillAttempts,
+	})
 
 	slog.Info("ai suggestions run complete",
 		"user_id", userID, "run_id", runID, "buy", len(buyItems), "read_next", len(readNextItems),
@@ -204,25 +255,37 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 // enrichBuy validates each `buy` candidate against the metadata providers and
 // the user's library. Returns the accepted items plus the list of titles that
 // were rejected (used for backfill exclusions). Hard-blocks (author/series/
-// book) are applied here too.
-func (s *SuggestionsService) enrichBuy(ctx context.Context, libraryID uuid.UUID, parsed []ParsedSuggestion, max int) ([]repository.SuggestionInput, []string) {
+// book) are applied here too. Emits an enrichment_decision event per candidate.
+func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, libraryID uuid.UUID, parsed []ParsedSuggestion, max int) ([]repository.SuggestionInput, []string) {
 	var accepted []repository.SuggestionInput
 	var rejected []string
 	for _, p := range parsed {
 		if len(accepted) >= max {
 			break
 		}
+		decision := map[string]any{
+			"title":    p.Title,
+			"isbn":     p.ISBN,
+			"ai_reason": p.Reason,
+		}
 		if p.ISBN == "" {
 			rejected = append(rejected, p.Title)
+			decision["outcome"] = "rejected"
+			decision["reason"] = "missing_isbn"
+			s.emit(ctx, runID, "enrichment_decision", decision)
 			continue
 		}
 		// Reject if the user already owns this book.
 		owned, err := s.repo.BookExistsInLibrary(ctx, libraryID, p.Title, p.ISBN)
 		if err != nil {
 			slog.Warn("library existence check failed", "isbn", p.ISBN, "error", err)
+			decision["owned_check_error"] = err.Error()
 		}
 		if owned {
 			rejected = append(rejected, p.Title)
+			decision["outcome"] = "rejected"
+			decision["reason"] = "already_owned"
+			s.emit(ctx, runID, "enrichment_decision", decision)
 			continue
 		}
 		// Look up via metadata providers. A provider that can't resolve the ISBN
@@ -230,17 +293,31 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, libraryID uuid.UUID,
 		merged, err := s.providers.LookupISBNMerged(ctx, p.ISBN)
 		if err != nil || merged == nil || merged.Title == nil || merged.Title.Value == "" {
 			rejected = append(rejected, p.Title)
+			decision["outcome"] = "rejected"
+			decision["reason"] = "metadata_lookup_failed"
+			if err != nil {
+				decision["lookup_error"] = err.Error()
+			}
+			s.emit(ctx, runID, "enrichment_decision", decision)
 			continue
 		}
+		lookup := map[string]any{"title": merged.Title.Value}
+		if merged.Authors != nil {
+			lookup["authors"] = merged.Authors.Value
+		}
+		if len(merged.Covers) > 0 {
+			lookup["cover_url"] = merged.Covers[0].CoverURL
+		}
+		decision["metadata_lookup"] = lookup
 		// Title fuzzy-match: if the provider-returned title doesn't roughly
 		// match the AI's claim, assume ISBN is wrong.
 		if !fuzzyTitleMatch(p.Title, merged.Title.Value) {
 			rejected = append(rejected, p.Title)
+			decision["outcome"] = "rejected"
+			decision["reason"] = "title_mismatch"
+			s.emit(ctx, runID, "enrichment_decision", decision)
 			continue
 		}
-		// (Blocks are applied via prompt exclusions; we trust those to hold.
-		// Re-checking here would require loading blocks — the prompt layer's
-		// guidance is good enough for v1.)
 
 		item := repository.SuggestionInput{
 			Type:      "buy",
@@ -253,6 +330,8 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, libraryID uuid.UUID,
 			item.CoverURL = merged.Covers[0].CoverURL
 		}
 		accepted = append(accepted, item)
+		decision["outcome"] = "accepted"
+		s.emit(ctx, runID, "enrichment_decision", decision)
 	}
 	return accepted, rejected
 }
@@ -260,8 +339,9 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, libraryID uuid.UUID,
 // resolveReadNext matches the AI's read_next titles back to books already in
 // the user's library using normalized title matching. Books not found are
 // dropped. The list of library titles (loaded for the prompt) is reused here
-// so we don't round-trip the DB for every candidate.
-func (s *SuggestionsService) resolveReadNext(_ uuid.UUID, libraryTitles []*repository.LibraryTitle, parsed []ParsedSuggestion, max int) []repository.SuggestionInput {
+// so we don't round-trip the DB for every candidate. Emits a read_next_match
+// event per candidate describing the match outcome.
+func (s *SuggestionsService) resolveReadNext(ctx context.Context, runID uuid.UUID, _ uuid.UUID, libraryTitles []*repository.LibraryTitle, parsed []ParsedSuggestion, max int) []repository.SuggestionInput {
 	// Build a normalized-title lookup table once.
 	byTitle := make(map[string]*repository.LibraryTitle, len(libraryTitles))
 	for _, t := range libraryTitles {
@@ -272,18 +352,35 @@ func (s *SuggestionsService) resolveReadNext(_ uuid.UUID, libraryTitles []*repos
 		if len(out) >= max {
 			break
 		}
+		event := map[string]any{
+			"title":     p.Title,
+			"ai_reason": p.Reason,
+		}
 		norm := normalizeTitle(p.Title)
 		hit := byTitle[norm]
+		matchKind := "exact"
 		if hit == nil {
 			// Try the slow path: scan for a partial match.
 			for key, t := range byTitle {
 				if strings.Contains(key, norm) || strings.Contains(norm, key) {
 					hit = t
+					matchKind = "partial"
 					break
 				}
 			}
 		}
-		if hit == nil || hit.ReadStatus == "read" {
+		if hit == nil {
+			event["outcome"] = "rejected"
+			event["reason"] = "not_in_library"
+			s.emit(ctx, runID, "read_next_match", event)
+			continue
+		}
+		if hit.ReadStatus == "read" {
+			event["outcome"] = "rejected"
+			event["reason"] = "already_read"
+			event["matched_title"] = hit.Title
+			event["match_kind"] = matchKind
+			s.emit(ctx, runID, "read_next_match", event)
 			continue
 		}
 		bookID := hit.BookID
@@ -294,8 +391,21 @@ func (s *SuggestionsService) resolveReadNext(_ uuid.UUID, libraryTitles []*repos
 			Author:    hit.Author,
 			Reasoning: p.Reason,
 		})
+		event["outcome"] = "accepted"
+		event["matched_title"] = hit.Title
+		event["match_kind"] = matchKind
+		event["book_id"] = bookID.String()
+		s.emit(ctx, runID, "read_next_match", event)
 	}
 	return out
+}
+
+// emit is a best-effort event writer. Failures are logged but never propagate —
+// the pipeline must not fail because observability couldn't write.
+func (s *SuggestionsService) emit(ctx context.Context, runID uuid.UUID, eventType string, content any) {
+	if err := s.repo.AppendEvent(ctx, runID, eventType, content); err != nil {
+		slog.Warn("ai run event emit failed", "run_id", runID, "type", eventType, "error", err)
+	}
 }
 
 // ─── Prompt construction ─────────────────────────────────────────────────────

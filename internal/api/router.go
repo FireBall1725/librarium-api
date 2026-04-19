@@ -216,6 +216,8 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions", requireAdmin(http.HandlerFunc(jobsHandler.GetAISuggestionsJob)))
 	mux.Handle("PUT /api/v1/admin/jobs/ai-suggestions", requireAdmin(http.HandlerFunc(jobsHandler.UpdateAISuggestionsJob)))
 	mux.Handle("POST /api/v1/admin/jobs/ai-suggestions/run", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminRunSuggestions)))
+	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions/runs", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminListRuns)))
+	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions/runs/{id}", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminGetRun)))
 
 	// User-scoped AI endpoints
 	mux.Handle("GET /api/v1/me/ai-prefs", requireAuth(http.HandlerFunc(aiUserHandler.GetPrefs)))
@@ -224,8 +226,12 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("PUT /api/v1/me/taste-profile", requireAuth(http.HandlerFunc(aiUserHandler.UpdateTasteProfile)))
 
 	// User-scoped AI suggestions
+	// More specific paths (/run, /runs, /runs/{id}) must come before the {id}
+	// catch-alls so the mux picks the right handler.
 	mux.Handle("GET /api/v1/me/suggestions", requireAuth(http.HandlerFunc(aiSuggestionsHandler.ListSuggestions)))
 	mux.Handle("POST /api/v1/me/suggestions/run", requireAuth(http.HandlerFunc(aiSuggestionsHandler.RunNow)))
+	mux.Handle("GET /api/v1/me/suggestions/runs", requireAuth(http.HandlerFunc(aiSuggestionsHandler.ListMyRuns)))
+	mux.Handle("GET /api/v1/me/suggestions/runs/{id}", requireAuth(http.HandlerFunc(aiSuggestionsHandler.GetMyRun)))
 	mux.Handle("PUT /api/v1/me/suggestions/{id}/status", requireAuth(http.HandlerFunc(aiSuggestionsHandler.UpdateSuggestionStatus)))
 	mux.Handle("POST /api/v1/me/suggestions/{id}/block", requireAuth(http.HandlerFunc(aiSuggestionsHandler.BlockSuggestion)))
 
