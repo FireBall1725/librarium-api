@@ -12,31 +12,24 @@ on:
           - auto    # next revision in current YY.MM (rolls to .0 on month change)
           - major   # force YY.MM.0 from today's date
       dry-run:
-        description: "Compute the version but don't tag, push, or publish"
+        description: "Compute the version but don't tag or push"
         required: false
         default: false
         type: boolean
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      next_dev: ${{ steps.version.outputs.next_dev }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache: true
 
       - name: Configure git
         run: |
@@ -66,40 +59,15 @@ jobs:
           fi
 
           VERSION="${PREFIX}.${REV}"
-          NEXT_DEV="${PREFIX}.$((REV + 1))-dev"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "next_dev=$NEXT_DEV" >> "$GITHUB_OUTPUT"
           echo "Releasing version: $VERSION"
-          echo "Post-release dev bump: $NEXT_DEV"
 
-      - name: Update version.go (release)
-        run: |
-          set -euo pipefail
-          VERSION="${{ steps.version.outputs.version }}"
-          sed -i -E "s/^var Version = \".*\"/var Version = \"${VERSION}\"/" internal/version/version.go
-          grep -n "^var Version" internal/version/version.go
-
-      - name: Commit + tag release
+      # The version lives only in the git tag. version.go has no hardcoded
+      # string — dev builds compute "{YY}.{M}.DEV" at startup, and publish.yml
+      # injects the tagged version into release images via ldflags.
+      - name: Tag release
         if: ${{ inputs.dry-run == false }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          git add internal/version/version.go
-          git commit -m "release: ${VERSION}"
           git tag "v${VERSION}"
-
-      - name: Bump to next -dev
-        if: ${{ inputs.dry-run == false }}
-        run: |
-          NEXT_DEV="${{ steps.version.outputs.next_dev }}"
-          sed -i -E "s/^var Version = \".*\"/var Version = \"${NEXT_DEV}\"/" internal/version/version.go
-          git add internal/version/version.go
-          git commit -m "chore: bump to ${NEXT_DEV}"
-
-      # Push the tag first so publish.yml starts building the image immediately,
-      # then push the next-dev commit on main. Image build + GitHub release are
-      # handled by publish.yml on tag push.
-      - name: Push tag and commits
-        if: ${{ inputs.dry-run == false }}
-        run: |
-          git push origin "v${{ steps.version.outputs.version }}"
-          git push origin HEAD:main
+          git push origin "v${VERSION}"
