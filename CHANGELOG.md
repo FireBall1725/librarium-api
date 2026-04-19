@@ -13,17 +13,16 @@ This project uses **`YY.MM.revision`** (e.g. `26.4.0`, `26.4.1`):
 
 Versions `0.1.0` → `0.13.0` predate this scheme. `26.4.0` is the first release cut under the new format and the first release of `librarium-api` as an independent repository.
 
-## [Unreleased]
+## [26.4.0] — Initial independent release
+
+First release of `librarium-api` as a standalone repository under the `YY.MM.revision` versioning scheme. Feature parity with the pre-split workspace as of April 2026 — see the archived workspace changelog for the full history up to this point.
 
 ### Added
 
 - README, CONTRIBUTING, CI and release workflows, and this CHANGELOG.
 - GitHub Pages deployment for Swagger/Redoc API reference on each release.
+- Helm chart (`deploy/helm/librarium-api`) with optional CloudNativePG cluster provisioning.
 
 ### Changed
 
 - Build timestamps use the host timezone (via `/etc/localtime` bind mount in `docker-compose.yml`) so `BuildVersion` is human-readable wherever you run it.
-
-## [26.4.0] — Initial independent release
-
-First release of `librarium-api` as a standalone repository under the `YY.MM.revision` versioning scheme. Feature parity with the pre-split workspace as of April 2026 — see the archived workspace changelog for the full history up to this point.

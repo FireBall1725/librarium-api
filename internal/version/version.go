@@ -10,7 +10,7 @@ import (
 
 // Version is the current release. Format: YY.MM.revision (e.g. 26.4.0).
 // A "-dev" suffix marks local unshipped builds. Set via ldflags in production builds.
-var Version = "26.0.0-dev"
+var Version = "26.4.0"
 
 // StartTime is when this process started.
 var StartTime = time.Now()

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 FireBall1725 (Adaléa)
 
 // @title           Librarium API
-// @version         26.0.0-dev
+// @version         26.4.0
 // @description     Self-hosted library tracking API. All protected endpoints require a Bearer JWT in the Authorization header.
 // @termsOfService  http://localhost/
 

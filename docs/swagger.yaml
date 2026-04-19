@@ -805,7 +805,7 @@ info:
     url: https://www.gnu.org/licenses/agpl-3.0.html
   termsOfService: http://localhost/
   title: Librarium API
-  version: 26.0.0-dev
+  version: 26.4.0
 paths:
   /admin/providers:
     get:
