@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fireball1725/librarium-api/internal/ai"
 	"github.com/fireball1725/librarium-api/internal/api/handlers"
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/auth"
@@ -72,6 +73,24 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 		log.Printf("warning: failed to load provider settings: %v", err)
 	}
 
+	// AI providers (Anthropic / OpenAI / Ollama). Exactly one is active at a
+	// time; admin picks via the Connections page.
+	aiRegistry := ai.NewRegistry()
+	aiRegistry.Register(ai.NewAnthropicProvider())
+	aiRegistry.Register(ai.NewOpenAIProvider())
+	aiRegistry.Register(ai.NewOllamaProvider())
+	aiSvc := service.NewAIService(aiRegistry, settingsRepo)
+	if err := aiSvc.LoadAll(context.Background()); err != nil {
+		log.Printf("warning: failed to load AI provider settings: %v", err)
+	}
+	aiUserSvc := service.NewAIUserService(repository.NewUserAISettingsRepo(db))
+	jobSvc := service.NewJobService(settingsRepo)
+	aiSuggestionsRepo := repository.NewAISuggestionsRepo(db)
+	suggestionsSvc := service.NewSuggestionsService(
+		aiSuggestionsRepo, aiRegistry, aiSvc, jobSvc, aiUserSvc, providerSvc,
+	)
+	_ = suggestionsSvc // direct-call path (not used by HTTP handlers — jobs go through River)
+
 	seriesVolumesRepo := repository.NewSeriesVolumesRepo(db)
 
 	contributorSvc := service.NewContributorService(contributorRepo, bookRepo, coverRepo, registry, cfg.CoverStoragePath)
@@ -93,6 +112,10 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	enrichmentBatchRepo := repository.NewEnrichmentBatchRepo(db)
 
 	providerHandler := handlers.NewProviderHandler(providerSvc)
+	aiHandler := handlers.NewAIHandler(aiSvc)
+	aiUserHandler := handlers.NewAIUserHandler(aiUserSvc)
+	jobsHandler := handlers.NewJobsHandler(jobSvc)
+	aiSuggestionsHandler := handlers.NewAISuggestionsHandler(aiSuggestionsRepo, riverClient, jobSvc)
 
 	authHandler := handlers.NewAuthHandler(authSvc, preferencesRepo)
 	setupHandler := handlers.NewSetupHandler(authSvc, userRepo)
@@ -178,6 +201,33 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("POST /api/v1/admin/providers/{name}/test", requireAdmin(http.HandlerFunc(providerHandler.TestProvider)))
 	mux.Handle("GET /api/v1/admin/providers/order", requireAdmin(http.HandlerFunc(providerHandler.GetProviderOrder)))
 	mux.Handle("PUT /api/v1/admin/providers/order", requireAdmin(http.HandlerFunc(providerHandler.SetProviderOrder)))
+
+	// Admin — AI connections (instance admin only)
+	// More specific paths must come before /{provider} routes so the mux picks the right handler.
+	mux.Handle("GET /api/v1/admin/connections/ai/permissions", requireAdmin(http.HandlerFunc(aiHandler.GetPermissions)))
+	mux.Handle("PUT /api/v1/admin/connections/ai/permissions", requireAdmin(http.HandlerFunc(aiHandler.SetPermissions)))
+	mux.Handle("POST /api/v1/admin/connections/ai/active", requireAdmin(http.HandlerFunc(aiHandler.SetActiveProvider)))
+	mux.Handle("POST /api/v1/admin/connections/ai/{provider}/test", requireAdmin(http.HandlerFunc(aiHandler.TestProvider)))
+	mux.Handle("PUT /api/v1/admin/connections/ai/{provider}", requireAdmin(http.HandlerFunc(aiHandler.ConfigureProvider)))
+	mux.Handle("GET /api/v1/admin/connections/ai", requireAdmin(http.HandlerFunc(aiHandler.ListProviders)))
+
+	// Admin — configurable scheduled jobs (instance admin only)
+	mux.Handle("GET /api/v1/admin/jobs", requireAdmin(http.HandlerFunc(jobsHandler.ListJobs)))
+	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions", requireAdmin(http.HandlerFunc(jobsHandler.GetAISuggestionsJob)))
+	mux.Handle("PUT /api/v1/admin/jobs/ai-suggestions", requireAdmin(http.HandlerFunc(jobsHandler.UpdateAISuggestionsJob)))
+	mux.Handle("POST /api/v1/admin/jobs/ai-suggestions/run", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminRunSuggestions)))
+
+	// User-scoped AI endpoints
+	mux.Handle("GET /api/v1/me/ai-prefs", requireAuth(http.HandlerFunc(aiUserHandler.GetPrefs)))
+	mux.Handle("PUT /api/v1/me/ai-prefs", requireAuth(http.HandlerFunc(aiUserHandler.UpdatePrefs)))
+	mux.Handle("GET /api/v1/me/taste-profile", requireAuth(http.HandlerFunc(aiUserHandler.GetTasteProfile)))
+	mux.Handle("PUT /api/v1/me/taste-profile", requireAuth(http.HandlerFunc(aiUserHandler.UpdateTasteProfile)))
+
+	// User-scoped AI suggestions
+	mux.Handle("GET /api/v1/me/suggestions", requireAuth(http.HandlerFunc(aiSuggestionsHandler.ListSuggestions)))
+	mux.Handle("POST /api/v1/me/suggestions/run", requireAuth(http.HandlerFunc(aiSuggestionsHandler.RunNow)))
+	mux.Handle("PUT /api/v1/me/suggestions/{id}/status", requireAuth(http.HandlerFunc(aiSuggestionsHandler.UpdateSuggestionStatus)))
+	mux.Handle("POST /api/v1/me/suggestions/{id}/block", requireAuth(http.HandlerFunc(aiSuggestionsHandler.BlockSuggestion)))
 
 	// Lookup (any authenticated user)
 	mux.Handle("GET /api/v1/lookup/isbn/{isbn}", requireAuth(http.HandlerFunc(providerHandler.LookupISBN)))

@@ -339,6 +339,104 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_fireball1725_librarium-api_internal_service.AIPermissions:
+    properties:
+      favourites:
+        type: boolean
+      full_library:
+        type: boolean
+      ratings:
+        type: boolean
+      reading_history:
+        type: boolean
+      taste_profile:
+        type: boolean
+    type: object
+  github_com_fireball1725_librarium-api_internal_service.AIProviderStatus:
+    properties:
+      active:
+        type: boolean
+      config:
+        additionalProperties:
+          type: string
+        type: object
+      config_fields:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.ConfigFieldView'
+        type: array
+      description:
+        type: string
+      display_name:
+        type: string
+      enabled:
+        type: boolean
+      has_api_key:
+        type: boolean
+      help_text:
+        type: string
+      help_url:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_service.AISuggestionsJobConfig:
+    properties:
+      enabled:
+        type: boolean
+      include_taste_profile:
+        type: boolean
+      interval_minutes:
+        type: integer
+      max_buy_per_user:
+        type: integer
+      max_read_next_per_user:
+        type: integer
+      user_run_rate_limit_per_day:
+        type: integer
+    type: object
+  github_com_fireball1725_librarium-api_internal_service.ConfigFieldView:
+    properties:
+      help_text:
+        type: string
+      key:
+        type: string
+      label:
+        type: string
+      options:
+        description: |-
+          Options lets a provider suggest model IDs in a dropdown while still
+          allowing free-text entry. Empty means pure free-text.
+        items:
+          type: string
+        type: array
+      placeholder:
+        type: string
+      required:
+        type: boolean
+      type:
+        description: '"password" | "text" | "url" | "model"'
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_service.JobID:
+    enum:
+    - ai-suggestions
+    type: string
+    x-enum-varnames:
+    - JobAISuggestions
+  github_com_fireball1725_librarium-api_internal_service.JobSummary:
+    properties:
+      description:
+        type: string
+      display_name:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.JobID'
+      kind:
+        description: '"scheduled" for now'
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_service.ProviderStatus:
     properties:
       capabilities:
@@ -365,6 +463,38 @@ definitions:
         type: string
       requires_key:
         type: boolean
+    type: object
+  github_com_fireball1725_librarium-api_internal_service.UserAIPrefsView:
+    properties:
+      opt_in:
+        type: boolean
+    type: object
+  internal_api_handlers.SuggestionView:
+    properties:
+      author:
+        type: string
+      book_edition_id:
+        type: string
+      book_id:
+        type: string
+      cover_url:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      isbn:
+        type: string
+      library_id:
+        type: string
+      reasoning:
+        type: string
+      status:
+        type: string
+      title:
+        type: string
+      type:
+        type: string
     type: object
   responses.BookResponse:
     properties:
@@ -807,6 +937,270 @@ info:
   title: Librarium API
   version: 26.4.0
 paths:
+  /admin/connections/ai:
+    get:
+      description: Returns provider status, masked config, active flag, and config-field
+        schema for each registered AI provider.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.AIProviderStatus'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List AI providers (admin)
+      tags:
+      - admin
+      - ai
+  /admin/connections/ai/{provider}:
+    put:
+      consumes:
+      - application/json
+      description: Updates the API key, model, base URL, or enabled flag for the named
+        provider. Secrets are merged over existing config so omitted keys are preserved.
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Provider configuration key-value pairs
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.AIProviderStatus'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Configure an AI provider (admin)
+      tags:
+      - admin
+      - ai
+  /admin/connections/ai/{provider}/test:
+    post:
+      description: Performs a cheap probe call to verify the provider's API key and
+        model.
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              error:
+                type: string
+              ok:
+                type: boolean
+              reply:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test an AI provider (admin)
+      tags:
+      - admin
+      - ai
+  /admin/connections/ai/active:
+    post:
+      consumes:
+      - application/json
+      description: Exactly one AI provider is active at a time. Passing an empty name
+        disables AI suggestions.
+      parameters:
+      - description: Provider name
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            provider:
+              type: string
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set the active AI provider (admin)
+      tags:
+      - admin
+      - ai
+  /admin/connections/ai/permissions:
+    get:
+      description: Returns the deployment-wide data categories the AI may access.
+        Combined restrictive-wins with each user's opt-in.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.AIPermissions'
+      security:
+      - BearerAuth: []
+      summary: Get AI data-access permissions (admin)
+      tags:
+      - admin
+      - ai
+    put:
+      consumes:
+      - application/json
+      description: Replaces the deployment-wide data-access policy. All fields must
+        be provided; omitted fields default to false.
+      parameters:
+      - description: Permissions object
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.AIPermissions'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.AIPermissions'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update AI data-access permissions (admin)
+      tags:
+      - admin
+      - ai
+  /admin/jobs:
+    get:
+      description: Returns a summary of every admin-configurable scheduled job.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.JobSummary'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List configurable jobs (admin)
+      tags:
+      - admin
+      - jobs
+  /admin/jobs/ai-suggestions:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.AISuggestionsJobConfig'
+      security:
+      - BearerAuth: []
+      summary: Get AI suggestions job config (admin)
+      tags:
+      - admin
+      - jobs
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Job config
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.AISuggestionsJobConfig'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.AISuggestionsJobConfig'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update AI suggestions job config (admin)
+      tags:
+      - admin
+      - jobs
+  /admin/jobs/ai-suggestions/run:
+    post:
+      description: Enqueues a job per opted-in user.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            properties:
+              enqueued:
+                type: integer
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Trigger a suggestions run for every opted-in user (admin)
+      tags:
+      - admin
+      - jobs
   /admin/providers:
     get:
       description: Returns the status and configuration of all registered metadata
@@ -6263,6 +6657,238 @@ paths:
       summary: Search series across providers
       tags:
       - lookup
+  /me/ai-prefs:
+    get:
+      description: Returns whether the caller has opted in to AI features.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.UserAIPrefsView'
+      security:
+      - BearerAuth: []
+      summary: Get my AI preferences
+      tags:
+      - me
+      - ai
+    put:
+      consumes:
+      - application/json
+      description: Sets whether the caller is opted in to AI features.
+      parameters:
+      - description: Opt-in flag
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            opt_in:
+              type: boolean
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.UserAIPrefsView'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update my AI preferences
+      tags:
+      - me
+      - ai
+  /me/suggestions:
+    get:
+      description: Returns the current AI-generated recommendations for the caller.
+        Filter by type (buy | read_next) and status.
+      parameters:
+      - description: 'Filter by type: buy | read_next'
+        in: query
+        name: type
+        type: string
+      - description: 'Filter by status: new | dismissed | interested | added_to_library'
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api_handlers.SuggestionView'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List my AI suggestions
+      tags:
+      - me
+      - ai
+  /me/suggestions/{id}/block:
+    post:
+      consumes:
+      - application/json
+      description: Creates a persistent block scoped to the book, the author, or the
+        series.
+      parameters:
+      - description: Suggestion ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 'Block scope: book | author | series'
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            scope:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Block a suggestion so it never reappears
+      tags:
+      - me
+      - ai
+  /me/suggestions/{id}/status:
+    put:
+      consumes:
+      - application/json
+      description: Mark a suggestion as dismissed, interested, or added_to_library.
+      parameters:
+      - description: Suggestion ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New status
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            status:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a suggestion's status
+      tags:
+      - me
+      - ai
+  /me/suggestions/run:
+    post:
+      description: Enqueues a background job to regenerate suggestions. Rate-limited
+        by admin config.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+        "429":
+          description: Too Many Requests
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Trigger a suggestions run for the caller
+      tags:
+      - me
+      - ai
+  /me/taste-profile:
+    get:
+      description: Returns the JSON taste profile the user has saved. Empty object
+        if none saved.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get my taste profile
+      tags:
+      - me
+      - ai
+    put:
+      consumes:
+      - application/json
+      description: Replaces the saved taste profile with the supplied JSON object.
+      parameters:
+      - description: Taste profile JSON object
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update my taste profile
+      tags:
+      - me
+      - ai
   /media-types:
     get:
       description: Returns all globally defined media types (book, manga, audiobook,

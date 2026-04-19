@@ -40,3 +40,4 @@ services:
 volumes:
   db_data:
   cover_data:
+  media_data:

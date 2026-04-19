@@ -17,6 +17,419 @@
     "host": "localhost:8080",
     "basePath": "/api/v1",
     "paths": {
+        "/admin/connections/ai": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns provider status, masked config, active flag, and config-field schema for each registered AI provider.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "ai"
+                ],
+                "summary": "List AI providers (admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.AIProviderStatus"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/connections/ai/active": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Exactly one AI provider is active at a time. Passing an empty name disables AI suggestions.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "ai"
+                ],
+                "summary": "Set the active AI provider (admin)",
+                "parameters": [
+                    {
+                        "description": "Provider name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "provider": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/connections/ai/permissions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the deployment-wide data categories the AI may access. Combined restrictive-wins with each user's opt-in.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "ai"
+                ],
+                "summary": "Get AI data-access permissions (admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.AIPermissions"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the deployment-wide data-access policy. All fields must be provided; omitted fields default to false.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "ai"
+                ],
+                "summary": "Update AI data-access permissions (admin)",
+                "parameters": [
+                    {
+                        "description": "Permissions object",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.AIPermissions"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.AIPermissions"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/connections/ai/{provider}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Updates the API key, model, base URL, or enabled flag for the named provider. Secrets are merged over existing config so omitted keys are preserved.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "ai"
+                ],
+                "summary": "Configure an AI provider (admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider name",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Provider configuration key-value pairs",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.AIProviderStatus"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/connections/ai/{provider}/test": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Performs a cheap probe call to verify the provider's API key and model.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "ai"
+                ],
+                "summary": "Test an AI provider (admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider name",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                },
+                                "ok": {
+                                    "type": "boolean"
+                                },
+                                "reply": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/jobs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a summary of every admin-configurable scheduled job.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "jobs"
+                ],
+                "summary": "List configurable jobs (admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.JobSummary"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/jobs/ai-suggestions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "jobs"
+                ],
+                "summary": "Get AI suggestions job config (admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.AISuggestionsJobConfig"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "jobs"
+                ],
+                "summary": "Update AI suggestions job config (admin)",
+                "parameters": [
+                    {
+                        "description": "Job config",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.AISuggestionsJobConfig"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.AISuggestionsJobConfig"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/jobs/ai-suggestions/run": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Enqueues a job per opted-in user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "jobs"
+                ],
+                "summary": "Trigger a suggestions run for every opted-in user (admin)",
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "enqueued": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/providers": {
             "get": {
                 "security": [
@@ -8541,6 +8954,369 @@
                 }
             }
         },
+        "/me/ai-prefs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns whether the caller has opted in to AI features.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Get my AI preferences",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.UserAIPrefsView"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets whether the caller is opted in to AI features.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Update my AI preferences",
+                "parameters": [
+                    {
+                        "description": "Opt-in flag",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "opt_in": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.UserAIPrefsView"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/suggestions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the current AI-generated recommendations for the caller. Filter by type (buy | read_next) and status.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "List my AI suggestions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by type: buy | read_next",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status: new | dismissed | interested | added_to_library",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api_handlers.SuggestionView"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/suggestions/run": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Enqueues a background job to regenerate suggestions. Rate-limited by admin config.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Trigger a suggestions run for the caller",
+                "responses": {
+                    "202": {
+                        "description": "Accepted"
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/suggestions/{id}/block": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a persistent block scoped to the book, the author, or the series.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Block a suggestion so it never reappears",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Suggestion ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Block scope: book | author | series",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "scope": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/suggestions/{id}/status": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Mark a suggestion as dismissed, interested, or added_to_library.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Update a suggestion's status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Suggestion ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New status",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "status": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/taste-profile": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the JSON taste profile the user has saved. Empty object if none saved.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Get my taste profile",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the saved taste profile with the supplied JSON object.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Update my taste profile",
+                "parameters": [
+                    {
+                        "description": "Taste profile JSON object",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/media-types": {
             "get": {
                 "security": [
@@ -9516,6 +10292,151 @@
                 }
             }
         },
+        "github_com_fireball1725_librarium-api_internal_service.AIPermissions": {
+            "type": "object",
+            "properties": {
+                "favourites": {
+                    "type": "boolean"
+                },
+                "full_library": {
+                    "type": "boolean"
+                },
+                "ratings": {
+                    "type": "boolean"
+                },
+                "reading_history": {
+                    "type": "boolean"
+                },
+                "taste_profile": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_service.AIProviderStatus": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "config_fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.ConfigFieldView"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "has_api_key": {
+                    "type": "boolean"
+                },
+                "help_text": {
+                    "type": "string"
+                },
+                "help_url": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_service.AISuggestionsJobConfig": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "include_taste_profile": {
+                    "type": "boolean"
+                },
+                "interval_minutes": {
+                    "type": "integer"
+                },
+                "max_buy_per_user": {
+                    "type": "integer"
+                },
+                "max_read_next_per_user": {
+                    "type": "integer"
+                },
+                "user_run_rate_limit_per_day": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_service.ConfigFieldView": {
+            "type": "object",
+            "properties": {
+                "help_text": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "options": {
+                    "description": "Options lets a provider suggest model IDs in a dropdown while still\nallowing free-text entry. Empty means pure free-text.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "placeholder": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "description": "\"password\" | \"text\" | \"url\" | \"model\"",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_service.JobID": {
+            "type": "string",
+            "enum": [
+                "ai-suggestions"
+            ],
+            "x-enum-varnames": [
+                "JobAISuggestions"
+            ]
+        },
+        "github_com_fireball1725_librarium-api_internal_service.JobSummary": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.JobID"
+                },
+                "kind": {
+                    "description": "\"scheduled\" for now",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_fireball1725_librarium-api_internal_service.ProviderStatus": {
             "type": "object",
             "properties": {
@@ -9554,6 +10475,55 @@
                 },
                 "requires_key": {
                     "type": "boolean"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_service.UserAIPrefsView": {
+            "type": "object",
+            "properties": {
+                "opt_in": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api_handlers.SuggestionView": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "book_edition_id": {
+                    "type": "string"
+                },
+                "book_id": {
+                    "type": "string"
+                },
+                "cover_url": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "isbn": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "reasoning": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
                 }
             }
         },
