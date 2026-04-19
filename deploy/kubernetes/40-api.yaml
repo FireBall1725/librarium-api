@@ -1,0 +1,100 @@
+# Covers (small, server-managed, backup with the db).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: librarium-covers
+  namespace: librarium
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+  # storageClassName: your-storage-class
+---
+# Media (ebooks + audiobooks). Can grow large — size accordingly, or point at
+# an existing NFS / file share by pre-creating a matching PV (see README).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: librarium-media
+  namespace: librarium
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 100Gi
+  # storageClassName: your-storage-class
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: librarium-api
+  namespace: librarium
+spec:
+  type: ClusterIP
+  selector:
+    app: librarium-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: librarium-api
+  namespace: librarium
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # cover and media PVCs are RWO; can't run two pods at once
+  selector:
+    matchLabels:
+      app: librarium-api
+  template:
+    metadata:
+      labels:
+        app: librarium-api
+    spec:
+      containers:
+        - name: librarium-api
+          image: ghcr.io/fireball1725/librarium-api:latest  # pin to a release in prod
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: librarium-config
+            - secretRef:
+                name: librarium-secrets
+          volumeMounts:
+            - name: covers
+              mountPath: /data/covers
+            - name: media
+              mountPath: /data/media
+          readinessProbe:
+            httpGet:
+              path: /api/v1/version
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/version
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: covers
+          persistentVolumeClaim:
+            claimName: librarium-covers
+        - name: media
+          persistentVolumeClaim:
+            claimName: librarium-media

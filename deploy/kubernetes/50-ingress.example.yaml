@@ -1,0 +1,31 @@
+# Example ingress. Copy to 40-ingress.yaml, edit the host and TLS secret, then apply.
+#
+# This ingress fronts the API directly. If you also deploy the web UI in the
+# same cluster (recommended), point the ingress at the web service instead — it
+# already proxies /api to the api service internally. See:
+# https://github.com/fireball1725/librarium-web/tree/main/deploy/kubernetes
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: librarium-api
+  namespace: librarium
+  annotations:
+    # nginx:   nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+    # traefik: traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  ingressClassName: nginx  # change to your controller
+  tls:
+    - hosts:
+        - api.librarium.example.com
+      secretName: librarium-api-tls
+  rules:
+    - host: api.librarium.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: librarium-api
+                port:
+                  number: 8080

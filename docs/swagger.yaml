@@ -1,0 +1,6582 @@
+basePath: /api/v1
+definitions:
+  github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch:
+    properties:
+      book_ids:
+        items:
+          type: string
+        type: array
+      created_at:
+        type: string
+      created_by:
+        type: string
+      failed_books:
+        type: integer
+      force:
+        type: boolean
+      id:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchItem'
+        type: array
+      library_id:
+        type: string
+      library_name:
+        type: string
+      processed_books:
+        type: integer
+      skipped_books:
+        type: integer
+      status:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchStatus'
+      total_books:
+        type: integer
+      type:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchType'
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchItem:
+    properties:
+      batch_id:
+        type: string
+      book_id:
+        type: string
+      book_title:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      message:
+        type: string
+      status:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchItemStatus'
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchItemStatus:
+    enum:
+    - pending
+    - done
+    - failed
+    - skipped
+    type: string
+    x-enum-varnames:
+    - EnrichmentItemPending
+    - EnrichmentItemDone
+    - EnrichmentItemFailed
+    - EnrichmentItemSkipped
+  github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchStatus:
+    enum:
+    - pending
+    - processing
+    - done
+    - failed
+    - cancelled
+    type: string
+    x-enum-varnames:
+    - EnrichmentBatchPending
+    - EnrichmentBatchProcessing
+    - EnrichmentBatchDone
+    - EnrichmentBatchFailed
+    - EnrichmentBatchCancelled
+  github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchType:
+    enum:
+    - metadata
+    - cover
+    type: string
+    x-enum-varnames:
+    - EnrichmentBatchTypeMetadata
+    - EnrichmentBatchTypeCover
+  github_com_fireball1725_librarium-api_internal_models.ImportItemStatus:
+    enum:
+    - pending
+    - done
+    - skipped
+    - failed
+    type: string
+    x-enum-varnames:
+    - ImportItemPending
+    - ImportItemDone
+    - ImportItemSkipped
+    - ImportItemFailed
+  github_com_fireball1725_librarium-api_internal_models.ImportJob:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      failed_rows:
+        type: integer
+      id:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.ImportJobItem'
+        type: array
+      library_id:
+        type: string
+      library_name:
+        type: string
+      options:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.ImportOptions'
+      processed_rows:
+        type: integer
+      skipped_rows:
+        type: integer
+      status:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.ImportJobStatus'
+      total_rows:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_models.ImportJobItem:
+    properties:
+      book_id:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      import_job_id:
+        type: string
+      isbn:
+        type: string
+      message:
+        type: string
+      raw_data:
+        additionalProperties:
+          type: string
+        type: object
+      row_number:
+        type: integer
+      status:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.ImportItemStatus'
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_models.ImportJobStatus:
+    enum:
+    - pending
+    - processing
+    - done
+    - failed
+    - cancelled
+    type: string
+    x-enum-varnames:
+    - ImportJobPending
+    - ImportJobProcessing
+    - ImportJobDone
+    - ImportJobFailed
+    - ImportJobCancelled
+  github_com_fireball1725_librarium-api_internal_models.ImportOptions:
+    properties:
+      default_format:
+        type: string
+      enrich_covers:
+        type: boolean
+      enrich_metadata:
+        type: boolean
+      prefer_csv:
+        additionalProperties:
+          type: boolean
+        type: object
+      skip_duplicates:
+        type: boolean
+    type: object
+  github_com_fireball1725_librarium-api_internal_providers.BookResult:
+    properties:
+      authors:
+        items:
+          type: string
+        type: array
+      categories:
+        description: |-
+          Categories contains subject/genre tags from the provider (e.g. "Comics & Graphic Novels / Manga").
+          Used by the client to auto-detect the media type.
+        items:
+          type: string
+        type: array
+      cover_url:
+        type: string
+      description:
+        type: string
+      isbn_10:
+        type: string
+      isbn_13:
+        type: string
+      language:
+        type: string
+      page_count:
+        type: integer
+      provider:
+        type: string
+      provider_display:
+        type: string
+      publish_date:
+        type: string
+      publisher:
+        type: string
+      subtitle:
+        type: string
+      title:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_providers.CoverOption:
+    properties:
+      cover_url:
+        type: string
+      source:
+        type: string
+      source_display:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_providers.FieldOption:
+    properties:
+      source:
+        type: string
+      source_display:
+        type: string
+      value:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_providers.FieldResult:
+    properties:
+      alternatives:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldOption'
+        type: array
+      source:
+        type: string
+      source_display:
+        type: string
+      value:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_providers.MergedBookResult:
+    properties:
+      authors:
+        allOf:
+        - $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+        description: value is comma-joined author names
+      categories:
+        description: |-
+          Categories is the union of all providers' category tags, used for
+          genre/media-type inference. Not shown in the UI as a mergeable field.
+        items:
+          type: string
+        type: array
+      covers:
+        description: Covers lists available cover images from each provider, in priority
+          order.
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.CoverOption'
+        type: array
+      description:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      isbn_10:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      isbn_13:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      language:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      page_count:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      publish_date:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      publisher:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      subtitle:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      title:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+    type: object
+  github_com_fireball1725_librarium-api_internal_providers.SeriesResult:
+    properties:
+      cover_url:
+        type: string
+      demographic:
+        type: string
+      description:
+        type: string
+      external_id:
+        type: string
+      external_source:
+        type: string
+      genres:
+        items:
+          type: string
+        type: array
+      is_complete:
+        type: boolean
+      name:
+        type: string
+      original_language:
+        type: string
+      provider:
+        type: string
+      provider_display:
+        type: string
+      publication_year:
+        type: integer
+      status:
+        type: string
+      total_count:
+        type: integer
+      url:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_repository.BookFingerprint:
+    properties:
+      max_updated_at:
+        description: RFC3339; nil when library is empty
+        type: string
+      total:
+        type: integer
+    type: object
+  github_com_fireball1725_librarium-api_internal_service.ProviderStatus:
+    properties:
+      capabilities:
+        items:
+          type: string
+        type: array
+      config:
+        additionalProperties:
+          type: string
+        type: object
+      description:
+        type: string
+      display_name:
+        type: string
+      enabled:
+        type: boolean
+      has_api_key:
+        type: boolean
+      help_text:
+        type: string
+      help_url:
+        type: string
+      name:
+        type: string
+      requires_key:
+        type: boolean
+    type: object
+  responses.BookResponse:
+    properties:
+      added_by:
+        type: string
+      contributors:
+        items:
+          $ref: '#/definitions/responses.ContributorRef'
+        type: array
+      cover_url:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      genres:
+        items:
+          $ref: '#/definitions/responses.GenreRef'
+        type: array
+      id:
+        type: string
+      language:
+        type: string
+      library_id:
+        type: string
+      media_type:
+        type: string
+      media_type_id:
+        type: string
+      publish_year:
+        type: integer
+      publisher:
+        type: string
+      series:
+        items:
+          $ref: '#/definitions/responses.SeriesRef'
+        type: array
+      shelves:
+        items:
+          $ref: '#/definitions/responses.ShelfRef'
+        type: array
+      subtitle:
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/responses.TagRef'
+        type: array
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  responses.ContributorItem:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  responses.ContributorRef:
+    properties:
+      contributor_id:
+        type: string
+      display_order:
+        type: integer
+      name:
+        type: string
+      role:
+        type: string
+    type: object
+  responses.EditionResponse:
+    properties:
+      acquired_at:
+        description: YYYY-MM-DD
+        type: string
+      book_id:
+        type: string
+      copy_count:
+        type: integer
+      created_at:
+        type: string
+      description:
+        type: string
+      duration_seconds:
+        type: integer
+      edition_name:
+        type: string
+      format:
+        type: string
+      id:
+        type: string
+      is_primary:
+        type: boolean
+      isbn_10:
+        type: string
+      isbn_13:
+        type: string
+      language:
+        type: string
+      narrator:
+        type: string
+      page_count:
+        type: integer
+      publish_date:
+        description: YYYY-MM-DD
+        type: string
+      publisher:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  responses.GenreRef:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  responses.GenreResponse:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  responses.InteractionResponse:
+    properties:
+      book_edition_id:
+        type: string
+      created_at:
+        type: string
+      date_finished:
+        description: YYYY-MM-DD
+        type: string
+      date_started:
+        description: YYYY-MM-DD
+        type: string
+      id:
+        type: string
+      is_favorite:
+        type: boolean
+      notes:
+        type: string
+      rating:
+        type: integer
+      read_status:
+        type: string
+      reread_count:
+        type: integer
+      review:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  responses.LibraryResponse:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_public:
+        type: boolean
+      name:
+        type: string
+      owner_id:
+        type: string
+      slug:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  responses.LoanResponse:
+    properties:
+      book_id:
+        type: string
+      book_title:
+        type: string
+      created_at:
+        type: string
+      due_date:
+        description: YYYY-MM-DD
+        type: string
+      id:
+        type: string
+      library_id:
+        type: string
+      loaned_at:
+        description: YYYY-MM-DD
+        type: string
+      loaned_to:
+        type: string
+      notes:
+        type: string
+      returned_at:
+        description: YYYY-MM-DD
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/responses.TagRef'
+        type: array
+      updated_at:
+        type: string
+    type: object
+  responses.MediaTypeResponse:
+    properties:
+      book_count:
+        type: integer
+      description:
+        type: string
+      display_name:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  responses.MemberResponse:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      invited_by:
+        type: string
+      joined_at:
+        type: string
+      role:
+        type: string
+      role_id:
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/responses.TagRef'
+        type: array
+      user_id:
+        type: string
+      username:
+        type: string
+    type: object
+  responses.PagedBooksResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/responses.BookResponse'
+        type: array
+      page:
+        type: integer
+      per_page:
+        type: integer
+      total:
+        type: integer
+    type: object
+  responses.SeriesEntryResponse:
+    properties:
+      book_id:
+        type: string
+      contributors:
+        items:
+          $ref: '#/definitions/responses.ContributorRef'
+        type: array
+      media_type:
+        type: string
+      position:
+        type: number
+      subtitle:
+        type: string
+      title:
+        type: string
+    type: object
+  responses.SeriesRef:
+    properties:
+      position:
+        type: number
+      series_id:
+        type: string
+      series_name:
+        type: string
+    type: object
+  responses.SeriesResponse:
+    properties:
+      book_count:
+        type: integer
+      created_at:
+        type: string
+      demographic:
+        type: string
+      description:
+        type: string
+      external_id:
+        type: string
+      external_source:
+        type: string
+      genres:
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      is_complete:
+        type: boolean
+      last_release_date:
+        description: YYYY-MM-DD
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+      next_release_date:
+        description: YYYY-MM-DD
+        type: string
+      original_language:
+        type: string
+      publication_year:
+        type: integer
+      status:
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/responses.TagRef'
+        type: array
+      total_count:
+        type: integer
+      updated_at:
+        type: string
+      url:
+        type: string
+    type: object
+  responses.SeriesVolumeResponse:
+    properties:
+      cover_url:
+        type: string
+      created_at:
+        type: string
+      external_id:
+        type: string
+      id:
+        type: string
+      position:
+        type: number
+      release_date:
+        description: YYYY-MM-DD
+        type: string
+      series_id:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  responses.ShelfRef:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  responses.ShelfResponse:
+    properties:
+      book_count:
+        type: integer
+      color:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      display_order:
+        type: integer
+      icon:
+        type: string
+      id:
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/responses.TagRef'
+        type: array
+      updated_at:
+        type: string
+    type: object
+  responses.TagRef:
+    properties:
+      color:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+    type: object
+  responses.TagResponse:
+    properties:
+      color:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+    type: object
+  responses.UserResponse:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      is_instance_admin:
+        type: boolean
+      username:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    name: Librarium
+    url: https://github.com/fireball1725/librarium
+  description: Self-hosted library tracking API. All protected endpoints require a
+    Bearer JWT in the Authorization header.
+  license:
+    name: AGPL-3.0
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+  termsOfService: http://localhost/
+  title: Librarium API
+  version: 26.0.0-dev
+paths:
+  /admin/providers:
+    get:
+      description: Returns the status and configuration of all registered metadata
+        providers.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.ProviderStatus'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List metadata providers (admin)
+      tags:
+      - admin
+      - providers
+  /admin/providers/{name}:
+    put:
+      consumes:
+      - application/json
+      description: Updates the API key or settings for the named provider.
+      parameters:
+      - description: Provider name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Provider configuration key-value pairs
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.ProviderStatus'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Configure a metadata provider (admin)
+      tags:
+      - admin
+      - providers
+  /admin/providers/{name}/test:
+    post:
+      description: Performs a live test lookup to verify provider credentials are
+        working.
+      parameters:
+      - description: Provider name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              ok:
+                type: boolean
+              title:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test a metadata provider (admin)
+      tags:
+      - admin
+      - providers
+  /admin/providers/order:
+    get:
+      description: Returns the ordered list of provider names used when merging results.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              order:
+                items:
+                  type: string
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get provider priority order (admin)
+      tags:
+      - admin
+      - providers
+    put:
+      consumes:
+      - application/json
+      description: Sets the ordered list of provider names used when merging results.
+      parameters:
+      - description: Ordered provider names
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            order:
+              items:
+                type: string
+              type: array
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set provider priority order (admin)
+      tags:
+      - admin
+      - providers
+  /admin/users:
+    get:
+      description: Returns a paginated list of all instance users. Instance admin
+        only.
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Items per page (default 20, max 100)
+        in: query
+        name: per_page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  type: object
+                type: array
+              page:
+                type: integer
+              per_page:
+                type: integer
+              total:
+                type: integer
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all users (admin)
+      tags:
+      - admin
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user account bypassing registration settings. Instance
+        admin only.
+      parameters:
+      - description: Create user request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            display_name:
+              type: string
+            email:
+              type: string
+            password:
+              type: string
+            username:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              created_at:
+                type: string
+              display_name:
+                type: string
+              email:
+                type: string
+              id:
+                type: string
+              is_active:
+                type: boolean
+              is_instance_admin:
+                type: boolean
+              last_login_at:
+                type: string
+              username:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a user (admin)
+      tags:
+      - admin
+  /admin/users/{id}:
+    delete:
+      description: Permanently deletes a user account. Instance admin only. Cannot
+        delete yourself.
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              message:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a user (admin)
+      tags:
+      - admin
+    patch:
+      consumes:
+      - application/json
+      description: Partially updates a user's profile or admin/active status. Instance
+        admin only.
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update
+        in: body
+        name: body
+        schema:
+          properties:
+            display_name:
+              type: string
+            email:
+              type: string
+            is_active:
+              type: boolean
+            is_instance_admin:
+              type: boolean
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              created_at:
+                type: string
+              display_name:
+                type: string
+              email:
+                type: string
+              id:
+                type: string
+              is_active:
+                type: boolean
+              is_instance_admin:
+                type: boolean
+              last_login_at:
+                type: string
+              username:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a user (admin)
+      tags:
+      - admin
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates with username/email and password; returns tokens.
+      parameters:
+      - description: Login request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            identifier:
+              type: string
+            password:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              access_token:
+                type: string
+              expires_in:
+                type: integer
+              refresh_token:
+                type: string
+              user:
+                properties:
+                  display_name:
+                    type: string
+                  email:
+                    type: string
+                  id:
+                    type: string
+                  is_instance_admin:
+                    type: boolean
+                  username:
+                    type: string
+                type: object
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      summary: Log in
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      description: Revokes the current access token. No request body needed.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              message:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Log out
+      tags:
+      - auth
+  /auth/me:
+    get:
+      description: Returns the profile of the authenticated user.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.UserResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get current user
+      tags:
+      - auth
+    put:
+      consumes:
+      - application/json
+      description: Updates the display name and email of the authenticated user.
+      parameters:
+      - description: Update profile request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            display_name:
+              type: string
+            email:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.UserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update current user profile
+      tags:
+      - auth
+  /auth/me/password:
+    put:
+      consumes:
+      - application/json
+      description: Changes the password for the authenticated user.
+      parameters:
+      - description: Change password request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            current_password:
+              type: string
+            new_password:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              message:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change password
+      tags:
+      - auth
+  /auth/me/preferences:
+    get:
+      description: Returns the stored preferences key-value map for the current user.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              prefs:
+                type: object
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get user preferences
+      tags:
+      - auth
+    patch:
+      consumes:
+      - application/json
+      description: Merges supplied key-value pairs into the stored preferences.
+      parameters:
+      - description: Arbitrary key-value pairs to merge
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              message:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Patch user preferences
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Exchanges a valid refresh token for a new token pair.
+      parameters:
+      - description: Refresh request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            refresh_token:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              access_token:
+                type: string
+              expires_in:
+                type: integer
+              refresh_token:
+                type: string
+              user:
+                properties:
+                  display_name:
+                    type: string
+                  email:
+                    type: string
+                  id:
+                    type: string
+                  is_instance_admin:
+                    type: boolean
+                  username:
+                    type: string
+                type: object
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      summary: Refresh access token
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user account. Registration may be disabled by instance
+        config.
+      parameters:
+      - description: Registration request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            display_name:
+              type: string
+            email:
+              type: string
+            password:
+              type: string
+            username:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              access_token:
+                type: string
+              expires_in:
+                type: integer
+              refresh_token:
+                type: string
+              user:
+                properties:
+                  display_name:
+                    type: string
+                  email:
+                    type: string
+                  id:
+                    type: string
+                  is_instance_admin:
+                    type: boolean
+                  username:
+                    type: string
+                type: object
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      summary: Register a new user
+      tags:
+      - auth
+  /contributors:
+    get:
+      description: Full-text search for contributors (authors, illustrators, etc.).
+        Query must be at least 2 characters.
+      parameters:
+      - description: Search query (min 2 chars)
+        in: query
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.ContributorItem'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search contributors
+      tags:
+      - books
+    post:
+      consumes:
+      - application/json
+      description: Creates a new contributor record (author, illustrator, etc.).
+      parameters:
+      - description: Contributor name
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.ContributorItem'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a contributor
+      tags:
+      - books
+  /contributors/{contributor_id}:
+    delete:
+      description: Hard-deletes a contributor. Returns 409 if they still have books.
+      parameters:
+      - description: Contributor UUID
+        in: path
+        name: contributor_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a contributor
+      tags:
+      - contributors
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Contributor UUID
+        in: path
+        name: contributor_id
+        required: true
+        type: string
+      - description: Payload (all fields optional)
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a contributor's profile fields
+      tags:
+      - contributors
+  /contributors/{contributor_id}/metadata/apply:
+    post:
+      consumes:
+      - application/json
+      description: Writes provider-sourced fields and bibliography to the contributor
+        record.
+      parameters:
+      - description: Contributor UUID
+        in: path
+        name: contributor_id
+        required: true
+        type: string
+      - description: Metadata payload
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Apply metadata to a contributor
+      tags:
+      - contributors
+  /contributors/{contributor_id}/metadata/fetch:
+    get:
+      description: Fetches full profile + bibliography from a specific provider without
+        persisting.
+      parameters:
+      - description: Contributor UUID
+        in: path
+        name: contributor_id
+        required: true
+        type: string
+      - description: Provider name
+        in: query
+        name: provider
+        required: true
+        type: string
+      - description: Provider-specific ID
+        in: query
+        name: external_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Fetch contributor metadata from a provider
+      tags:
+      - contributors
+  /contributors/{contributor_id}/photo:
+    delete:
+      description: Removes the primary photo for a contributor.
+      parameters:
+      - description: Contributor UUID
+        in: path
+        name: contributor_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete contributor photo
+      tags:
+      - contributors
+    get:
+      description: Streams the primary photo for a contributor.
+      parameters:
+      - description: Contributor UUID
+        in: path
+        name: contributor_id
+        required: true
+        type: string
+      produces:
+      - image/jpeg
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Serve contributor photo
+      tags:
+      - contributors
+    put:
+      consumes:
+      - multipart/form-data
+      description: Accepts a multipart form upload and stores it as the contributor's
+        primary photo.
+      parameters:
+      - description: Contributor UUID
+        in: path
+        name: contributor_id
+        required: true
+        type: string
+      - description: Photo file
+        in: formData
+        name: photo
+        required: true
+        type: file
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Upload contributor photo
+      tags:
+      - contributors
+  /contributors/{contributor_id}/works/{work_id}:
+    delete:
+      description: Soft-deletes a bibliography entry for a contributor.
+      parameters:
+      - description: Contributor UUID
+        in: path
+        name: contributor_id
+        required: true
+        type: string
+      - description: Work UUID
+        in: path
+        name: work_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a contributor work
+      tags:
+      - contributors
+  /enrichment-batches:
+    delete:
+      description: Bulk-deletes all done/failed/cancelled enrichment batches for the
+        calling user.
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete all finished enrichment batches
+      tags:
+      - enrichment
+    get:
+      description: Returns all enrichment batches for the calling user across all
+        libraries.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List enrichment batches
+      tags:
+      - enrichment
+  /enrichment-batches/{batch_id}:
+    delete:
+      description: Deletes a finished enrichment batch record.
+      parameters:
+      - description: Batch UUID
+        in: path
+        name: batch_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete an enrichment batch
+      tags:
+      - enrichment
+    get:
+      description: Returns a specific enrichment batch with its per-book items.
+      parameters:
+      - description: Batch UUID
+        in: path
+        name: batch_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get an enrichment batch
+      tags:
+      - enrichment
+  /enrichment-batches/{batch_id}/cancel:
+    post:
+      description: Requests cancellation of a running enrichment batch.
+      parameters:
+      - description: Batch UUID
+        in: path
+        name: batch_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cancel an enrichment batch
+      tags:
+      - enrichment
+  /genres:
+    get:
+      description: Returns all globally defined genres.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.GenreResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List genres
+      tags:
+      - genres
+    post:
+      consumes:
+      - application/json
+      description: Creates a new global genre. Instance admin only.
+      parameters:
+      - description: Genre name
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.GenreResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a genre (admin)
+      tags:
+      - genres
+  /genres/{genre_id}:
+    delete:
+      description: Permanently deletes a genre. Instance admin only.
+      parameters:
+      - description: Genre UUID
+        in: path
+        name: genre_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a genre (admin)
+      tags:
+      - genres
+    put:
+      consumes:
+      - application/json
+      description: Updates the name of a global genre. Instance admin only.
+      parameters:
+      - description: Genre UUID
+        in: path
+        name: genre_id
+        required: true
+        type: string
+      - description: Updated name
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.GenreResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a genre (admin)
+      tags:
+      - genres
+  /health:
+    get:
+      description: Returns the API health status and current version
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              started_at:
+                type: string
+              status:
+                type: string
+              version:
+                type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+  /imports:
+    delete:
+      description: Bulk-deletes all done/failed/cancelled import jobs for the calling
+        user.
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete all finished import jobs
+      tags:
+      - imports
+    get:
+      description: Returns all import jobs across all libraries for the calling user.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.ImportJob'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all import jobs (global)
+      tags:
+      - imports
+  /imports/{import_id}:
+    delete:
+      description: Deletes a finished (done/failed/cancelled) import job record.
+      parameters:
+      - description: Import job UUID
+        in: path
+        name: import_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete an import job
+      tags:
+      - imports
+  /imports/{import_id}/cancel:
+    post:
+      description: Requests cancellation of a running import job.
+      parameters:
+      - description: Import job UUID
+        in: path
+        name: import_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cancel an import job
+      tags:
+      - imports
+  /libraries:
+    get:
+      description: Returns all libraries the authenticated user has access to.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.LibraryResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List libraries
+      tags:
+      - libraries
+    post:
+      consumes:
+      - application/json
+      description: Creates a new library owned by the authenticated user.
+      parameters:
+      - description: Library details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            description:
+              type: string
+            is_public:
+              type: boolean
+            name:
+              type: string
+            slug:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.LibraryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a library
+      tags:
+      - libraries
+  /libraries/{library_id}:
+    delete:
+      description: Permanently deletes a library and all its contents.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a library
+      tags:
+      - libraries
+    get:
+      description: Returns details for a specific library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.LibraryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a library
+      tags:
+      - libraries
+    put:
+      consumes:
+      - application/json
+      description: Updates name, description, or visibility of a library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Updated fields
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            description:
+              type: string
+            is_public:
+              type: boolean
+            name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.LibraryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a library
+      tags:
+      - libraries
+  /libraries/{library_id}/book-by-isbn/{isbn}:
+    get:
+      description: Searches the library for a book with the given ISBN.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: ISBN-10 or ISBN-13
+        in: path
+        name: isbn
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.BookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Find book by ISBN
+      tags:
+      - books
+  /libraries/{library_id}/books:
+    get:
+      description: Returns a paginated, filtered, sorted list of books in the library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Search query or query-language expression
+        in: query
+        name: q
+        type: string
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Items per page
+        in: query
+        name: per_page
+        type: integer
+      - description: Sort field
+        in: query
+        name: sort
+        type: string
+      - description: Sort direction (asc/desc)
+        in: query
+        name: sort_dir
+        type: string
+      - description: Filter by first letter
+        in: query
+        name: letter
+        type: string
+      - description: Filter by tag name
+        in: query
+        name: tag
+        type: string
+      - description: Filter by media type
+        in: query
+        name: type_filter
+        type: string
+      - description: Treat q as regex
+        in: query
+        name: regex
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.PagedBooksResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List books in a library
+      tags:
+      - books
+    post:
+      consumes:
+      - application/json
+      description: Adds a new book to the library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            contributors:
+              items:
+                type: object
+              type: array
+            description:
+              type: string
+            edition:
+              type: object
+            genre_ids:
+              items:
+                type: string
+              type: array
+            media_type_id:
+              type: string
+            subtitle:
+              type: string
+            tag_ids:
+              items:
+                type: string
+              type: array
+            title:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.BookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a book
+      tags:
+      - books
+  /libraries/{library_id}/books/{book_id}:
+    delete:
+      description: Permanently deletes a book and all its editions from the library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a book
+      tags:
+      - books
+    get:
+      description: Returns full details for a specific book including contributors,
+        tags, genres, and series.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.BookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a book
+      tags:
+      - books
+    put:
+      consumes:
+      - application/json
+      description: Replaces the book's metadata.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Updated book
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            contributors:
+              items:
+                type: object
+              type: array
+            description:
+              type: string
+            genre_ids:
+              items:
+                type: string
+              type: array
+            media_type_id:
+              type: string
+            subtitle:
+              type: string
+            tag_ids:
+              items:
+                type: string
+              type: array
+            title:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.BookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a book
+      tags:
+      - books
+  /libraries/{library_id}/books/{book_id}/cover:
+    delete:
+      description: Removes the cover image from a book.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete book cover
+      tags:
+      - covers
+    get:
+      description: Streams the primary cover image for a book.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - image/jpeg
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Serve book cover image
+      tags:
+      - covers
+    put:
+      consumes:
+      - multipart/form-data
+      description: Accepts a multipart form upload and stores the image as the book's
+        cover.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Cover image file
+        in: formData
+        name: cover
+        required: true
+        type: file
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload book cover
+      tags:
+      - covers
+  /libraries/{library_id}/books/{book_id}/cover/fetch:
+    post:
+      consumes:
+      - application/json
+      description: Downloads a cover image from the given URL and stores it as the
+        book's cover.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Cover URL
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            url:
+              type: string
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Fetch book cover from URL
+      tags:
+      - covers
+  /libraries/{library_id}/books/{book_id}/editions:
+    get:
+      description: Returns all editions (physical/digital/audio) for a book.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.EditionResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List editions of a book
+      tags:
+      - editions
+    post:
+      consumes:
+      - application/json
+      description: Adds a new edition to an existing book.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            acquired_at:
+              type: string
+            copy_count:
+              type: integer
+            description:
+              type: string
+            duration_seconds:
+              type: integer
+            edition_name:
+              type: string
+            format:
+              type: string
+            is_primary:
+              type: boolean
+            isbn_10:
+              type: string
+            isbn_13:
+              type: string
+            language:
+              type: string
+            narrator:
+              type: string
+            page_count:
+              type: integer
+            publish_date:
+              type: string
+            publisher:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.EditionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create an edition
+      tags:
+      - editions
+  /libraries/{library_id}/books/{book_id}/editions/{edition_id}:
+    delete:
+      description: Permanently deletes an edition from a book.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete an edition
+      tags:
+      - editions
+    put:
+      consumes:
+      - application/json
+      description: Replaces an edition's metadata.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      - description: Edition details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            acquired_at:
+              type: string
+            copy_count:
+              type: integer
+            description:
+              type: string
+            duration_seconds:
+              type: integer
+            edition_name:
+              type: string
+            format:
+              type: string
+            is_primary:
+              type: boolean
+            isbn_10:
+              type: string
+            isbn_13:
+              type: string
+            language:
+              type: string
+            narrator:
+              type: string
+            page_count:
+              type: integer
+            publish_date:
+              type: string
+            publisher:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.EditionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update an edition
+      tags:
+      - editions
+  /libraries/{library_id}/books/{book_id}/editions/{edition_id}/files:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Attaches an ebook or audiobook file to an edition.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      - description: Book file (epub, pdf, mp3, m4b, etc.)
+        in: formData
+        name: file
+        required: true
+        type: file
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload edition file
+      tags:
+      - editions
+  /libraries/{library_id}/books/{book_id}/editions/{edition_id}/files/{file_id}:
+    delete:
+      description: Removes a specific file from an edition.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      - description: File UUID
+        in: path
+        name: file_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove edition file
+      tags:
+      - editions
+    get:
+      description: Streams a specific file attached to a digital edition.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      - description: File UUID
+        in: path
+        name: file_id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Download edition file
+      tags:
+      - editions
+  /libraries/{library_id}/books/{book_id}/editions/{edition_id}/files/link:
+    post:
+      consumes:
+      - application/json
+      description: Links a file that already exists on the server (within a storage
+        location) to an edition.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Link existing file to edition
+      tags:
+      - editions
+  /libraries/{library_id}/books/{book_id}/editions/{edition_id}/files/link-upload:
+    post:
+      consumes:
+      - application/json
+      description: Links a file that already exists in the server's default upload
+        directory to an edition.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Link file from upload path to edition
+      tags:
+      - editions
+  /libraries/{library_id}/books/{book_id}/editions/{edition_id}/my-interaction:
+    delete:
+      description: Removes the current user's reading interaction for an edition.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete my reading interaction
+      tags:
+      - editions
+    get:
+      description: Returns the current user's reading status, rating, and notes for
+        a specific edition.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.InteractionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get my reading interaction
+      tags:
+      - editions
+    put:
+      consumes:
+      - application/json
+      description: Creates or updates the current user's reading status, rating, and
+        notes for an edition.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      - description: Interaction data
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            date_finished:
+              type: string
+            date_started:
+              type: string
+            is_favorite:
+              type: boolean
+            notes:
+              type: string
+            rating:
+              type: integer
+            read_status:
+              type: string
+            review:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.InteractionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set my reading interaction
+      tags:
+      - editions
+  /libraries/{library_id}/books/{book_id}/series:
+    get:
+      description: Returns all series that a specific book belongs to.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              properties:
+                position:
+                  type: number
+                series_id:
+                  type: string
+                series_name:
+                  type: string
+              type: object
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get series for a book
+      tags:
+      - series
+  /libraries/{library_id}/books/{book_id}/shelves:
+    get:
+      description: Returns all shelves that contain the given book.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.ShelfResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List shelves for a book
+      tags:
+      - shelves
+  /libraries/{library_id}/books/bulk/cover:
+    post:
+      consumes:
+      - application/json
+      description: Creates an enrichment batch to refresh cover images for a list
+        of books.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Books to refresh covers for
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            book_ids:
+              items:
+                type: string
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Bulk refresh covers
+      tags:
+      - books
+      - covers
+  /libraries/{library_id}/books/bulk/enrich:
+    post:
+      consumes:
+      - application/json
+      description: Creates an enrichment batch to refresh metadata for a list of books.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Books to enrich
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            book_ids:
+              items:
+                type: string
+              type: array
+            force:
+              type: boolean
+          type: object
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Bulk enrich books
+      tags:
+      - books
+      - enrichment
+  /libraries/{library_id}/books/fingerprint:
+    get:
+      description: |-
+        Returns a cheap summary (count + max updated_at) that clients
+        can compare against a stored value to decide whether to resync.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookFingerprint'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get books collection fingerprint
+      tags:
+      - books
+  /libraries/{library_id}/books/letters:
+    get:
+      description: Returns the sorted list of first letters (by sort title) that have
+        books in this library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: string
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List available first letters
+      tags:
+      - books
+  /libraries/{library_id}/browse-uploads:
+    get:
+      description: Lists files and subdirectories within the server's configured ebook
+        or audiobook upload path.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: ebook or audiobook
+        in: query
+        name: format
+        required: true
+        type: string
+      - description: 'Relative sub-path (default: root)'
+        in: query
+        name: path
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Browse default upload directory
+      tags:
+      - editions
+  /libraries/{library_id}/contributors:
+    get:
+      description: Returns a paginated, filtered, sorted list of contributors.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Name filter
+        in: query
+        name: q
+        type: string
+      - description: First-letter filter
+        in: query
+        name: letter
+        type: string
+      - description: 'Sort field: name|book_count'
+        in: query
+        name: sort
+        type: string
+      - description: 'Sort direction: asc|desc'
+        in: query
+        name: sort_dir
+        type: string
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Items per page
+        in: query
+        name: per_page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List contributors for a library (paged)
+      tags:
+      - contributors
+  /libraries/{library_id}/contributors/{contributor_id}:
+    get:
+      description: Returns full contributor profile and bibliography, annotated with
+        library context.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Contributor UUID
+        in: path
+        name: contributor_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a contributor with works
+      tags:
+      - contributors
+  /libraries/{library_id}/contributors/letters:
+    get:
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: string
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Get available first letters for contributors in a library
+      tags:
+      - contributors
+  /libraries/{library_id}/imports:
+    get:
+      description: Returns all import jobs for a specific library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.ImportJob'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List import jobs for a library
+      tags:
+      - imports
+    post:
+      consumes:
+      - multipart/form-data
+      description: Accepts a multipart form upload with a CSV file and column mapping,
+        and starts an import job.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: CSV file to import
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: 'JSON column mapping {field_name: column_index}'
+        in: formData
+        name: mapping
+        type: string
+      - description: Skip duplicate ISBNs (default true)
+        in: formData
+        name: skip_duplicates
+        type: string
+      - description: Default edition format (default paperback)
+        in: formData
+        name: default_format
+        type: string
+      - description: Enrich metadata after import
+        in: formData
+        name: enrich_metadata
+        type: string
+      - description: Fetch covers after import
+        in: formData
+        name: enrich_covers
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.ImportJob'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a CSV import job
+      tags:
+      - imports
+  /libraries/{library_id}/imports/{import_id}:
+    get:
+      description: Returns the status and progress of a specific import job.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Import job UUID
+        in: path
+        name: import_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.ImportJob'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get an import job
+      tags:
+      - imports
+  /libraries/{library_id}/loans:
+    get:
+      description: Returns current (and optionally returned) loans for a library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Include returned loans
+        in: query
+        name: include_returned
+        type: boolean
+      - description: Filter by borrower name
+        in: query
+        name: search
+        type: string
+      - description: Filter by tag
+        in: query
+        name: tag
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.LoanResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List loans in a library
+      tags:
+      - loans
+    post:
+      consumes:
+      - application/json
+      description: Records that a book has been loaned to someone.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Loan details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            book_id:
+              type: string
+            due_date:
+              type: string
+            loaned_at:
+              type: string
+            loaned_to:
+              type: string
+            notes:
+              type: string
+            tag_ids:
+              items:
+                type: string
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.LoanResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a loan
+      tags:
+      - loans
+  /libraries/{library_id}/loans/{loan_id}:
+    delete:
+      description: Permanently deletes a loan record.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Loan UUID
+        in: path
+        name: loan_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a loan
+      tags:
+      - loans
+    patch:
+      consumes:
+      - application/json
+      description: Updates loan details including marking a book as returned.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Loan UUID
+        in: path
+        name: loan_id
+        required: true
+        type: string
+      - description: Updated loan
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            due_date:
+              type: string
+            loaned_to:
+              type: string
+            notes:
+              type: string
+            returned_at:
+              type: string
+            tag_ids:
+              items:
+                type: string
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.LoanResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a loan
+      tags:
+      - loans
+  /libraries/{library_id}/members:
+    get:
+      description: Returns all members of a library with their roles.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Filter by username/display name
+        in: query
+        name: search
+        type: string
+      - description: Filter by tag name
+        in: query
+        name: tag
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.MemberResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List library members
+      tags:
+      - libraries
+    post:
+      consumes:
+      - application/json
+      description: Adds an existing user to the library with the specified role.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Member details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            role:
+              type: string
+            user_id:
+              type: string
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add a member to a library
+      tags:
+      - libraries
+  /libraries/{library_id}/members/{user_id}:
+    delete:
+      description: Removes a user's membership from a library. Cannot remove the owner.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: User UUID
+        in: path
+        name: user_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a member from a library
+      tags:
+      - libraries
+    patch:
+      consumes:
+      - application/json
+      description: Changes the role of an existing library member.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: User UUID
+        in: path
+        name: user_id
+        required: true
+        type: string
+      - description: New role
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            role:
+              type: string
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a member's role
+      tags:
+      - libraries
+  /libraries/{library_id}/series:
+    get:
+      description: Returns all series defined in the library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Filter by series name
+        in: query
+        name: search
+        type: string
+      - description: Filter by tag
+        in: query
+        name: tag
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.SeriesResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List series in a library
+      tags:
+      - series
+    post:
+      consumes:
+      - application/json
+      description: Creates a new series in the library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            demographic:
+              type: string
+            description:
+              type: string
+            external_id:
+              type: string
+            external_source:
+              type: string
+            genres:
+              items:
+                type: string
+              type: array
+            name:
+              type: string
+            original_language:
+              type: string
+            publication_year:
+              type: integer
+            status:
+              type: string
+            tag_ids:
+              items:
+                type: string
+              type: array
+            total_count:
+              type: integer
+            url:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.SeriesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a series
+      tags:
+      - series
+  /libraries/{library_id}/series/{series_id}:
+    delete:
+      description: Permanently deletes a series (books are not deleted).
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a series
+      tags:
+      - series
+    get:
+      description: Returns details for a specific series.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.SeriesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a series
+      tags:
+      - series
+    put:
+      consumes:
+      - application/json
+      description: Replaces a series's metadata.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      - description: Updated series
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            demographic:
+              type: string
+            description:
+              type: string
+            external_id:
+              type: string
+            external_source:
+              type: string
+            genres:
+              items:
+                type: string
+              type: array
+            name:
+              type: string
+            original_language:
+              type: string
+            publication_year:
+              type: integer
+            status:
+              type: string
+            tag_ids:
+              items:
+                type: string
+              type: array
+            total_count:
+              type: integer
+            url:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.SeriesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a series
+      tags:
+      - series
+  /libraries/{library_id}/series/{series_id}/books:
+    get:
+      description: Returns all books in a series with their position.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.SeriesEntryResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List books in a series
+      tags:
+      - series
+    post:
+      consumes:
+      - application/json
+      description: Sets the position of a book within a series (insert or update).
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      - description: Book position
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            book_id:
+              type: string
+            position:
+              type: number
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add or update a book in a series
+      tags:
+      - series
+  /libraries/{library_id}/series/{series_id}/books/{book_id}:
+    delete:
+      description: Removes a book's membership from a series.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a book from a series
+      tags:
+      - series
+  /libraries/{library_id}/series/{series_id}/match-apply:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Upserts each (book_id, position) pair into the target series.
+        Accepts the preview list that the caller has optionally tweaked.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      - description: Matches to apply
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            matches:
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              applied:
+                type: integer
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Bulk-apply auto-match results
+      tags:
+      - series
+  /libraries/{library_id}/series/{series_id}/match-candidates:
+    get:
+      description: |-
+        Scans the library for books whose title begins with the series
+        name plus a volume number, and returns a list of proposed
+        (book, position) pairs along with any other series each book
+        already belongs to. Does not modify state.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              properties:
+                book_id:
+                  type: string
+                other_series:
+                  type: array
+                position:
+                  type: number
+                subtitle:
+                  type: string
+                title:
+                  type: string
+              type: object
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Auto-match library books to this series
+      tags:
+      - series
+  /libraries/{library_id}/series/{series_id}/volumes:
+    get:
+      description: Returns known release volumes for a series from provider data.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.SeriesVolumeResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List series volumes
+      tags:
+      - series
+  /libraries/{library_id}/series/{series_id}/volumes/sync:
+    post:
+      description: Fetches the latest volume/release data from providers and stores
+        it.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.SeriesVolumeResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Sync series volumes from providers
+      tags:
+      - series
+  /libraries/{library_id}/series/bulk-create:
+    post:
+      consumes:
+      - application/json
+      description: Creates each named series and adds the listed books at the given
+        positions.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series to create
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            series:
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              created:
+                type: integer
+              series:
+                type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Bulk-create series from suggestions
+      tags:
+      - series
+  /libraries/{library_id}/series/suggest:
+    get:
+      description: |-
+        Scans books not yet in any series, detects volume-numbered titles,
+        groups them by base name, and returns proposed new series. Does
+        not modify state.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Media type name filter (repeatable)
+        in: query
+        name: media_type
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              properties:
+                books:
+                  type: array
+                proposed_name:
+                  type: string
+              type: object
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Suggest new series from ungrouped books
+      tags:
+      - series
+  /libraries/{library_id}/shelves:
+    get:
+      description: Returns all shelves for a library with book counts and tags.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Filter by shelf name
+        in: query
+        name: search
+        type: string
+      - description: Filter by tag name
+        in: query
+        name: tag
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.ShelfResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List shelves in a library
+      tags:
+      - shelves
+    post:
+      consumes:
+      - application/json
+      description: Creates a new shelf in the library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Shelf details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            color:
+              type: string
+            description:
+              type: string
+            display_order:
+              type: integer
+            icon:
+              type: string
+            name:
+              type: string
+            tag_ids:
+              items:
+                type: string
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.ShelfResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a shelf
+      tags:
+      - shelves
+  /libraries/{library_id}/shelves/{shelf_id}:
+    delete:
+      description: Permanently deletes a shelf (books are not deleted).
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Shelf UUID
+        in: path
+        name: shelf_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a shelf
+      tags:
+      - shelves
+    put:
+      consumes:
+      - application/json
+      description: Replaces a shelf's metadata.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Shelf UUID
+        in: path
+        name: shelf_id
+        required: true
+        type: string
+      - description: Updated shelf
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            color:
+              type: string
+            description:
+              type: string
+            display_order:
+              type: integer
+            icon:
+              type: string
+            name:
+              type: string
+            tag_ids:
+              items:
+                type: string
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.ShelfResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a shelf
+      tags:
+      - shelves
+  /libraries/{library_id}/shelves/{shelf_id}/books:
+    get:
+      description: Returns all books currently on the given shelf.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Shelf UUID
+        in: path
+        name: shelf_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.BookResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List books on a shelf
+      tags:
+      - shelves
+    post:
+      consumes:
+      - application/json
+      description: Adds a book to the specified shelf.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Shelf UUID
+        in: path
+        name: shelf_id
+        required: true
+        type: string
+      - description: Book to add
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            book_id:
+              type: string
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add a book to a shelf
+      tags:
+      - shelves
+  /libraries/{library_id}/shelves/{shelf_id}/books/{book_id}:
+    delete:
+      description: Removes a book from the specified shelf.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Shelf UUID
+        in: path
+        name: shelf_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a book from a shelf
+      tags:
+      - shelves
+  /libraries/{library_id}/storage-locations/{location_id}/browse:
+    get:
+      description: Lists files and subdirectories within a storage location at the
+        given path.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Storage location UUID
+        in: path
+        name: location_id
+        required: true
+        type: string
+      - description: 'Relative sub-path (default: root)'
+        in: query
+        name: path
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Browse storage location directory
+      tags:
+      - storage-locations
+  /libraries/{library_id}/tags:
+    get:
+      description: Returns all tags defined in the library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.TagResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List tags in a library
+      tags:
+      - tags
+    post:
+      consumes:
+      - application/json
+      description: Creates a new tag in the library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Tag details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            color:
+              type: string
+            name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.TagResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a tag
+      tags:
+      - tags
+  /libraries/{library_id}/tags/{tag_id}:
+    delete:
+      description: Permanently deletes a tag from the library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Tag UUID
+        in: path
+        name: tag_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a tag
+      tags:
+      - tags
+    put:
+      consumes:
+      - application/json
+      description: Updates the name and/or color of a tag.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Tag UUID
+        in: path
+        name: tag_id
+        required: true
+        type: string
+      - description: Updated tag
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            color:
+              type: string
+            name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.TagResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a tag
+      tags:
+      - tags
+  /lookup/books:
+    get:
+      description: Queries all enabled providers for books matching the freetext query.
+      parameters:
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search books across providers
+      tags:
+      - lookup
+  /lookup/contributors:
+    get:
+      description: Queries enabled ContributorProviders for name candidates.
+      parameters:
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+      security:
+      - BearerAuth: []
+      summary: Search external providers for contributors
+      tags:
+      - contributors
+  /lookup/isbn/{isbn}:
+    get:
+      description: Queries all enabled providers and returns per-provider results.
+      parameters:
+      - description: ISBN-10 or ISBN-13
+        in: path
+        name: isbn
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lookup book by ISBN
+      tags:
+      - lookup
+  /lookup/isbn/{isbn}/merged:
+    get:
+      description: Returns a single merged result across all providers with per-field
+        source attribution.
+      parameters:
+      - description: ISBN-10 or ISBN-13
+        in: path
+        name: isbn
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.MergedBookResult'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lookup ISBN merged
+      tags:
+      - lookup
+  /lookup/series:
+    get:
+      description: Queries enabled providers for series matching the search term.
+      parameters:
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.SeriesResult'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search series across providers
+      tags:
+      - lookup
+  /media-types:
+    get:
+      description: Returns all globally defined media types (book, manga, audiobook,
+        etc.).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/responses.MediaTypeResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List media types
+      tags:
+      - media-types
+    post:
+      consumes:
+      - application/json
+      description: Creates a new global media type. Instance admin only.
+      parameters:
+      - description: Media type details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            description:
+              type: string
+            display_name:
+              type: string
+            name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/responses.MediaTypeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a media type (admin)
+      tags:
+      - media-types
+  /media-types/{media_type_id}:
+    delete:
+      description: Permanently deletes a media type. Fails if books are assigned to
+        it. Instance admin only.
+      parameters:
+      - description: Media type UUID
+        in: path
+        name: media_type_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a media type (admin)
+      tags:
+      - media-types
+    put:
+      consumes:
+      - application/json
+      description: Updates the display name and description of a media type. Instance
+        admin only.
+      parameters:
+      - description: Media type UUID
+        in: path
+        name: media_type_id
+        required: true
+        type: string
+      - description: Updated fields
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            description:
+              type: string
+            display_name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/responses.MediaTypeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a media type (admin)
+      tags:
+      - media-types
+  /setup/admin:
+    post:
+      consumes:
+      - application/json
+      description: Creates the initial instance admin on a fresh install. Fails with
+        409 once any user exists.
+      parameters:
+      - description: Admin account request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            display_name:
+              type: string
+            email:
+              type: string
+            password:
+              type: string
+            username:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              access_token:
+                type: string
+              expires_in:
+                type: integer
+              refresh_token:
+                type: string
+              user:
+                type: object
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      summary: Create first instance admin
+      tags:
+      - setup
+  /setup/status:
+    get:
+      description: Returns whether the instance has been initialized (at least one
+        user exists).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              initialized:
+                type: boolean
+            type: object
+      summary: Setup status
+      tags:
+      - setup
+  /users:
+    get:
+      description: Full-text search across users; returns minimal profile data. Query
+        must be at least 2 characters.
+      parameters:
+      - description: Search query (min 2 chars)
+        in: query
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              properties:
+                display_name:
+                  type: string
+                email:
+                  type: string
+                id:
+                  type: string
+                username:
+                  type: string
+              type: object
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search users
+      tags:
+      - auth
+securityDefinitions:
+  BearerAuth:
+    description: 'Enter: Bearer {token}'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

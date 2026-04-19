@@ -1,0 +1,50 @@
+name: API Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/swagger.json"
+      - "docs/swagger.yaml"
+      - ".github/workflows/docs.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Redoc static site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp docs/swagger.json site/openapi.json
+          npx --yes @redocly/cli@latest build-docs site/openapi.json -o site/index.html
+          # Copy swagger.yaml as well so consumers can fetch either format.
+          cp docs/swagger.yaml site/openapi.yaml
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

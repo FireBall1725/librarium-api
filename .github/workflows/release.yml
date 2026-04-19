@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: "auto"
+        type: choice
+        options:
+          - auto    # next revision in current YY.MM (rolls to .0 on month change)
+          - major   # force YY.MM.0 from today's date
+      dry-run:
+        description: "Compute the version but don't tag, push, or publish"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      next_dev: ${{ steps.version.outputs.next_dev }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Compute next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          YY=$(date -u +%y)
+          MM=$(date -u +%-m)
+          PREFIX="${YY}.${MM}"
+
+          if [ "$BUMP" = "major" ]; then
+            REV=0
+          else
+            LAST=$(git tag --list "v${PREFIX}.*" | sort -V | tail -n1 || true)
+            if [ -z "$LAST" ]; then
+              REV=0
+            else
+              LAST_REV=${LAST##*.}
+              REV=$((LAST_REV + 1))
+            fi
+          fi
+
+          VERSION="${PREFIX}.${REV}"
+          NEXT_DEV="${PREFIX}.$((REV + 1))-dev"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "next_dev=$NEXT_DEV" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: $VERSION"
+          echo "Post-release dev bump: $NEXT_DEV"
+
+      - name: Update version.go (release)
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i -E "s/^var Version = \".*\"/var Version = \"${VERSION}\"/" internal/version/version.go
+          grep -n "^var Version" internal/version/version.go
+
+      - name: Commit + tag release
+        if: ${{ inputs.dry-run == false }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git add internal/version/version.go
+          git commit -m "release: ${VERSION}"
+          git tag "v${VERSION}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: ${{ inputs.dry-run == false }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        if: ${{ inputs.dry-run == false }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            ghcr.io/fireball1725/librarium-api:${{ steps.version.outputs.version }}
+            ghcr.io/fireball1725/librarium-api:latest
+
+      - name: Bump to next -dev
+        if: ${{ inputs.dry-run == false }}
+        run: |
+          NEXT_DEV="${{ steps.version.outputs.next_dev }}"
+          sed -i -E "s/^var Version = \".*\"/var Version = \"${NEXT_DEV}\"/" internal/version/version.go
+          git add internal/version/version.go
+          git commit -m "chore: bump to ${NEXT_DEV}"
+
+      - name: Push commits and tag
+        if: ${{ inputs.dry-run == false }}
+        run: |
+          git push origin HEAD:main
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        if: ${{ inputs.dry-run == false }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          generate_release_notes: true

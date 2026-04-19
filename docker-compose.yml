@@ -1,0 +1,42 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: "postgres://librarium:librarium@db:5432/librarium?sslmode=disable"
+      JWT_SECRET: "dev-secret-change-in-production"
+      LOG_LEVEL: "debug"
+      COVER_STORAGE_PATH: "/data/covers"
+      EBOOK_STORAGE_PATH: "/data/media/ebooks"
+      AUDIOBOOK_STORAGE_PATH: "/data/media/audiobooks"
+    volumes:
+      - cover_data:/data/covers
+      - media_data:/data/media
+      # Inherit the host's timezone so log/build timestamps match whoever runs the container.
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: librarium
+      POSTGRES_USER: librarium
+      POSTGRES_PASSWORD: librarium
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U librarium"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  cover_data:

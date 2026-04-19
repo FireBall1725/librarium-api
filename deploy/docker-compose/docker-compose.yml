@@ -1,0 +1,68 @@
+# Full-stack self-hosted deployment for Librarium.
+#
+# Pulls published images from GHCR — no local build required. Runs db + api + web.
+# Web UI is exposed on WEB_PORT (default 3000); the API is NOT published externally
+# and is reached through the web service's nginx proxy at /api.
+#
+# Usage (from this directory):
+#   cp .env.example .env
+#   # edit .env to set JWT_SECRET and POSTGRES_PASSWORD
+#   docker compose up -d
+#
+# Open:  http://localhost:3000
+#
+# Upgrading: pin API_TAG/WEB_TAG in .env, then:
+#   docker compose pull && docker compose up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-librarium}
+      POSTGRES_USER: ${POSTGRES_USER:-librarium}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-librarium}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  librarium-api:
+    image: ghcr.io/fireball1725/librarium-api:${API_TAG:-latest}
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER:-librarium}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-librarium}?sslmode=disable"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      COVER_STORAGE_PATH: /data/covers
+      EBOOK_STORAGE_PATH: /data/media/ebooks
+      AUDIOBOOK_STORAGE_PATH: /data/media/audiobooks
+    volumes:
+      # Covers are small, server-generated, and tightly coupled to the db — keep them on a
+      # Docker named volume alongside the db for consistent backups.
+      - cover_data:/data/covers
+      # Media (ebooks, audiobooks) can get large and often lives on a NAS / existing library
+      # share. Default is a Docker named volume; to use a host path or network share instead,
+      # set MEDIA_PATH in .env (e.g. MEDIA_PATH=/mnt/library) and the bind mount below kicks in.
+      - ${MEDIA_PATH:-media_data}:/data/media
+      # Inherit the host's timezone so build/log timestamps match the host.
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/fireball1725/librarium-web:${WEB_TAG:-latest}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      - librarium-api
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  cover_data:
+  media_data:

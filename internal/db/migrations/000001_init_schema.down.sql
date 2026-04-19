@@ -1,0 +1,46 @@
+-- Tear down in reverse dependency order
+
+DROP TABLE IF EXISTS instance_settings;
+DROP TABLE IF EXISTS enrichment_batch_items;
+DROP TABLE IF EXISTS enrichment_batches;
+DROP TABLE IF EXISTS import_job_items;
+DROP TABLE IF EXISTS import_jobs;
+DROP TABLE IF EXISTS wishlist_items;
+DROP TABLE IF EXISTS loan_tags;
+DROP TABLE IF EXISTS loans;
+DROP TABLE IF EXISTS user_preferences;
+DROP TABLE IF EXISTS user_book_interactions;
+DROP TABLE IF EXISTS member_tags;
+DROP TABLE IF EXISTS shelf_tags;
+DROP TABLE IF EXISTS series_tags;
+DROP TABLE IF EXISTS book_tags;
+DROP TABLE IF EXISTS tags;
+DROP TABLE IF EXISTS book_shelves;
+DROP TABLE IF EXISTS shelves;
+DROP TABLE IF EXISTS cover_images;
+DROP TABLE IF EXISTS edition_files;
+DROP TABLE IF EXISTS book_editions;
+DROP TABLE IF EXISTS storage_locations;
+DROP TABLE IF EXISTS book_genres;
+DROP TABLE IF EXISTS book_contributors;
+DROP TABLE IF EXISTS book_series;
+DROP TABLE IF EXISTS books;
+DROP TABLE IF EXISTS series_volumes;
+DROP TABLE IF EXISTS series;
+DROP TABLE IF EXISTS genres;
+DROP TABLE IF EXISTS contributor_works;
+DROP TABLE IF EXISTS contributors;
+DROP TABLE IF EXISTS media_types;
+DROP TABLE IF EXISTS library_memberships;
+DROP TABLE IF EXISTS libraries;
+DROP TABLE IF EXISTS role_permissions;
+DROP TABLE IF EXISTS permissions;
+DROP TABLE IF EXISTS roles;
+DROP TABLE IF EXISTS revoked_access_tokens;
+DROP TABLE IF EXISTS refresh_tokens;
+DROP TABLE IF EXISTS user_identities;
+DROP TABLE IF EXISTS users;
+
+DROP FUNCTION IF EXISTS natural_sort_key;
+DROP FUNCTION IF EXISTS sort_title;
+DROP FUNCTION IF EXISTS set_updated_at;

@@ -1,0 +1,31 @@
+# Non-sensitive configuration for librarium-api. Anything here can be changed
+# without rolling the Secret. Edit and re-apply, then restart the api pods:
+#
+#   kubectl apply -f 20-configmap.yaml
+#   kubectl rollout restart deploy/librarium-api -n librarium
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: librarium-config
+  namespace: librarium
+data:
+  # Logging — debug | info | warn | error
+  LOG_LEVEL: "info"
+
+  # Storage paths inside the api container. These match the volume mounts in
+  # 40-api.yaml — only change them if you're also changing the mount points.
+  COVER_STORAGE_PATH: "/data/covers"
+  EBOOK_STORAGE_PATH: "/data/media/ebooks"
+  AUDIOBOOK_STORAGE_PATH: "/data/media/audiobooks"
+
+  # Filename templates for uploaded ebooks and audiobooks. Placeholders like
+  # {title}, {author}, {isbn13}, {edition} are substituted at upload time.
+  EBOOK_PATH_TEMPLATE: "{title}"
+  AUDIOBOOK_PATH_TEMPLATE: "{title}"
+
+  # JWT token lifetimes (Go duration strings).
+  JWT_ACCESS_TTL: "15m"
+  JWT_REFRESH_TTL: "168h"
+
+  # Set to "false" to disable open user registration (admins can still invite).
+  REGISTRATION_ENABLED: "true"

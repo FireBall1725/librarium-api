@@ -1,0 +1,338 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 FireBall1725 (Adaléa)
+
+package handlers
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/fireball1725/librarium-api/internal/api/middleware"
+	"github.com/fireball1725/librarium-api/internal/api/respond"
+	"github.com/fireball1725/librarium-api/internal/models"
+	"github.com/fireball1725/librarium-api/internal/repository"
+	"github.com/fireball1725/librarium-api/internal/service"
+	"github.com/google/uuid"
+)
+
+type ImportHandler struct {
+	svc *service.ImportService
+}
+
+func NewImportHandler(svc *service.ImportService) *ImportHandler {
+	return &ImportHandler{svc: svc}
+}
+
+// CreateImport godoc
+//
+// @Summary     Create a CSV import job
+// @Description Accepts a multipart form upload with a CSV file and column mapping, and starts an import job.
+// @Tags        imports
+// @Accept      multipart/form-data
+// @Produce     json
+// @Security    BearerAuth
+// @Param       library_id       path      string  true   "Library UUID"
+// @Param       file             formData  file    true   "CSV file to import"
+// @Param       mapping          formData  string  false  "JSON column mapping {field_name: column_index}"
+// @Param       skip_duplicates  formData  string  false  "Skip duplicate ISBNs (default true)"
+// @Param       default_format   formData  string  false  "Default edition format (default paperback)"
+// @Param       enrich_metadata  formData  string  false  "Enrich metadata after import"
+// @Param       enrich_covers    formData  string  false  "Fetch covers after import"
+// @Success     201  {object}  models.ImportJob
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /libraries/{library_id}/imports [post]
+func (h *ImportHandler) CreateImport(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+
+	caller := middleware.ClaimsFromContext(r.Context())
+	if caller == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		respond.Error(w, http.StatusBadRequest, "failed to parse multipart form")
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "missing file field")
+		return
+	}
+	defer file.Close()
+
+	csvBytes, err := io.ReadAll(file)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	// Parse field mapping: JSON {"title": 0, "author": 1, ...}
+	var mapping map[string]int
+	if mappingStr := r.FormValue("mapping"); mappingStr != "" {
+		if err := json.Unmarshal([]byte(mappingStr), &mapping); err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid mapping JSON")
+			return
+		}
+	}
+
+	// Parse prefer_csv: JSON {"title": true, ...}
+	preferCSV := make(map[string]bool)
+	if preferStr := r.FormValue("prefer_csv"); preferStr != "" {
+		if err := json.Unmarshal([]byte(preferStr), &preferCSV); err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid prefer_csv JSON")
+			return
+		}
+	}
+
+	skipDuplicates := true
+	if sd := r.FormValue("skip_duplicates"); sd != "" {
+		skipDuplicates, _ = strconv.ParseBool(sd)
+	}
+
+	defaultFormat := r.FormValue("default_format")
+	if defaultFormat == "" {
+		defaultFormat = "paperback"
+	}
+
+	enrichMetadata := false
+	if em := r.FormValue("enrich_metadata"); em != "" {
+		enrichMetadata, _ = strconv.ParseBool(em)
+	}
+
+	enrichCovers := false
+	if ec := r.FormValue("enrich_covers"); ec != "" {
+		enrichCovers, _ = strconv.ParseBool(ec)
+	}
+
+	req := service.ImportRequest{
+		LibraryID:      libraryID,
+		CallerID:       caller.UserID,
+		CSVText:        string(csvBytes),
+		FieldMapping:   mapping,
+		SkipDuplicates: skipDuplicates,
+		DefaultFormat:  defaultFormat,
+		PreferCSV:      preferCSV,
+		EnrichMetadata: enrichMetadata,
+		EnrichCovers:   enrichCovers,
+	}
+
+	job, err := h.svc.StartImport(r.Context(), req)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows in CSV") || strings.Contains(err.Error(), "parsing CSV") {
+			respond.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusCreated, job)
+}
+
+// CancelImport godoc
+//
+// @Summary     Cancel an import job
+// @Description Requests cancellation of a running import job.
+// @Tags        imports
+// @Security    BearerAuth
+// @Param       import_id  path  string  true  "Import job UUID"
+// @Success     204
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /imports/{import_id}/cancel [post]
+func (h *ImportHandler) CancelImport(w http.ResponseWriter, r *http.Request) {
+	caller := middleware.ClaimsFromContext(r.Context())
+	if caller == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	importID, err := uuid.Parse(r.PathValue("import_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid import id")
+		return
+	}
+
+	if err := h.svc.CancelImport(r.Context(), importID, caller.UserID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respond.Error(w, http.StatusNotFound, "job not found or not cancellable")
+			return
+		}
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusNoContent, nil)
+}
+
+// DeleteImport godoc
+//
+// @Summary     Delete an import job
+// @Description Deletes a finished (done/failed/cancelled) import job record.
+// @Tags        imports
+// @Security    BearerAuth
+// @Param       import_id  path  string  true  "Import job UUID"
+// @Success     204
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /imports/{import_id} [delete]
+func (h *ImportHandler) DeleteImport(w http.ResponseWriter, r *http.Request) {
+	caller := middleware.ClaimsFromContext(r.Context())
+	if caller == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	importID, err := uuid.Parse(r.PathValue("import_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid import id")
+		return
+	}
+
+	if err := h.svc.DeleteImport(r.Context(), importID, caller.UserID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respond.Error(w, http.StatusNotFound, "job not found or not deletable")
+			return
+		}
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusNoContent, nil)
+}
+
+// DeleteFinishedImports godoc
+//
+// @Summary     Delete all finished import jobs
+// @Description Bulk-deletes all done/failed/cancelled import jobs for the calling user.
+// @Tags        imports
+// @Security    BearerAuth
+// @Success     204
+// @Failure     401  {object}  object{error=string}
+// @Router      /imports [delete]
+func (h *ImportHandler) DeleteFinishedImports(w http.ResponseWriter, r *http.Request) {
+	caller := middleware.ClaimsFromContext(r.Context())
+	if caller == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if err := h.svc.DeleteFinishedImports(r.Context(), caller.UserID); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusNoContent, nil)
+}
+
+// ListAllImports godoc
+//
+// @Summary     List all import jobs (global)
+// @Description Returns all import jobs across all libraries for the calling user.
+// @Tags        imports
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   models.ImportJob
+// @Failure     401  {object}  object{error=string}
+// @Router      /imports [get]
+func (h *ImportHandler) ListAllImports(w http.ResponseWriter, r *http.Request) {
+	caller := middleware.ClaimsFromContext(r.Context())
+	if caller == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	jobs, err := h.svc.ListAllImports(r.Context(), caller.UserID)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	if jobs == nil {
+		jobs = []models.ImportJob{}
+	}
+	respond.JSON(w, http.StatusOK, jobs)
+}
+
+// ListImports godoc
+//
+// @Summary     List import jobs for a library
+// @Description Returns all import jobs for a specific library.
+// @Tags        imports
+// @Produce     json
+// @Security    BearerAuth
+// @Param       library_id  path      string  true  "Library UUID"
+// @Success     200  {array}   models.ImportJob
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /libraries/{library_id}/imports [get]
+func (h *ImportHandler) ListImports(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+
+	jobs, err := h.svc.ListImports(r.Context(), libraryID)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	if jobs == nil {
+		jobs = []models.ImportJob{}
+	}
+	respond.JSON(w, http.StatusOK, jobs)
+}
+
+// GetImport godoc
+//
+// @Summary     Get an import job
+// @Description Returns the status and progress of a specific import job.
+// @Tags        imports
+// @Produce     json
+// @Security    BearerAuth
+// @Param       library_id  path      string  true  "Library UUID"
+// @Param       import_id   path      string  true  "Import job UUID"
+// @Success     200  {object}  models.ImportJob
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /libraries/{library_id}/imports/{import_id} [get]
+func (h *ImportHandler) GetImport(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+	importID, err := uuid.Parse(r.PathValue("import_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid import id")
+		return
+	}
+
+	job, err := h.svc.GetImportStatus(r.Context(), libraryID, importID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respond.Error(w, http.StatusNotFound, "import not found")
+			return
+		}
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, job)
+}

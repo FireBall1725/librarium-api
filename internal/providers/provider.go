@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 FireBall1725 (Adaléa)
+
+// Package providers defines the metadata provider plugin system.
+// Providers expose optional capabilities (ISBN lookup, series search, etc.).
+// Each provider is independently configurable via the instance settings table.
+package providers
+
+import (
+	"context"
+	"time"
+)
+
+// Capability names.
+const (
+	CapBookISBN      = "book_isbn"
+	CapBookSearch    = "book_search"
+	CapSeriesName    = "series_name"
+	CapSeriesVolumes = "series_volumes"
+	CapContributor   = "contributor"
+)
+
+// ProviderInfo describes a provider's static metadata.
+type ProviderInfo struct {
+	Name         string
+	DisplayName  string
+	Description  string
+	RequiresKey  bool
+	Capabilities []string
+	// HelpText is shown on the settings page to explain where to get the API key.
+	HelpText string
+	// HelpURL links to the page where users can obtain the API key.
+	HelpURL string
+}
+
+// BookResult is a normalised book record returned by a BookISBNProvider.
+type BookResult struct {
+	Provider        string   `json:"provider"`
+	ProviderDisplay string   `json:"provider_display"`
+	Title           string   `json:"title"`
+	Subtitle        string   `json:"subtitle"`
+	Authors         []string `json:"authors"`
+	Publisher       string   `json:"publisher"`
+	PublishDate     string   `json:"publish_date"`
+	ISBN10          string   `json:"isbn_10"`
+	ISBN13          string   `json:"isbn_13"`
+	Description     string   `json:"description"`
+	CoverURL        string   `json:"cover_url"`
+	Language        string   `json:"language"`
+	PageCount       *int     `json:"page_count"`
+	// Categories contains subject/genre tags from the provider (e.g. "Comics & Graphic Novels / Manga").
+	// Used by the client to auto-detect the media type.
+	Categories []string `json:"categories"`
+}
+
+// SeriesResult is a normalised series record returned by a SeriesSearchProvider.
+type SeriesResult struct {
+	Provider         string   `json:"provider"`
+	ProviderDisplay  string   `json:"provider_display"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	TotalCount       *int     `json:"total_count"`
+	IsComplete       bool     `json:"is_complete"`
+	CoverURL         string   `json:"cover_url"`
+	ExternalID       string   `json:"external_id"`
+	ExternalSource   string   `json:"external_source"`
+	Status           string   `json:"status"`
+	OriginalLanguage string   `json:"original_language"`
+	PublicationYear  *int     `json:"publication_year"`
+	Demographic      string   `json:"demographic"`
+	Genres           []string `json:"genres"`
+	URL              string   `json:"url"`
+}
+
+// MetadataProvider is the base interface all providers must implement.
+type MetadataProvider interface {
+	Info() ProviderInfo
+	// Configure sets provider-specific config (api_key, etc.).
+	// An empty map means "use defaults / no key required".
+	Configure(cfg map[string]string)
+	// Enabled reports whether the provider is active.
+	Enabled() bool
+}
+
+// BookISBNProvider can look up a book by ISBN-10 or ISBN-13.
+type BookISBNProvider interface {
+	MetadataProvider
+	LookupByISBN(ctx context.Context, isbn string) (*BookResult, error)
+}
+
+// BookSearchProvider can search for books by freetext query.
+type BookSearchProvider interface {
+	MetadataProvider
+	SearchBooks(ctx context.Context, query string) ([]*BookResult, error)
+}
+
+// SeriesSearchProvider can search for series by name.
+type SeriesSearchProvider interface {
+	MetadataProvider
+	SearchSeries(ctx context.Context, query string) ([]SeriesResult, error)
+}
+
+// VolumeResult is a single volume record returned by a SeriesVolumesProvider.
+type VolumeResult struct {
+	Position    float64
+	Title       string // empty for manga (no distinct per-volume titles)
+	ReleaseDate string // "YYYY-MM-DD" or ""
+	CoverURL    string
+	ExternalID  string
+}
+
+// SeriesVolumesProvider can fetch per-volume metadata for a series.
+type SeriesVolumesProvider interface {
+	MetadataProvider
+	FetchSeriesVolumes(ctx context.Context, externalID string) ([]VolumeResult, error)
+}
+
+// ContributorSearchResult is one candidate returned by a contributor name search.
+type ContributorSearchResult struct {
+	ExternalID string
+	Name       string
+	Bio        string // may be truncated
+	PhotoURL   string
+}
+
+// ContributorWorkResult is one entry in a contributor's bibliography.
+type ContributorWorkResult struct {
+	Title       string
+	ISBN13      string
+	ISBN10      string
+	PublishYear *int
+	CoverURL    string
+}
+
+// ContributorData is the full enrichment payload for one contributor from a provider.
+type ContributorData struct {
+	Provider    string
+	ExternalID  string
+	Name        string
+	Bio         string
+	BornDate    *time.Time
+	DiedDate    *time.Time
+	Nationality string
+	PhotoURL    string
+	Works       []ContributorWorkResult
+}
+
+// ContributorProvider can look up and fetch contributor (author/narrator) profiles.
+type ContributorProvider interface {
+	MetadataProvider
+	// SearchContributors returns candidates matching name, for the user to pick from.
+	SearchContributors(ctx context.Context, name string) ([]*ContributorSearchResult, error)
+	// FetchContributor fetches full profile + bibliography for the given provider-specific ID.
+	FetchContributor(ctx context.Context, externalID string) (*ContributorData, error)
+}
