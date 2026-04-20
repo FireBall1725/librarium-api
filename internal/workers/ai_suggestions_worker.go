@@ -37,6 +37,14 @@ func (w *AISuggestionsWorker) Work(ctx context.Context, job *river.Job[models.AI
 	case errors.Is(err, service.ErrRateLimited):
 		slog.Info("ai suggestions skipped", "user_id", args.UserID, "reason", "rate_limited")
 		return nil
+	case errors.Is(err, service.ErrAlreadyRunning):
+		// Another run is already in flight for this user — skip without retry.
+		slog.Info("ai suggestions skipped", "user_id", args.UserID, "reason", "already_running")
+		return nil
+	case errors.Is(err, service.ErrRunCancelled):
+		// Admin cancelled — the run row is already marked cancelled. No retry.
+		slog.Info("ai suggestions cancelled", "user_id", args.UserID)
+		return nil
 	case err != nil:
 		return err
 	}

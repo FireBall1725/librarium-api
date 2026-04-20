@@ -28,6 +28,19 @@ var ErrAIDisabled = errors.New("ai suggestions disabled for this user")
 // daily rate limit.
 var ErrRateLimited = errors.New("ai suggestions rate limit exceeded")
 
+// ErrAlreadyRunning signals that a run is already active for this user, so
+// starting another would just queue a duplicate. The handler maps this to 409.
+var ErrAlreadyRunning = errors.New("a suggestions run is already in progress for this user")
+
+// ErrRunCancelled signals the run was cancelled mid-flight. The worker treats
+// this as a soft stop — no retry.
+var ErrRunCancelled = errors.New("suggestions run cancelled")
+
+// MaxSuggestionsPerUser caps the pool of 'new' suggestions carried across
+// runs. When a new run pushes the total past this, the oldest entries are
+// evicted. Keeps the user's dashboard from turning into an unbounded backlog.
+const MaxSuggestionsPerUser = 30
+
 // SuggestionsService orchestrates a single pass of the suggestions pipeline:
 // load inputs, call the active AI provider, parse output, enrich via metadata
 // providers, backfill if buy candidates fell short, persist the batch.
@@ -91,6 +104,17 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		}
 	}
 
+	// Don't stack a new run on top of a still-running one for the same user.
+	// HTTP handlers also check this up front for immediate feedback; the check
+	// here protects the queue + scheduler path against racing enqueues.
+	running, err := s.repo.CountRunningRunsForUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("count running runs: %w", err)
+	}
+	if running > 0 {
+		return nil, ErrAlreadyRunning
+	}
+
 	perms, err := s.aiSvc.GetPermissions(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load permissions: %w", err)
@@ -149,6 +173,12 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	totalIn, totalOut := 0, 0
 	totalCost := 0.0
 	if err != nil {
+		// If the admin cancelled while we were waiting on the provider, record
+		// the failure under the existing 'cancelled' status rather than flipping
+		// it back to 'failed'.
+		if ccErr := s.checkCancelled(ctx, runID); ccErr != nil {
+			return nil, ccErr
+		}
 		s.emit(ctx, runID, "error", map[string]any{"stage": "ai_generate_initial", "error": err.Error()})
 		_ = s.repo.FinishRun(ctx, runID, "failed", err.Error(), totalIn, totalOut, totalCost)
 		return nil, fmt.Errorf("ai generate: %w", err)
@@ -164,16 +194,31 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		"cost_usd":         resp.Usage.EstimatedCostUSD,
 	})
 
+	if err := s.checkCancelled(ctx, runID); err != nil {
+		return nil, err
+	}
+
 	parsed := ParseSuggestions(resp.Text)
 	buyParsed, readNextParsed := splitByHeading(resp.Text, parsed)
 
+	// Seed the dedupe set with titles already in the user's pool so the
+	// pipeline doesn't spend enrichment cycles on entries the unique index
+	// would silently drop at insert time.
+	existingKeys, err := s.repo.ListNewSuggestionKeys(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list existing suggestion keys: %w", err)
+	}
+
 	// ── Pass 2: enrich & filter ──────────────────────────────────────────────
-	buyItems, rejectedBuyTitles := s.enrichBuy(ctx, runID, user.LibraryID, buyParsed, cfg.MaxBuyPerUser)
-	readNextItems := s.resolveReadNext(ctx, runID, user.LibraryID, titles, readNextParsed, cfg.MaxReadNextPerUser)
+	buyItems, rejectedBuyTitles := s.enrichBuy(ctx, runID, user.LibraryID, buyParsed, cfg.MaxBuyPerUser, existingKeys)
+	readNextItems := s.resolveReadNext(ctx, runID, user.LibraryID, titles, readNextParsed, cfg.MaxReadNextPerUser, existingKeys)
 
 	// ── Pass 3: backfill if buy fell short ───────────────────────────────────
 	backfillAttempts := 0
 	for len(buyItems) < cfg.MaxBuyPerUser && backfillAttempts < 2 && len(rejectedBuyTitles) > 0 {
+		if err := s.checkCancelled(ctx, runID); err != nil {
+			return nil, err
+		}
 		backfillAttempts++
 		exclusions := strings.Join(rejectedBuyTitles, "\n- ")
 		backfill := buildBackfillPrompt(prompt, cfg.MaxBuyPerUser-len(buyItems), exclusions)
@@ -206,15 +251,24 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		})
 
 		bfParsed := ParseSuggestions(bfResp.Text)
-		bfItems, bfRejected := s.enrichBuy(ctx, runID, user.LibraryID, bfParsed, cfg.MaxBuyPerUser-len(buyItems))
+		// Seed the dedupe set with the titles we've already accepted in this
+		// run so the backfill doesn't re-add them.
+		for _, it := range buyItems {
+			existingKeys[normalizeTitle(it.Title)] = struct{}{}
+		}
+		bfItems, bfRejected := s.enrichBuy(ctx, runID, user.LibraryID, bfParsed, cfg.MaxBuyPerUser-len(buyItems), existingKeys)
 		buyItems = append(buyItems, bfItems...)
 		rejectedBuyTitles = append(rejectedBuyTitles, bfRejected...)
+	}
+
+	if err := s.checkCancelled(ctx, runID); err != nil {
+		return nil, err
 	}
 
 	// ── Persist ──────────────────────────────────────────────────────────────
 	all := append([]repository.SuggestionInput{}, buyItems...)
 	all = append(all, readNextItems...)
-	if err := s.repo.ReplaceSuggestions(ctx, userID, runID, all); err != nil {
+	if err := s.repo.AppendSuggestions(ctx, userID, runID, all, MaxSuggestionsPerUser); err != nil {
 		s.emit(ctx, runID, "error", map[string]any{"stage": "persist", "error": err.Error()})
 		_ = s.repo.FinishRun(ctx, runID, "failed", err.Error(), totalIn, totalOut, totalCost)
 		return nil, err
@@ -256,7 +310,9 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 // the user's library. Returns the accepted items plus the list of titles that
 // were rejected (used for backfill exclusions). Hard-blocks (author/series/
 // book) are applied here too. Emits an enrichment_decision event per candidate.
-func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, libraryID uuid.UUID, parsed []ParsedSuggestion, max int) ([]repository.SuggestionInput, []string) {
+// `seen` is mutated to include every accepted title's normalized key so the
+// caller can feed the same set into a subsequent backfill without redos.
+func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, libraryID uuid.UUID, parsed []ParsedSuggestion, max int, seen map[string]struct{}) ([]repository.SuggestionInput, []string) {
 	var accepted []repository.SuggestionInput
 	var rejected []string
 	for _, p := range parsed {
@@ -264,9 +320,16 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 			break
 		}
 		decision := map[string]any{
-			"title":    p.Title,
-			"isbn":     p.ISBN,
+			"title":     p.Title,
+			"isbn":      p.ISBN,
 			"ai_reason": p.Reason,
+		}
+		key := normalizeTitle(p.Title)
+		if _, dup := seen[key]; dup {
+			decision["outcome"] = "rejected"
+			decision["reason"] = "duplicate"
+			s.emit(ctx, runID, "enrichment_decision", decision)
+			continue
 		}
 		if p.ISBN == "" {
 			rejected = append(rejected, p.Title)
@@ -329,6 +392,9 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 		if len(merged.Covers) > 0 {
 			item.CoverURL = merged.Covers[0].CoverURL
 		}
+		// Mark the canonical (provider-returned) title as seen — that's what
+		// we'll actually persist.
+		seen[normalizeTitle(merged.Title.Value)] = struct{}{}
 		accepted = append(accepted, item)
 		decision["outcome"] = "accepted"
 		s.emit(ctx, runID, "enrichment_decision", decision)
@@ -341,7 +407,7 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 // dropped. The list of library titles (loaded for the prompt) is reused here
 // so we don't round-trip the DB for every candidate. Emits a read_next_match
 // event per candidate describing the match outcome.
-func (s *SuggestionsService) resolveReadNext(ctx context.Context, runID uuid.UUID, _ uuid.UUID, libraryTitles []*repository.LibraryTitle, parsed []ParsedSuggestion, max int) []repository.SuggestionInput {
+func (s *SuggestionsService) resolveReadNext(ctx context.Context, runID uuid.UUID, _ uuid.UUID, libraryTitles []*repository.LibraryTitle, parsed []ParsedSuggestion, max int, seen map[string]struct{}) []repository.SuggestionInput {
 	// Build a normalized-title lookup table once.
 	byTitle := make(map[string]*repository.LibraryTitle, len(libraryTitles))
 	for _, t := range libraryTitles {
@@ -375,6 +441,17 @@ func (s *SuggestionsService) resolveReadNext(ctx context.Context, runID uuid.UUI
 			s.emit(ctx, runID, "read_next_match", event)
 			continue
 		}
+		// Dedupe against the pool — either a prior run's suggestion or an
+		// already-accepted entry earlier in this run's list.
+		hitKey := normalizeTitle(hit.Title)
+		if _, dup := seen[hitKey]; dup {
+			event["outcome"] = "rejected"
+			event["reason"] = "duplicate"
+			event["matched_title"] = hit.Title
+			event["match_kind"] = matchKind
+			s.emit(ctx, runID, "read_next_match", event)
+			continue
+		}
 		if hit.ReadStatus == "read" {
 			event["outcome"] = "rejected"
 			event["reason"] = "already_read"
@@ -384,13 +461,19 @@ func (s *SuggestionsService) resolveReadNext(ctx context.Context, runID uuid.UUI
 			continue
 		}
 		bookID := hit.BookID
-		out = append(out, repository.SuggestionInput{
+		item := repository.SuggestionInput{
 			Type:      "read_next",
 			BookID:    &bookID,
 			Title:     hit.Title,
 			Author:    hit.Author,
 			Reasoning: p.Reason,
-		})
+		}
+		if hit.HasCover {
+			item.CoverURL = fmt.Sprintf("/api/v1/libraries/%s/books/%s/cover?v=%d",
+				hit.LibraryID, hit.BookID, hit.UpdatedAt.Unix())
+		}
+		out = append(out, item)
+		seen[hitKey] = struct{}{}
 		event["outcome"] = "accepted"
 		event["matched_title"] = hit.Title
 		event["match_kind"] = matchKind
@@ -398,6 +481,24 @@ func (s *SuggestionsService) resolveReadNext(ctx context.Context, runID uuid.UUI
 		s.emit(ctx, runID, "read_next_match", event)
 	}
 	return out
+}
+
+// checkCancelled re-reads the run's status from the DB. If the admin cancelled
+// mid-flight we short-circuit with ErrRunCancelled and emit a marker event so
+// the run's event log is self-explanatory. Called between pipeline stages —
+// never inside tight loops since each call is a round-trip.
+func (s *SuggestionsService) checkCancelled(ctx context.Context, runID uuid.UUID) error {
+	status, err := s.repo.GetRunStatus(ctx, runID)
+	if err != nil {
+		// If we can't see the run row we assume cancellation is safest — the
+		// admin may have deleted it. Treat as cancelled rather than plowing on.
+		return ErrRunCancelled
+	}
+	if status == "cancelled" {
+		s.emit(ctx, runID, "cancelled", map[string]any{"reason": "admin_request"})
+		return ErrRunCancelled
+	}
+	return nil
 }
 
 // emit is a best-effort event writer. Failures are logged but never propagate —

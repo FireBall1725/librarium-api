@@ -202,6 +202,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("POST /api/v1/admin/jobs/ai-suggestions/run", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminRunSuggestions)))
 	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions/runs", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminListRuns)))
 	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions/runs/{id}", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminGetRun)))
+	mux.Handle("DELETE /api/v1/admin/jobs/ai-suggestions/runs/{id}", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminCancelRun)))
 
 	// User-scoped AI endpoints
 	mux.Handle("GET /api/v1/me/ai-prefs", requireAuth(http.HandlerFunc(aiUserHandler.GetPrefs)))

@@ -111,14 +111,17 @@ func (r *AISuggestionsRepo) GetOptedInUser(ctx context.Context, userID uuid.UUID
 // LibraryTitle is a compact book row for prompt construction.
 type LibraryTitle struct {
 	BookID     uuid.UUID
+	LibraryID  uuid.UUID
 	Title      string
 	Author     string
 	MediaType  string
 	GenreNames []string
-	Rating     *int    // user's rating, 1–5, nil if never rated
-	ReadStatus string  // unread | reading | read | did_not_finish
+	Rating     *int   // user's rating, 1–5, nil if never rated
+	ReadStatus string // unread | reading | read | did_not_finish
 	IsFavorite bool
 	SeriesName string
+	HasCover   bool
+	UpdatedAt  time.Time // used as a cache-buster on the cover URL
 }
 
 // ListLibraryTitles returns every book in a library annotated with the caller's
@@ -128,6 +131,7 @@ func (r *AISuggestionsRepo) ListLibraryTitles(ctx context.Context, libraryID, us
 	const q = `
 		SELECT
 			b.id,
+			b.library_id,
 			b.title,
 			COALESCE((
 				SELECT c.name
@@ -169,7 +173,12 @@ func (r *AISuggestionsRepo) ListLibraryTitles(ctx context.Context, libraryID, us
 				JOIN series s ON s.id = bs.series_id
 				WHERE bs.book_id = b.id
 				ORDER BY bs.position LIMIT 1
-			), '')
+			), ''),
+			EXISTS(
+				SELECT 1 FROM cover_images ci
+				WHERE ci.entity_type = 'book' AND ci.entity_id = b.id AND ci.is_primary = TRUE
+			) AS has_cover,
+			b.updated_at
 		FROM books b
 		LEFT JOIN media_types mt ON mt.id = b.media_type_id
 		WHERE b.library_id = $1
@@ -184,8 +193,9 @@ func (r *AISuggestionsRepo) ListLibraryTitles(ctx context.Context, libraryID, us
 		t := &LibraryTitle{}
 		var genres string
 		if err := rows.Scan(
-			&t.BookID, &t.Title, &t.Author, &t.MediaType, &genres,
+			&t.BookID, &t.LibraryID, &t.Title, &t.Author, &t.MediaType, &genres,
 			&t.Rating, &t.ReadStatus, &t.IsFavorite, &t.SeriesName,
+			&t.HasCover, &t.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -286,6 +296,50 @@ func (r *AISuggestionsRepo) RunsInLast24h(ctx context.Context, userID uuid.UUID)
 	return n, nil
 }
 
+// CountRunningRunsForUser returns how many of the user's runs are still in
+// 'running' state. Used to prevent stacking parallel runs from /run-now.
+func (r *AISuggestionsRepo) CountRunningRunsForUser(ctx context.Context, userID uuid.UUID) (int, error) {
+	const q = `SELECT COUNT(*) FROM ai_suggestion_runs WHERE user_id = $1 AND status = 'running'`
+	var n int
+	if err := r.db.QueryRow(ctx, q, userID).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// GetRunStatus returns a run's current status. Used by the worker to poll for
+// cooperative cancellation between pipeline stages.
+func (r *AISuggestionsRepo) GetRunStatus(ctx context.Context, runID uuid.UUID) (string, error) {
+	const q = `SELECT status FROM ai_suggestion_runs WHERE id = $1`
+	var s string
+	err := r.db.QueryRow(ctx, q, runID).Scan(&s)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return s, nil
+}
+
+// CancelRun marks a running run as 'cancelled'. Returns ErrNotFound when the
+// run doesn't exist or is no longer running (idempotent for already-finished
+// runs — cancelling a completed run is a no-op).
+func (r *AISuggestionsRepo) CancelRun(ctx context.Context, runID uuid.UUID) error {
+	const q = `
+		UPDATE ai_suggestion_runs
+		SET status = 'cancelled', finished_at = NOW(), error = 'cancelled'
+		WHERE id = $1 AND status = 'running'`
+	tag, err := r.db.Exec(ctx, q, runID)
+	if err != nil {
+		return fmt.Errorf("cancel run: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ─── Suggestions ──────────────────────────────────────────────────────────────
 
 // SuggestionInput is the worker's view of a suggestion about to be persisted.
@@ -300,25 +354,26 @@ type SuggestionInput struct {
 	Reasoning     string
 }
 
-// ReplaceSuggestions atomically drops the user's previous 'new' suggestions
-// and writes the new batch tied to runID. Dismissed/interested/added rows from
-// previous runs are preserved.
-func (r *AISuggestionsRepo) ReplaceSuggestions(ctx context.Context, userID, runID uuid.UUID, items []SuggestionInput) error {
+// AppendSuggestions inserts new suggestions on top of what's already there,
+// relying on the partial unique index on (user_id, type, lower(title)) to
+// silently drop duplicates within the user's current 'new' pool. After
+// inserting, the oldest 'new' rows beyond maxPerUser are evicted so the user
+// never sees an unbounded backlog. Pass 0 to disable eviction.
+//
+// Dismissed/interested/added rows from any run are preserved — they're filtered
+// out of the user view by status, not by deletion.
+func (r *AISuggestionsRepo) AppendSuggestions(ctx context.Context, userID, runID uuid.UUID, items []SuggestionInput, maxPerUser int) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM ai_suggestions WHERE user_id = $1 AND status = 'new'`, userID); err != nil {
-		return fmt.Errorf("delete prior new suggestions: %w", err)
-	}
-
 	const ins = `
 		INSERT INTO ai_suggestions (user_id, run_id, type, book_id, book_edition_id,
 			title, author, isbn, cover_url, reasoning, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
+		ON CONFLICT DO NOTHING`
 	for _, it := range items {
 		if _, err := tx.Exec(ctx, ins, userID, runID, it.Type,
 			it.BookID, it.BookEditionID,
@@ -329,7 +384,43 @@ func (r *AISuggestionsRepo) ReplaceSuggestions(ctx context.Context, userID, runI
 		}
 	}
 
+	if maxPerUser > 0 {
+		const evict = `
+			DELETE FROM ai_suggestions
+			WHERE id IN (
+				SELECT id FROM ai_suggestions
+				WHERE user_id = $1 AND status = 'new'
+				ORDER BY created_at DESC
+				OFFSET $2
+			)`
+		if _, err := tx.Exec(ctx, evict, userID, maxPerUser); err != nil {
+			return fmt.Errorf("evict oldest: %w", err)
+		}
+	}
+
 	return tx.Commit(ctx)
+}
+
+// ListNewSuggestionKeys returns the normalized-title set of the user's current
+// 'new' suggestions. Used by the service to dedupe a new run's candidates
+// against what's already in the pool, so a backfill pass doesn't churn on a
+// title the unique index would silently drop anyway.
+func (r *AISuggestionsRepo) ListNewSuggestionKeys(ctx context.Context, userID uuid.UUID) (map[string]struct{}, error) {
+	const q = `SELECT lower(title) FROM ai_suggestions WHERE user_id = $1 AND status = 'new'`
+	rows, err := r.db.Query(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list new keys: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out[t] = struct{}{}
+	}
+	return out, rows.Err()
 }
 
 // ListSuggestions returns the caller's current suggestions. Filter by type

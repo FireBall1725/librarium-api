@@ -259,6 +259,17 @@ func (h *AISuggestionsHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Reject the enqueue outright if a run is already in flight — stacking a
+	// second job would just race the first for the same user.
+	running, err := h.repo.CountRunningRunsForUser(r.Context(), claims.UserID)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	if running > 0 {
+		respond.Error(w, http.StatusConflict, "a suggestions run is already in progress")
+		return
+	}
 	if _, err := h.riverClient.Insert(r.Context(),
 		models.AISuggestionsJobArgs{UserID: claims.UserID, TriggeredBy: "user"}, nil); err != nil {
 		respond.ServerError(w, r, err)
@@ -481,14 +492,49 @@ func (h *AISuggestionsHandler) AdminRunSuggestions(w http.ResponseWriter, r *htt
 		respond.ServerError(w, r, err)
 		return
 	}
-	enqueued := 0
+	enqueued, skipped := 0, 0
 	for _, u := range users {
+		// Skip users who already have a run in flight — enqueuing a second
+		// would just race the first.
+		n, err := h.repo.CountRunningRunsForUser(r.Context(), u.UserID)
+		if err == nil && n > 0 {
+			skipped++
+			continue
+		}
 		if _, err := h.riverClient.Insert(r.Context(),
 			models.AISuggestionsJobArgs{UserID: u.UserID, TriggeredBy: "admin"}, nil); err != nil {
 			continue
 		}
 		enqueued++
 	}
-	respond.JSON(w, http.StatusAccepted, map[string]any{"enqueued": enqueued})
+	respond.JSON(w, http.StatusAccepted, map[string]any{"enqueued": enqueued, "skipped": skipped})
+}
+
+// AdminCancelRun godoc
+//
+//	@Summary     Cancel a running AI suggestion run (admin)
+//	@Description Marks a running run as cancelled; the worker checks status between stages and exits on the next check. Completed or already-cancelled runs return 404.
+//	@Tags        admin,jobs
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Param       id   path   string  true  "Run ID"
+//	@Success     204
+//	@Failure     404  {object}  object{error=string}
+//	@Router      /admin/jobs/ai-suggestions/runs/{id} [delete]
+func (h *AISuggestionsHandler) AdminCancelRun(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.repo.CancelRun(r.Context(), id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respond.Error(w, http.StatusNotFound, "run not found or not running")
+			return
+		}
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
