@@ -165,10 +165,14 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	})
 
 	// ── Pass 1: generate candidates ──────────────────────────────────────────
+	// Thinking models (qwen3, deepseek-r1 via Ollama, Claude with extended
+	// thinking) burn through thousands of tokens on reasoning before emitting
+	// a single visible character. A 2000-token ceiling routinely starved the
+	// reply out. 6000 gives headroom without being wasteful.
 	resp, err := provider.Generate(ctx, ai.GenerateRequest{
 		System:    suggestionsSystemPrompt,
 		Prompt:    prompt,
-		MaxTokens: 2000,
+		MaxTokens: 6000,
 	})
 	totalIn, totalOut := 0, 0
 	totalCost := 0.0
@@ -227,12 +231,12 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 			"need":       cfg.MaxBuyPerUser - len(buyItems),
 			"exclusions": rejectedBuyTitles,
 			"prompt":     backfill,
-			"max_tokens": 1000,
+			"max_tokens": 3000,
 		})
 		bfResp, bfErr := provider.Generate(ctx, ai.GenerateRequest{
 			System:    suggestionsSystemPrompt,
 			Prompt:    backfill,
-			MaxTokens: 1000,
+			MaxTokens: 3000,
 		})
 		if bfErr != nil {
 			slog.Warn("ai suggestions backfill failed", "user_id", userID, "attempt", backfillAttempts, "error", bfErr)

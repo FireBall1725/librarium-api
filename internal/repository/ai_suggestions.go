@@ -340,6 +340,18 @@ func (r *AISuggestionsRepo) CancelRun(ctx context.Context, runID uuid.UUID) erro
 	return nil
 }
 
+// DeleteFinishedRuns removes every run in a terminal state (completed /
+// failed / cancelled). Events cascade via FK. Returns the number of runs
+// actually deleted.
+func (r *AISuggestionsRepo) DeleteFinishedRuns(ctx context.Context) (int64, error) {
+	const q = `DELETE FROM ai_suggestion_runs WHERE status IN ('completed', 'failed', 'cancelled')`
+	tag, err := r.db.Exec(ctx, q)
+	if err != nil {
+		return 0, fmt.Errorf("delete finished runs: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ─── Suggestions ──────────────────────────────────────────────────────────────
 
 // SuggestionInput is the worker's view of a suggestion about to be persisted.

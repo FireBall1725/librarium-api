@@ -538,3 +538,21 @@ func (h *AISuggestionsHandler) AdminCancelRun(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// AdminClearFinishedRuns godoc
+//
+//	@Summary     Delete all finished AI suggestion runs (admin)
+//	@Description Removes every run in a terminal state (completed, failed, cancelled). Running runs are left alone.
+//	@Tags        admin,jobs
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Success     200  {object}  object{deleted=integer}
+//	@Router      /admin/jobs/ai-suggestions/runs [delete]
+func (h *AISuggestionsHandler) AdminClearFinishedRuns(w http.ResponseWriter, r *http.Request) {
+	deleted, err := h.repo.DeleteFinishedRuns(r.Context())
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+}
+
