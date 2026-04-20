@@ -52,6 +52,11 @@ type GenerateRequest struct {
 type GenerateResponse struct {
 	Text  string
 	Usage UsageInfo
+	// Truncated is set when the provider stopped because it hit the output
+	// token cap rather than finishing naturally. Thinking models often run
+	// out of tokens mid-reasoning, so the service treats this as a failure
+	// rather than silently accepting an empty/partial reply.
+	Truncated bool
 }
 
 // UsageInfo captures per-call token counts and an estimated USD cost based on

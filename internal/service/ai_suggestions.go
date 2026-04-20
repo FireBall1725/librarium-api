@@ -167,12 +167,11 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	// ── Pass 1: generate candidates ──────────────────────────────────────────
 	// Thinking models (qwen3, deepseek-r1 via Ollama, Claude with extended
 	// thinking) burn through thousands of tokens on reasoning before emitting
-	// a single visible character. A 2000-token ceiling routinely starved the
-	// reply out. 6000 gives headroom without being wasteful.
+	// a single visible character, so admins can tune this per deployment.
 	resp, err := provider.Generate(ctx, ai.GenerateRequest{
 		System:    suggestionsSystemPrompt,
 		Prompt:    prompt,
-		MaxTokens: 6000,
+		MaxTokens: cfg.MaxTokensInitial,
 	})
 	totalIn, totalOut := 0, 0
 	totalCost := 0.0
@@ -196,10 +195,22 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		"tokens_in":        resp.Usage.InputTokens,
 		"tokens_out":       resp.Usage.OutputTokens,
 		"cost_usd":         resp.Usage.EstimatedCostUSD,
+		"truncated":        resp.Truncated,
 	})
 
 	if err := s.checkCancelled(ctx, runID); err != nil {
 		return nil, err
+	}
+
+	// Thinking models can consume the entire output cap on reasoning and
+	// return an empty reply; non-thinking models can get cut mid-list. Either
+	// way the parse below would produce junk, so fail fast with a clear
+	// message pointing the admin at the token cap.
+	if resp.Truncated {
+		msg := fmt.Sprintf("provider stopped at max_tokens (%d) — raise max_tokens_initial in the job config or pick a smaller/faster model", cfg.MaxTokensInitial)
+		s.emit(ctx, runID, "error", map[string]any{"stage": "ai_generate_initial", "error": msg, "reason": "max_tokens"})
+		_ = s.repo.FinishRun(ctx, runID, "failed", msg, totalIn, totalOut, totalCost)
+		return nil, fmt.Errorf("ai generate: %s", msg)
 	}
 
 	parsed := ParseSuggestions(resp.Text)
@@ -231,12 +242,12 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 			"need":       cfg.MaxBuyPerUser - len(buyItems),
 			"exclusions": rejectedBuyTitles,
 			"prompt":     backfill,
-			"max_tokens": 3000,
+			"max_tokens": cfg.MaxTokensBackfill,
 		})
 		bfResp, bfErr := provider.Generate(ctx, ai.GenerateRequest{
 			System:    suggestionsSystemPrompt,
 			Prompt:    backfill,
-			MaxTokens: 3000,
+			MaxTokens: cfg.MaxTokensBackfill,
 		})
 		if bfErr != nil {
 			slog.Warn("ai suggestions backfill failed", "user_id", userID, "attempt", backfillAttempts, "error", bfErr)
@@ -252,7 +263,21 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 			"tokens_in":  bfResp.Usage.InputTokens,
 			"tokens_out": bfResp.Usage.OutputTokens,
 			"cost_usd":   bfResp.Usage.EstimatedCostUSD,
+			"truncated":  bfResp.Truncated,
 		})
+		// Truncated backfill means we can't parse the reply cleanly, so stop
+		// iterating rather than burning more provider calls to no effect. The
+		// run still completes with whatever the initial pass produced.
+		if bfResp.Truncated {
+			slog.Warn("ai suggestions backfill truncated", "user_id", userID, "attempt", backfillAttempts, "max_tokens", cfg.MaxTokensBackfill)
+			s.emit(ctx, runID, "error", map[string]any{
+				"stage":     "ai_generate_backfill",
+				"attempt":   backfillAttempts,
+				"error":     fmt.Sprintf("backfill stopped at max_tokens (%d)", cfg.MaxTokensBackfill),
+				"reason":    "max_tokens",
+			})
+			break
+		}
 
 		bfParsed := ParseSuggestions(bfResp.Text)
 		// Seed the dedupe set with the titles we've already accepted in this

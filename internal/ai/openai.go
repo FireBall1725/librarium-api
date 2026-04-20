@@ -150,6 +150,7 @@ func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (*Ge
 			OutputTokens:     decoded.Usage.CompletionTokens,
 			EstimatedCostUSD: estimateCost(openAIPricing, p.model, decoded.Usage.PromptTokens, decoded.Usage.CompletionTokens),
 		},
+		Truncated: decoded.Choices[0].FinishReason == "length",
 	}, nil
 }
 
@@ -168,7 +169,8 @@ type openAIChatRequest struct {
 
 type openAIChatResponse struct {
 	Choices []struct {
-		Message openAIMessage `json:"message"`
+		Message      openAIMessage `json:"message"`
+		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`

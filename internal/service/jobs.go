@@ -38,6 +38,14 @@ type AISuggestionsJobConfig struct {
 	MaxReadNextPerUser     int  `json:"max_read_next_per_user"`
 	IncludeTasteProfile    bool `json:"include_taste_profile"`
 	UserRunRateLimitPerDay int  `json:"user_run_rate_limit_per_day"`
+	// MaxTokensInitial is the cap on output tokens for the first pass.
+	// Thinking models (qwen3, deepseek-r1, extended-thinking Claude) burn
+	// through many tokens reasoning before emitting anything — too low a
+	// cap leaves the response empty.
+	MaxTokensInitial int `json:"max_tokens_initial"`
+	// MaxTokensBackfill applies to each backfill retry prompt. Smaller than
+	// initial since backfill only asks for the remaining slots.
+	MaxTokensBackfill int `json:"max_tokens_backfill"`
 }
 
 // defaultAISuggestionsJobConfig is what a fresh install sees before the admin
@@ -50,6 +58,8 @@ var defaultAISuggestionsJobConfig = AISuggestionsJobConfig{
 	MaxReadNextPerUser:     5,
 	IncludeTasteProfile:    true,
 	UserRunRateLimitPerDay: 1,
+	MaxTokensInitial:       6000,
+	MaxTokensBackfill:      3000,
 }
 
 // JobSummary is what GET /admin/jobs returns: enough to render the jobs list
@@ -107,6 +117,15 @@ func (s *JobService) GetAISuggestionsConfig(ctx context.Context) (AISuggestionsJ
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return defaultAISuggestionsJobConfig, fmt.Errorf("decode ai-suggestions job config: %w", err)
 	}
+	// Backfill defaults for fields added after this deployment's config was
+	// first saved — unmarshal leaves them at zero, which would starve the
+	// provider call.
+	if cfg.MaxTokensInitial == 0 {
+		cfg.MaxTokensInitial = defaultAISuggestionsJobConfig.MaxTokensInitial
+	}
+	if cfg.MaxTokensBackfill == 0 {
+		cfg.MaxTokensBackfill = defaultAISuggestionsJobConfig.MaxTokensBackfill
+	}
 	return cfg, nil
 }
 
@@ -120,6 +139,9 @@ func (s *JobService) SetAISuggestionsConfig(ctx context.Context, cfg AISuggestio
 	}
 	if cfg.UserRunRateLimitPerDay < 0 {
 		return fmt.Errorf("user_run_rate_limit_per_day must be >= 0")
+	}
+	if cfg.MaxTokensInitial < 0 || cfg.MaxTokensBackfill < 0 {
+		return fmt.Errorf("token caps must be >= 0")
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {

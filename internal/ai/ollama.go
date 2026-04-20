@@ -152,6 +152,7 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (*Ge
 			OutputTokens:     decoded.EvalCount,
 			EstimatedCostUSD: 0,
 		},
+		Truncated: decoded.DoneReason == "length",
 	}, nil
 }
 
@@ -196,4 +197,6 @@ type ollamaChatResponse struct {
 	Message         ollamaMessage `json:"message"`
 	PromptEvalCount int           `json:"prompt_eval_count"`
 	EvalCount       int           `json:"eval_count"`
+	// DoneReason is "stop" on a natural end, "length" when num_predict was hit.
+	DoneReason string `json:"done_reason"`
 }

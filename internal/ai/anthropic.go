@@ -125,5 +125,6 @@ func (p *AnthropicProvider) Generate(ctx context.Context, req GenerateRequest) (
 			OutputTokens:     outTok,
 			EstimatedCostUSD: estimateCost(anthropicPricing, p.model, inTok, outTok),
 		},
+		Truncated: msg.StopReason == "max_tokens",
 	}, nil
 }
