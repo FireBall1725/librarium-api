@@ -61,7 +61,11 @@ Release history in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Deployment
 
-Two supported paths for self-hosting. Both use the multi-arch images published to GHCR — no local build required.
+Three supported paths for self-hosting. Docker Compose and Kubernetes pull the multi-arch images published to GHCR; Railway builds from source on their platform.
+
+### Railway (managed, one-click-ish)
+
+Want Librarium running at `library.example.com` without managing a VPS? [`deploy/railway/`](./deploy/railway/) walks through a three-service Railway project (api + web + managed Postgres) for ~$5-10/month on the Hobby plan. The repo ships a `railway.toml` so Railway picks up the right build and healthcheck without extra config.
 
 ### Docker Compose (whole stack)
 
