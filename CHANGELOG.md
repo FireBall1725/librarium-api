@@ -19,11 +19,12 @@ End-to-end suggestions feature that recommends books to buy (not in the library)
 
 ### Added
 
-- Provider abstraction with out-of-the-box Anthropic, OpenAI, and Ollama drivers — admin picks a single active provider via `Connections → AI`. Per-provider config, test button, and masked API key handling mirror the existing metadata-provider pattern.
+- Provider abstraction with out-of-the-box Anthropic, OpenAI, Ollama, and Osaurus drivers — admin picks a single active provider via `Connections → AI`. Per-provider config, test button, and masked API key handling mirror the existing metadata-provider pattern. Local providers (Ollama, Osaurus) populate their model dropdowns live from the server so the UI reflects what's actually downloaded, and Osaurus's OpenAI-compatible responses have their U+FFFE telemetry trailer stripped.
 - Two-layer permission model (`ai:permissions` instance settings + per-user `user_ai_settings.opt_in`) gates what data is sent to the AI: reading history, ratings, favourites, full library, taste profile.
 - Per-user taste profile (JSONB on `user_ai_settings`) — genres/themes/formats love/avoid lists, era, favourite authors, hard-nos. Feeds into the prompt alongside behavioural signals (reads, ratings, favourites).
-- Scheduled `ai-suggestions` job with enabled/cadence/max-buy/max-read-next/include-taste-profile/user-rate-limit config, admin-wide and per-user `Run now` endpoints, with rate limiting enforced at handler and service layers.
-- Suggestions worker: multi-pass generation (candidate → ISBN-grounded enrichment via metadata providers → backfill on rejection) with fuzzy title match to detect hallucinated ISBNs. Cost and token counts recorded per run.
+- Scheduled `ai-suggestions` job with enabled/cadence/max-buy/max-read-next/include-taste-profile/user-rate-limit config, admin-wide and per-user `Run now` endpoints, with rate limiting enforced at handler and service layers. The rate-limit supports `-1` (unlimited, intended for local free providers), `0` (disabled), and positive caps.
+- Suggestions worker: multi-pass generation (candidate → ISBN-grounded enrichment via metadata providers → backfill on rejection) with fuzzy title match to detect hallucinated ISBNs. Cost and token counts recorded per run. Failed runs do not auto-retry — suggestion failures are deterministic (context-length, provider 4xx, invalid JSON) so River's default 25-attempt retry would just churn.
+- Per-type suggestion caps (default: 30 buy + 30 read_next) with newer-first ordering preserved across runs via `clock_timestamp()` on insert.
 - Persistent block list (`ai_blocked_items`) with book / author scopes — blocks are surfaced as prompt exclusions on future runs.
 - User-facing endpoints: `GET/PUT /me/ai-prefs`, `GET/PUT /me/taste-profile`, `GET /me/suggestions`, `PUT /me/suggestions/{id}/status`, `POST /me/suggestions/{id}/block`, `POST /me/suggestions/run`.
 - Admin endpoints: `GET/PUT /admin/connections/ai`, `POST /admin/connections/ai/{provider}/test`, `POST /admin/connections/ai/active`, `GET/PUT /admin/connections/ai/permissions`, `GET/PUT /admin/jobs/ai-suggestions`, `POST /admin/jobs/ai-suggestions/run`.

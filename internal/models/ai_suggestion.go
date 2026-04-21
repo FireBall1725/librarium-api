@@ -28,10 +28,15 @@ type AISuggestionRun struct {
 
 // AISuggestion is one rendered recommendation — either a book to buy (not in
 // library) or a book to read next (already owned but unread).
+//
+// RunID is a back-pointer to the pipeline execution that produced this row.
+// It's nullable because the FK cascades to SET NULL — when an admin clears
+// finished runs from the log we want the user's saved picks to survive, even
+// though we lose the link to the run that generated them.
 type AISuggestion struct {
 	ID            uuid.UUID
 	UserID        uuid.UUID
-	RunID         uuid.UUID
+	RunID         *uuid.UUID
 	Type          string // buy | read_next
 	BookID        *uuid.UUID
 	BookEditionID *uuid.UUID

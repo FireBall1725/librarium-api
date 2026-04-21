@@ -283,17 +283,39 @@ func (r *AISuggestionsRepo) LastRunAt(ctx context.Context, userID uuid.UUID) (ti
 	return *t, nil
 }
 
-// RunsInLast24h counts completed or running suggestion runs for a user over
-// the last 24h — used to enforce the per-user-run rate limit.
+// RunsInLast24h counts user-triggered suggestion runs over the last 24h — used
+// to enforce the per-user manual-run rate limit. Scheduled runs (triggered_by
+// = 'scheduler') are intentionally excluded: the daily scheduler shouldn't
+// burn against the user's Run Now budget.
 func (r *AISuggestionsRepo) RunsInLast24h(ctx context.Context, userID uuid.UUID) (int, error) {
 	const q = `
 		SELECT COUNT(*) FROM ai_suggestion_runs
-		WHERE user_id = $1 AND started_at >= NOW() - INTERVAL '24 hours'`
+		WHERE user_id = $1 AND triggered_by = 'user'
+		  AND started_at >= NOW() - INTERVAL '24 hours'`
 	var n int
 	if err := r.db.QueryRow(ctx, q, userID).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil
+}
+
+// EarliestRunStartInLast24h returns the earliest started_at within the rolling
+// 24h window for the user's manual runs, used to compute when the quota will
+// next drop. Matches the triggered_by filter in RunsInLast24h so the reset
+// timestamp lines up with the counter. Zero time if none in window.
+func (r *AISuggestionsRepo) EarliestRunStartInLast24h(ctx context.Context, userID uuid.UUID) (time.Time, error) {
+	const q = `
+		SELECT MIN(started_at) FROM ai_suggestion_runs
+		WHERE user_id = $1 AND triggered_by = 'user'
+		  AND started_at >= NOW() - INTERVAL '24 hours'`
+	var t *time.Time
+	if err := r.db.QueryRow(ctx, q, userID).Scan(&t); err != nil {
+		return time.Time{}, err
+	}
+	if t == nil {
+		return time.Time{}, nil
+	}
+	return *t, nil
 }
 
 // CountRunningRunsForUser returns how many of the user's runs are still in
@@ -369,22 +391,27 @@ type SuggestionInput struct {
 // AppendSuggestions inserts new suggestions on top of what's already there,
 // relying on the partial unique index on (user_id, type, lower(title)) to
 // silently drop duplicates within the user's current 'new' pool. After
-// inserting, the oldest 'new' rows beyond maxPerUser are evicted so the user
-// never sees an unbounded backlog. Pass 0 to disable eviction.
+// inserting, the oldest 'new' rows of each type beyond their per-type cap are
+// evicted so neither shelf grows unboundedly. Pass 0 for either cap to disable
+// eviction for that type.
 //
 // Dismissed/interested/added rows from any run are preserved — they're filtered
 // out of the user view by status, not by deletion.
-func (r *AISuggestionsRepo) AppendSuggestions(ctx context.Context, userID, runID uuid.UUID, items []SuggestionInput, maxPerUser int) error {
+func (r *AISuggestionsRepo) AppendSuggestions(ctx context.Context, userID, runID uuid.UUID, items []SuggestionInput, maxBuy, maxReadNext int) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
+	// created_at uses clock_timestamp() rather than the DEFAULT (NOW()) because
+	// NOW() is transaction-start time — every row in this loop would otherwise
+	// share the same timestamp and the "newer first" ORDER BY created_at DESC
+	// would lose AI output order inside a single run.
 	const ins = `
 		INSERT INTO ai_suggestions (user_id, run_id, type, book_id, book_edition_id,
-			title, author, isbn, cover_url, reasoning, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new')
+			title, author, isbn, cover_url, reasoning, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new', clock_timestamp())
 		ON CONFLICT DO NOTHING`
 	for _, it := range items {
 		if _, err := tx.Exec(ctx, ins, userID, runID, it.Type,
@@ -396,17 +423,22 @@ func (r *AISuggestionsRepo) AppendSuggestions(ctx context.Context, userID, runID
 		}
 	}
 
-	if maxPerUser > 0 {
-		const evict = `
-			DELETE FROM ai_suggestions
-			WHERE id IN (
-				SELECT id FROM ai_suggestions
-				WHERE user_id = $1 AND status = 'new'
-				ORDER BY created_at DESC
-				OFFSET $2
-			)`
-		if _, err := tx.Exec(ctx, evict, userID, maxPerUser); err != nil {
-			return fmt.Errorf("evict oldest: %w", err)
+	const evict = `
+		DELETE FROM ai_suggestions
+		WHERE id IN (
+			SELECT id FROM ai_suggestions
+			WHERE user_id = $1 AND status = 'new' AND type = $2
+			ORDER BY created_at DESC
+			OFFSET $3
+		)`
+	if maxBuy > 0 {
+		if _, err := tx.Exec(ctx, evict, userID, "buy", maxBuy); err != nil {
+			return fmt.Errorf("evict oldest buy: %w", err)
+		}
+	}
+	if maxReadNext > 0 {
+		if _, err := tx.Exec(ctx, evict, userID, "read_next", maxReadNext); err != nil {
+			return fmt.Errorf("evict oldest read_next: %w", err)
 		}
 	}
 

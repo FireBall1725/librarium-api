@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
@@ -276,6 +277,64 @@ func (h *AISuggestionsHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// QuotaView is the JSON shape for the caller's daily run quota. Limit = 0
+// means unlimited.
+type QuotaView struct {
+	Used      int    `json:"used"`
+	Limit     int    `json:"limit"`
+	ResetsAt  string `json:"resets_at,omitempty"`
+	Unlimited bool   `json:"unlimited"`
+}
+
+// GetMyQuota godoc
+//
+//	@Summary     Get my AI suggestion run quota
+//	@Description Returns how many suggestion runs the caller has used in the last 24h and the configured per-user daily limit.
+//	@Tags        me,ai
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Success     200  {object}  handlers.QuotaView
+//	@Router      /me/suggestions/quota [get]
+func (h *AISuggestionsHandler) GetMyQuota(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	cfg, err := h.jobSvc.GetAISuggestionsConfig(r.Context())
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	used, err := h.repo.RunsInLast24h(r.Context(), claims.UserID)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	// -1 = unlimited, 0 = disabled, positive = cap. The UI renders "unlimited"
+	// copy when the flag is set and hides the counter; limit=0 surfaces as
+	// 0 remaining, which correctly blocks user-triggered runs.
+	out := QuotaView{
+		Used:      used,
+		Limit:     cfg.UserRunRateLimitPerDay,
+		Unlimited: cfg.UserRunRateLimitPerDay < 0,
+	}
+	// resets_at = earliest-in-window + 24h — when the oldest run falls out of
+	// the rolling window and the user gets a slot back. Only meaningful when a
+	// limit is configured and the user has runs in the window.
+	if !out.Unlimited && used > 0 {
+		earliest, err := h.repo.EarliestRunStartInLast24h(r.Context(), claims.UserID)
+		if err != nil {
+			respond.ServerError(w, r, err)
+			return
+		}
+		if !earliest.IsZero() {
+			out.ResetsAt = earliest.Add(24 * time.Hour).Format("2006-01-02T15:04:05Z07:00")
+		}
+	}
+	respond.JSON(w, http.StatusOK, out)
 }
 
 // ─── Run observability ────────────────────────────────────────────────────────

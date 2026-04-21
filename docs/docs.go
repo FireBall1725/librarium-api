@@ -463,6 +463,35 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes every run in a terminal state (completed, failed, cancelled). Running runs are left alone.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "jobs"
+                ],
+                "summary": "Delete all finished AI suggestion runs (admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "deleted": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         "/admin/jobs/ai-suggestions/runs/{id}": {
@@ -507,6 +536,47 @@ const docTemplate = `{
                                 }
                             }
                         }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks a running run as cancelled; the worker checks status between stages and exits on the next check. Completed or already-cancelled runs return 404.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "jobs"
+                ],
+                "summary": "Cancel a running AI suggestion run (admin)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Run ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -9169,6 +9239,32 @@ const docTemplate = `{
                 }
             }
         },
+        "/me/suggestions/quota": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns how many suggestion runs the caller has used in the last 24h and the configured per-user daily limit.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Get my AI suggestion run quota",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.QuotaView"
+                        }
+                    }
+                }
+            }
+        },
         "/me/suggestions/run": {
             "post": {
                 "security": [
@@ -10549,6 +10645,14 @@ const docTemplate = `{
                 "max_read_next_per_user": {
                     "type": "integer"
                 },
+                "max_tokens_backfill": {
+                    "description": "MaxTokensBackfill applies to each backfill retry prompt. Smaller than\ninitial since backfill only asks for the remaining slots.",
+                    "type": "integer"
+                },
+                "max_tokens_initial": {
+                    "description": "MaxTokensInitial is the cap on output tokens for the first pass.\nThinking models (qwen3, deepseek-r1, extended-thinking Claude) burn\nthrough many tokens reasoning before emitting anything — too low a\ncap leaves the response empty.",
+                    "type": "integer"
+                },
                 "user_run_rate_limit_per_day": {
                     "type": "integer"
                 }
@@ -10681,6 +10785,23 @@ const docTemplate = `{
                 },
                 "type": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.QuotaView": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "resets_at": {
+                    "type": "string"
+                },
+                "unlimited": {
+                    "type": "boolean"
+                },
+                "used": {
+                    "type": "integer"
                 }
             }
         },

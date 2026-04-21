@@ -137,8 +137,11 @@ func (s *JobService) SetAISuggestionsConfig(ctx context.Context, cfg AISuggestio
 	if cfg.MaxBuyPerUser < 0 || cfg.MaxReadNextPerUser < 0 {
 		return fmt.Errorf("per-user caps must be >= 0")
 	}
-	if cfg.UserRunRateLimitPerDay < 0 {
-		return fmt.Errorf("user_run_rate_limit_per_day must be >= 0")
+	// -1 = unlimited (intended for local / zero-cost providers), 0 = disabled,
+	// positive = that many user-triggered runs per day. Anything below -1 is
+	// nonsense and probably a typo.
+	if cfg.UserRunRateLimitPerDay < -1 {
+		return fmt.Errorf("user_run_rate_limit_per_day must be >= -1 (-1 = unlimited, 0 = disabled)")
 	}
 	if cfg.MaxTokensInitial < 0 || cfg.MaxTokensBackfill < 0 {
 		return fmt.Errorf("token caps must be >= 0")

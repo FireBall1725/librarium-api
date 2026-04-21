@@ -36,10 +36,15 @@ var ErrAlreadyRunning = errors.New("a suggestions run is already in progress for
 // this as a soft stop — no retry.
 var ErrRunCancelled = errors.New("suggestions run cancelled")
 
-// MaxSuggestionsPerUser caps the pool of 'new' suggestions carried across
-// runs. When a new run pushes the total past this, the oldest entries are
-// evicted. Keeps the user's dashboard from turning into an unbounded backlog.
-const MaxSuggestionsPerUser = 30
+// MaxBuyPerUser and MaxReadNextPerUser cap the pool of 'new' suggestions
+// carried across runs, per type. When a new run pushes a type's total past
+// its cap, the oldest entries of that type are evicted. Keeps the user's
+// dashboard from turning into an unbounded backlog while letting each shelf
+// (buy / read-next) fill independently.
+const (
+	MaxBuyPerUser      = 30
+	MaxReadNextPerUser = 30
+)
 
 // SuggestionsService orchestrates a single pass of the suggestions pipeline:
 // load inputs, call the active AI provider, parse output, enrich via metadata
@@ -94,13 +99,22 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	if err != nil {
 		return nil, fmt.Errorf("load job config: %w", err)
 	}
-	if triggeredBy == "user" && cfg.UserRunRateLimitPerDay > 0 {
-		n, err := s.repo.RunsInLast24h(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		if n >= cfg.UserRunRateLimitPerDay {
+	// Rate-limit sentinels: -1 unlimited (e.g. local free providers), 0 disables
+	// user-triggered runs entirely (scheduled runs still work), positive = cap.
+	if triggeredBy == "user" {
+		switch {
+		case cfg.UserRunRateLimitPerDay < 0:
+			// unlimited — skip check
+		case cfg.UserRunRateLimitPerDay == 0:
 			return nil, ErrRateLimited
+		default:
+			n, err := s.repo.RunsInLast24h(ctx, userID)
+			if err != nil {
+				return nil, err
+			}
+			if n >= cfg.UserRunRateLimitPerDay {
+				return nil, ErrRateLimited
+			}
 		}
 	}
 
@@ -136,12 +150,35 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		return nil, fmt.Errorf("load blocks: %w", err)
 	}
 
+	// Load the user's already-surfaced 'new' suggestions so the prompt can tell
+	// the model to pick different titles this run. Without this the model
+	// deterministically regenerates the same picks every time, the unique index
+	// silently drops them, and the user sees no growth in the lists.
+	existing, err := s.repo.ListSuggestions(ctx, userID, "", "new")
+	if err != nil {
+		return nil, fmt.Errorf("load existing suggestions: %w", err)
+	}
+	var existingBuy, existingReadNext []string
+	for _, e := range existing {
+		switch e.Type {
+		case "buy":
+			existingBuy = append(existingBuy, e.Title)
+		case "read_next":
+			existingReadNext = append(existingReadNext, e.Title)
+		}
+	}
+
 	// ── Build prompt ─────────────────────────────────────────────────────────
 	info := provider.Info()
-	prompt := buildSuggestionsPrompt(titles, user.TasteProfile, blocks, perms, cfg)
+	prompt := buildSuggestionsPrompt(titles, user.TasteProfile, blocks, perms, cfg, existingBuy, existingReadNext)
 
 	// ── Record run starting ──────────────────────────────────────────────────
-	runID, err := s.repo.CreateRun(ctx, userID, triggeredBy, info.Name, "")
+	// Stamping the configured model on the run row (and pipeline_start event)
+	// lets the admin read the timeline later and see which model produced the
+	// output — useful when comparing Ollama model choices or spotting a silent
+	// config drift.
+	modelID := provider.ConfiguredModel()
+	runID, err := s.repo.CreateRun(ctx, userID, triggeredBy, info.Name, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +187,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	s.emit(ctx, runID, "pipeline_start", map[string]any{
 		"triggered_by":    triggeredBy,
 		"provider":        info.Name,
+		"model":           modelID,
 		"library_titles":  len(titles),
 		"blocks":          len(blocks),
 		"permissions":     perms,
@@ -168,22 +206,32 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	// Thinking models (qwen3, deepseek-r1 via Ollama, Claude with extended
 	// thinking) burn through thousands of tokens on reasoning before emitting
 	// a single visible character, so admins can tune this per deployment.
-	resp, err := provider.Generate(ctx, ai.GenerateRequest{
+	// watchCancellation ensures an admin DELETE actually kills a stuck
+	// provider call rather than waiting for the provider's client timeout.
+	genCtx, stopWatch := s.watchCancellation(ctx, runID)
+	resp, err := provider.Generate(genCtx, ai.GenerateRequest{
 		System:    suggestionsSystemPrompt,
 		Prompt:    prompt,
 		MaxTokens: cfg.MaxTokensInitial,
 	})
+	stopWatch()
 	totalIn, totalOut := 0, 0
 	totalCost := 0.0
 	if err != nil {
+		// If the incoming ctx itself is dead (River killed the worker, admin
+		// cancelled via watchCancellation) we can't use it to write the failure
+		// row — every repo call would just return "context cancelled". Fall back
+		// to a fresh short-lived ctx for the terminal writes.
+		writeCtx, writeCancel := terminalWriteCtx(ctx)
+		defer writeCancel()
 		// If the admin cancelled while we were waiting on the provider, record
 		// the failure under the existing 'cancelled' status rather than flipping
 		// it back to 'failed'.
-		if ccErr := s.checkCancelled(ctx, runID); ccErr != nil {
+		if ccErr := s.checkCancelled(writeCtx, runID); ccErr != nil {
 			return nil, ccErr
 		}
-		s.emit(ctx, runID, "error", map[string]any{"stage": "ai_generate_initial", "error": err.Error()})
-		_ = s.repo.FinishRun(ctx, runID, "failed", err.Error(), totalIn, totalOut, totalCost)
+		s.emit(writeCtx, runID, "error", map[string]any{"stage": "ai_generate_initial", "error": err.Error()})
+		_ = s.repo.FinishRun(writeCtx, runID, "failed", err.Error(), totalIn, totalOut, totalCost)
 		return nil, fmt.Errorf("ai generate: %w", err)
 	}
 	totalIn += resp.Usage.InputTokens
@@ -191,6 +239,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	totalCost += resp.Usage.EstimatedCostUSD
 	s.emit(ctx, runID, "ai_response", map[string]any{
 		"pass":             "initial",
+		"model":            resp.Usage.ModelID,
 		"text":             resp.Text,
 		"tokens_in":        resp.Usage.InputTokens,
 		"tokens_out":       resp.Usage.OutputTokens,
@@ -244,11 +293,13 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 			"prompt":     backfill,
 			"max_tokens": cfg.MaxTokensBackfill,
 		})
-		bfResp, bfErr := provider.Generate(ctx, ai.GenerateRequest{
+		bfCtx, bfStop := s.watchCancellation(ctx, runID)
+		bfResp, bfErr := provider.Generate(bfCtx, ai.GenerateRequest{
 			System:    suggestionsSystemPrompt,
 			Prompt:    backfill,
 			MaxTokens: cfg.MaxTokensBackfill,
 		})
+		bfStop()
 		if bfErr != nil {
 			slog.Warn("ai suggestions backfill failed", "user_id", userID, "attempt", backfillAttempts, "error", bfErr)
 			s.emit(ctx, runID, "error", map[string]any{"stage": "ai_generate_backfill", "attempt": backfillAttempts, "error": bfErr.Error()})
@@ -259,6 +310,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		totalCost += bfResp.Usage.EstimatedCostUSD
 		s.emit(ctx, runID, "backfill_response", map[string]any{
 			"attempt":    backfillAttempts,
+			"model":      bfResp.Usage.ModelID,
 			"text":       bfResp.Text,
 			"tokens_in":  bfResp.Usage.InputTokens,
 			"tokens_out": bfResp.Usage.OutputTokens,
@@ -297,7 +349,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	// ── Persist ──────────────────────────────────────────────────────────────
 	all := append([]repository.SuggestionInput{}, buyItems...)
 	all = append(all, readNextItems...)
-	if err := s.repo.AppendSuggestions(ctx, userID, runID, all, MaxSuggestionsPerUser); err != nil {
+	if err := s.repo.AppendSuggestions(ctx, userID, runID, all, MaxBuyPerUser, MaxReadNextPerUser); err != nil {
 		s.emit(ctx, runID, "error", map[string]any{"stage": "persist", "error": err.Error()})
 		_ = s.repo.FinishRun(ctx, runID, "failed", err.Error(), totalIn, totalOut, totalCost)
 		return nil, err
@@ -360,14 +412,11 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 			s.emit(ctx, runID, "enrichment_decision", decision)
 			continue
 		}
-		if p.ISBN == "" {
-			rejected = append(rejected, p.Title)
-			decision["outcome"] = "rejected"
-			decision["reason"] = "missing_isbn"
-			s.emit(ctx, runID, "enrichment_decision", decision)
-			continue
+		if p.Author != "" {
+			decision["author"] = p.Author
 		}
-		// Reject if the user already owns this book.
+		// Reject if the user already owns this book. Done before the ISBN lookup
+		// so we don't waste a provider call on a title/ISBN we'll drop anyway.
 		owned, err := s.repo.BookExistsInLibrary(ctx, libraryID, p.Title, p.ISBN)
 		if err != nil {
 			slog.Warn("library existence check failed", "isbn", p.ISBN, "error", err)
@@ -380,55 +429,146 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 			s.emit(ctx, runID, "enrichment_decision", decision)
 			continue
 		}
-		// Look up via metadata providers. A provider that can't resolve the ISBN
-		// likely means the AI hallucinated it — drop the suggestion.
-		merged, err := s.providers.LookupISBNMerged(ctx, p.ISBN)
-		if err != nil || merged == nil || merged.Title == nil || merged.Title.Value == "" {
-			rejected = append(rejected, p.Title)
-			decision["outcome"] = "rejected"
-			decision["reason"] = "metadata_lookup_failed"
-			if err != nil {
-				decision["lookup_error"] = err.Error()
+
+		// Primary path: if the AI gave us an ISBN, try to resolve it. If that
+		// fails OR the returned title doesn't match, fall through to title+author
+		// search. Models hallucinate ISBNs far more often than they hallucinate
+		// the entire book, so recovering from a bad ISBN is high-value.
+		var item *repository.SuggestionInput
+		var primaryReason string
+		if p.ISBN != "" {
+			merged, err := s.providers.LookupISBNMerged(ctx, p.ISBN)
+			switch {
+			case err != nil || merged == nil || merged.Title == nil || merged.Title.Value == "":
+				primaryReason = "metadata_lookup_failed"
+				if err != nil {
+					decision["lookup_error"] = err.Error()
+				}
+			case !fuzzyTitleMatch(p.Title, merged.Title.Value):
+				primaryReason = "title_mismatch"
+				decision["metadata_lookup"] = mergedSummary(merged)
+			default:
+				decision["metadata_lookup"] = mergedSummary(merged)
+				it := repository.SuggestionInput{
+					Type:      "buy",
+					Title:     merged.Title.Value,
+					Author:    firstAuthor(merged),
+					ISBN:      p.ISBN,
+					Reasoning: p.Reason,
+				}
+				if len(merged.Covers) > 0 {
+					it.CoverURL = merged.Covers[0].CoverURL
+				}
+				item = &it
 			}
-			s.emit(ctx, runID, "enrichment_decision", decision)
-			continue
-		}
-		lookup := map[string]any{"title": merged.Title.Value}
-		if merged.Authors != nil {
-			lookup["authors"] = merged.Authors.Value
-		}
-		if len(merged.Covers) > 0 {
-			lookup["cover_url"] = merged.Covers[0].CoverURL
-		}
-		decision["metadata_lookup"] = lookup
-		// Title fuzzy-match: if the provider-returned title doesn't roughly
-		// match the AI's claim, assume ISBN is wrong.
-		if !fuzzyTitleMatch(p.Title, merged.Title.Value) {
-			rejected = append(rejected, p.Title)
-			decision["outcome"] = "rejected"
-			decision["reason"] = "title_mismatch"
-			s.emit(ctx, runID, "enrichment_decision", decision)
-			continue
+		} else {
+			primaryReason = "missing_isbn"
 		}
 
-		item := repository.SuggestionInput{
-			Type:      "buy",
-			Title:     merged.Title.Value,
-			Author:    firstAuthor(merged),
-			ISBN:      p.ISBN,
-			Reasoning: p.Reason,
+		// Fallback path: title+author search. Only runs when the primary path
+		// failed AND the AI gave us an author. Missing author = we can't verify
+		// the book actually exists, so we treat it the same as a fully made-up
+		// suggestion and reject.
+		if item == nil {
+			if p.Author == "" {
+				rejected = append(rejected, p.Title)
+				decision["outcome"] = "rejected"
+				decision["reason"] = primaryReason
+				if primaryReason == "" {
+					decision["reason"] = "missing_author"
+				}
+				s.emit(ctx, runID, "enrichment_decision", decision)
+				continue
+			}
+			fallback := s.findByTitleAuthor(ctx, p.Title, p.Author)
+			if fallback == nil {
+				rejected = append(rejected, p.Title)
+				decision["outcome"] = "rejected"
+				decision["reason"] = "title_author_search_failed"
+				decision["primary_reject_reason"] = primaryReason
+				s.emit(ctx, runID, "enrichment_decision", decision)
+				continue
+			}
+			// Re-check ownership using the ISBN the fallback actually resolved —
+			// the AI's made-up ISBN might have missed a match that the real ISBN
+			// now catches.
+			if owned2, _ := s.repo.BookExistsInLibrary(ctx, libraryID, fallback.Title, fallback.ISBN13); owned2 {
+				rejected = append(rejected, p.Title)
+				decision["outcome"] = "rejected"
+				decision["reason"] = "already_owned"
+				decision["recovered_isbn"] = fallback.ISBN13
+				s.emit(ctx, runID, "enrichment_decision", decision)
+				continue
+			}
+			decision["recovered_via"] = "title_author_search"
+			decision["primary_reject_reason"] = primaryReason
+			decision["recovered_isbn"] = fallback.ISBN13
+			decision["recovered_title"] = fallback.Title
+			decision["recovered_author"] = strings.Join(fallback.Authors, ", ")
+			item = &repository.SuggestionInput{
+				Type:      "buy",
+				Title:     fallback.Title,
+				Author:    firstAuthorFromList(fallback.Authors),
+				ISBN:      fallback.ISBN13,
+				CoverURL:  fallback.CoverURL,
+				Reasoning: p.Reason,
+			}
 		}
-		if len(merged.Covers) > 0 {
-			item.CoverURL = merged.Covers[0].CoverURL
-		}
-		// Mark the canonical (provider-returned) title as seen — that's what
-		// we'll actually persist.
-		seen[normalizeTitle(merged.Title.Value)] = struct{}{}
-		accepted = append(accepted, item)
+
+		seen[normalizeTitle(item.Title)] = struct{}{}
+		accepted = append(accepted, *item)
 		decision["outcome"] = "accepted"
 		s.emit(ctx, runID, "enrichment_decision", decision)
 	}
 	return accepted, rejected
+}
+
+// findByTitleAuthor is the fallback path when ISBN lookup fails or mismatches.
+// Returns the first search result that fuzzy-matches the AI-provided title and
+// author — this dual check is what guards against "the AI invented both the
+// ISBN and the book". Returns nil when no result passes both checks or when no
+// provider returned an ISBN-13 (without one we can't dedupe against the user's
+// library reliably).
+func (s *SuggestionsService) findByTitleAuthor(ctx context.Context, title, author string) *providers.BookResult {
+	query := title
+	if author != "" {
+		query = title + " " + author
+	}
+	results := s.providers.SearchBooks(ctx, query)
+	for _, r := range results {
+		if r == nil || r.ISBN13 == "" {
+			continue
+		}
+		if !fuzzyTitleMatch(title, r.Title) {
+			continue
+		}
+		if !fuzzyAuthorMatch(author, strings.Join(r.Authors, " ")) {
+			continue
+		}
+		return r
+	}
+	return nil
+}
+
+func mergedSummary(m *providers.MergedBookResult) map[string]any {
+	out := map[string]any{}
+	if m.Title != nil {
+		out["title"] = m.Title.Value
+	}
+	if m.Authors != nil {
+		out["authors"] = m.Authors.Value
+	}
+	if len(m.Covers) > 0 {
+		out["cover_url"] = m.Covers[0].CoverURL
+	}
+	return out
+}
+
+func firstAuthorFromList(authors []string) string {
+	if len(authors) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(authors[0])
 }
 
 // resolveReadNext matches the AI's read_next titles back to books already in
@@ -512,6 +652,55 @@ func (s *SuggestionsService) resolveReadNext(ctx context.Context, runID uuid.UUI
 	return out
 }
 
+// terminalWriteCtx returns a context safe to use for terminal DB writes (the
+// "failed"/"cancelled" row update and its last event) when the job's own ctx
+// may already be cancelled. If the input ctx is still live we just bound it to
+// 5s; otherwise we detach from it entirely so the cleanup write still lands.
+func terminalWriteCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx.Err() != nil {
+		return context.WithTimeout(context.Background(), 5*time.Second)
+	}
+	return context.WithTimeout(ctx, 5*time.Second)
+}
+
+// watchCancellation returns a derived context that's cancelled whenever the
+// run row is marked 'cancelled' in the DB. Use this around long-running
+// provider calls so an admin DELETE actually aborts the in-flight HTTP
+// request instead of waiting for the 10-minute client timeout. The returned
+// stop function must be called when the guarded call returns — it tears down
+// the watcher goroutine regardless of whether cancellation fired.
+func (s *SuggestionsService) watchCancellation(ctx context.Context, runID uuid.UUID) (context.Context, func()) {
+	derived, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-derived.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				status, err := s.repo.GetRunStatus(ctx, runID)
+				if err != nil {
+					// Row gone → treat as cancelled; stuck provider call gets aborted.
+					cancel()
+					return
+				}
+				if status == "cancelled" {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return derived, func() {
+		close(done)
+		cancel()
+	}
+}
+
 // checkCancelled re-reads the run's status from the DB. If the admin cancelled
 // mid-flight we short-circuit with ErrRunCancelled and emit a marker event so
 // the run's event log is self-explanatory. Called between pipeline stages —
@@ -548,7 +737,7 @@ Keep reasoning to one sentence focused on why THIS user would enjoy THIS book.`
 
 // buildSuggestionsPrompt assembles the pass-1 prompt. Respects admin
 // permissions by only including the data categories they've enabled.
-func buildSuggestionsPrompt(titles []*repository.LibraryTitle, taste []byte, blocks []*models.AIBlockedItem, perms AIPermissions, cfg AISuggestionsJobConfig) string {
+func buildSuggestionsPrompt(titles []*repository.LibraryTitle, taste []byte, blocks []*models.AIBlockedItem, perms AIPermissions, cfg AISuggestionsJobConfig, alreadyBuy, alreadyReadNext []string) string {
 	var b strings.Builder
 	b.WriteString("I have a personal library and want two kinds of book recommendations.\n\n")
 
@@ -656,25 +845,48 @@ func buildSuggestionsPrompt(titles []*repository.LibraryTitle, taste []byte, blo
 		b.WriteString("\n")
 	}
 
-	// ── Task instructions ──────────────────────────────────────────────────
-	fmt.Fprintf(&b, `## Your task
-Return two sections. Each suggestion is on its own line using this exact shape:
+	// ── Already-suggested titles ────────────────────────────────────────────
+	// If the user has already been shown these in earlier runs we want fresh
+	// picks, not the same list again. We list both buckets together — the AI
+	// needs to avoid them regardless of which section they originally landed in.
+	if len(alreadyBuy) > 0 || len(alreadyReadNext) > 0 {
+		b.WriteString("## Already suggested — pick different titles this run\n")
+		for _, t := range alreadyBuy {
+			fmt.Fprintf(&b, "- %s\n", t)
+		}
+		for _, t := range alreadyReadNext {
+			fmt.Fprintf(&b, "- %s\n", t)
+		}
+		b.WriteString("\n")
+	}
 
-1. Title — ISBN — one-sentence reason specific to me
+	// ── Task instructions ──────────────────────────────────────────────────
+	// Author is mandatory on buy picks: it's both a signal for the title-search
+	// fallback (when the AI's ISBN doesn't resolve) and a cheap hallucination
+	// guard — a made-up book is much less likely to survive a title+author match.
+	fmt.Fprintf(&b, `## Your task
+Return two sections. Each suggestion is on its own line using this exact shape.
 
 For the "Books to buy" section, provide %d suggestions of real published books
-I do NOT already own. Each must include a valid ISBN-13. Pick an excellent
-match for my tastes — variety across themes is welcome but quality is more
-important than breadth.
+I do NOT already own. Each line MUST be:
+
+1. Title — Author — ISBN — one-sentence reason specific to me
+
+All four fields are required. If you're unsure of the ISBN, still include the
+author and your best guess — the author name lets the pipeline verify the book
+exists even when the ISBN is off. Pick an excellent match for my tastes —
+variety across themes is welcome but quality is more important than breadth.
 
 For the "Books to read next" section, pick %d books EXCLUSIVELY from my
 "Books I own but haven't read yet" list above. Use the exact title I gave you.
-Do not include an ISBN for this section.
+Do NOT include an ISBN or author for this section — just:
+
+1. Title — one-sentence reason
 
 Use this exact output format:
 
 ## Books to buy
-1. Title — ISBN — reason
+1. Title — Author — ISBN — reason
 ...
 
 ## Books to read next

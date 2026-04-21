@@ -83,6 +83,8 @@ func (p *OpenAIProvider) Configure(cfg map[string]string) {
 	}
 }
 
+func (p *OpenAIProvider) ConfiguredModel() string { return p.model }
+
 func (p *OpenAIProvider) Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error) {
 	if p.apiKey == "" {
 		return nil, fmt.Errorf("openai provider not configured")

@@ -53,6 +53,9 @@ func TestFuzzyTitleMatch(t *testing.T) {
 		{"A Memory Called Empire", "a memory called empire", true},
 		{"Blindsight", "Echopraxia", false},
 		{"", "Something", false},
+		{"Saga, Vol. 1", "Saga Volume 1", true},
+		{"Saga #1", "Saga, Vol. 1", true},
+		{"Dune (Deluxe Edition)", "Dune Deluxe Ed", true},
 	}
 	for _, c := range cases {
 		if got := fuzzyTitleMatch(c.a, c.b); got != c.want {

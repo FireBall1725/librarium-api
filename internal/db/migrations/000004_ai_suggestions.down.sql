@@ -2,6 +2,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Copyright (C) 2026 fireball1725
 
+DROP TABLE IF EXISTS ai_run_events;
 DROP TABLE IF EXISTS ai_blocked_items;
 DROP TABLE IF EXISTS ai_suggestions;
 DROP TABLE IF EXISTS ai_suggestion_runs;

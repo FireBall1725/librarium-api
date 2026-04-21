@@ -191,6 +191,8 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/admin/connections/ai/permissions", requireAdmin(http.HandlerFunc(aiHandler.GetPermissions)))
 	mux.Handle("PUT /api/v1/admin/connections/ai/permissions", requireAdmin(http.HandlerFunc(aiHandler.SetPermissions)))
 	mux.Handle("POST /api/v1/admin/connections/ai/active", requireAdmin(http.HandlerFunc(aiHandler.SetActiveProvider)))
+	mux.Handle("GET /api/v1/admin/connections/ai/ollama/models", requireAdmin(http.HandlerFunc(aiHandler.ListOllamaModels)))
+	mux.Handle("GET /api/v1/admin/connections/ai/osaurus/models", requireAdmin(http.HandlerFunc(aiHandler.ListOsaurusModels)))
 	mux.Handle("POST /api/v1/admin/connections/ai/{provider}/test", requireAdmin(http.HandlerFunc(aiHandler.TestProvider)))
 	mux.Handle("PUT /api/v1/admin/connections/ai/{provider}", requireAdmin(http.HandlerFunc(aiHandler.ConfigureProvider)))
 	mux.Handle("GET /api/v1/admin/connections/ai", requireAdmin(http.HandlerFunc(aiHandler.ListProviders)))
@@ -216,6 +218,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	// catch-alls so the mux picks the right handler.
 	mux.Handle("GET /api/v1/me/suggestions", requireAuth(http.HandlerFunc(aiSuggestionsHandler.ListSuggestions)))
 	mux.Handle("POST /api/v1/me/suggestions/run", requireAuth(http.HandlerFunc(aiSuggestionsHandler.RunNow)))
+	mux.Handle("GET /api/v1/me/suggestions/quota", requireAuth(http.HandlerFunc(aiSuggestionsHandler.GetMyQuota)))
 	mux.Handle("GET /api/v1/me/suggestions/runs", requireAuth(http.HandlerFunc(aiSuggestionsHandler.ListMyRuns)))
 	mux.Handle("GET /api/v1/me/suggestions/runs/{id}", requireAuth(http.HandlerFunc(aiSuggestionsHandler.GetMyRun)))
 	mux.Handle("PUT /api/v1/me/suggestions/{id}/status", requireAuth(http.HandlerFunc(aiSuggestionsHandler.UpdateSuggestionStatus)))

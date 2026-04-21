@@ -81,6 +81,8 @@ func (p *AnthropicProvider) Configure(cfg map[string]string) {
 	}
 }
 
+func (p *AnthropicProvider) ConfiguredModel() string { return p.model }
+
 func (p *AnthropicProvider) Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error) {
 	if p.client == nil {
 		return nil, fmt.Errorf("anthropic provider not configured")

@@ -197,6 +197,37 @@ func (s *AIService) TestProvider(ctx context.Context, name string) (string, erro
 	return resp.Text, nil
 }
 
+// ListOllamaModels proxies the Ollama host's /api/tags through the saved
+// provider config so the admin UI can render a dropdown of locally-pulled
+// models instead of a fragile free-text input. Returns an error if the Ollama
+// provider isn't registered, isn't configured, or the host is unreachable.
+func (s *AIService) ListOllamaModels(ctx context.Context) ([]ai.OllamaModel, error) {
+	p := s.registry.Get("ollama")
+	if p == nil {
+		return nil, fmt.Errorf("ollama provider is not registered")
+	}
+	op, ok := p.(*ai.OllamaProvider)
+	if !ok {
+		return nil, fmt.Errorf("ollama provider has unexpected type")
+	}
+	return op.ListModels(ctx)
+}
+
+// ListOsaurusModels proxies the Osaurus host's /v1/models through the saved
+// provider config. Same role as ListOllamaModels but against the OpenAI-shape
+// discovery endpoint that Osaurus exposes.
+func (s *AIService) ListOsaurusModels(ctx context.Context) ([]ai.OsaurusModel, error) {
+	p := s.registry.Get("osaurus")
+	if p == nil {
+		return nil, fmt.Errorf("osaurus provider is not registered")
+	}
+	op, ok := p.(*ai.OsaurusProvider)
+	if !ok {
+		return nil, fmt.Errorf("osaurus provider has unexpected type")
+	}
+	return op.ListModels(ctx)
+}
+
 // ─── Internal ─────────────────────────────────────────────────────────────────
 
 // loadConfig reads the JSON-encoded config for a provider from instance_settings.

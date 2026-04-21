@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -20,6 +21,7 @@ const (
 	defaultOllamaModel     = "llama3"
 	defaultOllamaMaxTokens = 4096
 	ollamaTimeout          = 10 * time.Minute // local inference can be slow on modest hardware
+	ollamaListTimeout      = 5 * time.Second  // /api/tags is a management call — keep UI snappy
 )
 
 // OllamaProvider calls a local or self-hosted Ollama instance via /api/chat.
@@ -83,6 +85,8 @@ func (p *OllamaProvider) Configure(cfg map[string]string) {
 	}
 }
 
+func (p *OllamaProvider) ConfiguredModel() string { return p.model }
+
 func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error) {
 	if p.baseURL == "" {
 		return nil, fmt.Errorf("ollama provider not configured")
@@ -115,16 +119,27 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (*Ge
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	// Ollama can hang for a long time: the model may still be loading, a dead
+	// TCP connection from the pool may need to time out, or a thinking model
+	// may genuinely be churning. Log the send/receive boundaries so an admin
+	// watching `docker compose logs -f api` can see exactly where we're stuck.
+	slog.Info("ollama request start", "base_url", p.baseURL, "model", p.model, "prompt_bytes", len(body), "max_tokens", maxTokens)
+	reqStart := time.Now()
+
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
+		slog.Warn("ollama request failed", "model", p.model, "elapsed", time.Since(reqStart), "error", err)
 		return nil, fmt.Errorf("ollama request: %w", err)
 	}
 	defer resp.Body.Close()
+	slog.Info("ollama response headers", "model", p.model, "status", resp.StatusCode, "elapsed", time.Since(reqStart))
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
+		slog.Warn("ollama response read failed", "model", p.model, "elapsed", time.Since(reqStart), "error", err)
 		return nil, err
 	}
+	slog.Info("ollama response complete", "model", p.model, "status", resp.StatusCode, "bytes", len(raw), "elapsed", time.Since(reqStart))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, truncate(string(raw), 200))
 	}
@@ -154,6 +169,68 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (*Ge
 		},
 		Truncated: decoded.DoneReason == "length",
 	}, nil
+}
+
+// OllamaModel describes one locally-pulled model as reported by /api/tags.
+// Fields mirror the subset the UI cares about — name for the dropdown, size
+// and modified for a supporting caption, and the details block for future
+// phases that want to show quant / parameter count.
+type OllamaModel struct {
+	Name          string    `json:"name"`
+	Size          int64     `json:"size"`
+	Modified      time.Time `json:"modified"`
+	Digest        string    `json:"digest"`
+	Family        string    `json:"family,omitempty"`
+	ParameterSize string    `json:"parameter_size,omitempty"`
+	Quantization  string    `json:"quantization,omitempty"`
+}
+
+// ListModels calls the configured Ollama server's /api/tags endpoint and
+// returns the locally-pulled models. Used by the admin UI to replace the
+// model-name text input with a dropdown. Uses a short, management-scoped
+// timeout — the inference client's 10-minute timeout is wildly wrong here.
+func (p *OllamaProvider) ListModels(ctx context.Context) ([]OllamaModel, error) {
+	if p.baseURL == "" {
+		return nil, fmt.Errorf("ollama provider not configured")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, ollamaListTimeout)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("ollama /api/tags: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ollama /api/tags returned status %d: %s", resp.StatusCode, truncate(string(raw), 200))
+	}
+
+	var decoded ollamaTagsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return nil, fmt.Errorf("ollama /api/tags decode: %w", err)
+	}
+
+	out := make([]OllamaModel, 0, len(decoded.Models))
+	for _, m := range decoded.Models {
+		out = append(out, OllamaModel{
+			Name:          m.Name,
+			Size:          m.Size,
+			Modified:      m.ModifiedAt,
+			Digest:        m.Digest,
+			Family:        m.Details.Family,
+			ParameterSize: m.Details.ParameterSize,
+			Quantization:  m.Details.QuantizationLevel,
+		})
+	}
+	return out, nil
 }
 
 // thinkTagRE removes inline <think>…</think> blocks. Thinking models may emit
@@ -199,4 +276,22 @@ type ollamaChatResponse struct {
 	EvalCount       int           `json:"eval_count"`
 	// DoneReason is "stop" on a natural end, "length" when num_predict was hit.
 	DoneReason string `json:"done_reason"`
+}
+
+type ollamaTagsResponse struct {
+	Models []ollamaTagEntry `json:"models"`
+}
+
+type ollamaTagEntry struct {
+	Name       string            `json:"name"`
+	ModifiedAt time.Time         `json:"modified_at"`
+	Size       int64             `json:"size"`
+	Digest     string            `json:"digest"`
+	Details    ollamaTagsDetails `json:"details"`
+}
+
+type ollamaTagsDetails struct {
+	Family            string `json:"family"`
+	ParameterSize     string `json:"parameter_size"`
+	QuantizationLevel string `json:"quantization_level"`
 }

@@ -12,6 +12,11 @@ type SuggestionProvider interface {
 	Info() ProviderInfo
 	Configure(cfg map[string]string)
 	Enabled() bool
+	// ConfiguredModel returns the model ID this provider will generate with at
+	// its current configuration. Known before any Generate call, so the worker
+	// can stamp it on the run row and timeline events. Empty if the provider
+	// hasn't been configured yet.
+	ConfiguredModel() string
 	Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error)
 }
 

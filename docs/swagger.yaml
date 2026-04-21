@@ -391,6 +391,18 @@ definitions:
         type: integer
       max_read_next_per_user:
         type: integer
+      max_tokens_backfill:
+        description: |-
+          MaxTokensBackfill applies to each backfill retry prompt. Smaller than
+          initial since backfill only asks for the remaining slots.
+        type: integer
+      max_tokens_initial:
+        description: |-
+          MaxTokensInitial is the cap on output tokens for the first pass.
+          Thinking models (qwen3, deepseek-r1, extended-thinking Claude) burn
+          through many tokens reasoning before emitting anything — too low a
+          cap leaves the response empty.
+        type: integer
       user_run_rate_limit_per_day:
         type: integer
     type: object
@@ -481,6 +493,17 @@ definitions:
         type: integer
       type:
         type: string
+    type: object
+  internal_api_handlers.QuotaView:
+    properties:
+      limit:
+        type: integer
+      resets_at:
+        type: string
+      unlimited:
+        type: boolean
+      used:
+        type: integer
     type: object
   internal_api_handlers.RunView:
     properties:
@@ -1242,6 +1265,25 @@ paths:
       - admin
       - jobs
   /admin/jobs/ai-suggestions/runs:
+    delete:
+      description: Removes every run in a terminal state (completed, failed, cancelled).
+        Running runs are left alone.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              deleted:
+                type: integer
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete all finished AI suggestion runs (admin)
+      tags:
+      - admin
+      - jobs
     get:
       description: Returns the most recent suggestion runs with cost, status, and
         owning user. Used by the admin jobs page.
@@ -1261,6 +1303,34 @@ paths:
       - admin
       - jobs
   /admin/jobs/ai-suggestions/runs/{id}:
+    delete:
+      description: Marks a running run as cancelled; the worker checks status between
+        stages and exits on the next check. Completed or already-cancelled runs return
+        404.
+      parameters:
+      - description: Run ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cancel a running AI suggestion run (admin)
+      tags:
+      - admin
+      - jobs
     get:
       description: Returns the run metadata plus every pipeline event. Admin can view
         any user's run.
@@ -6912,6 +6982,23 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a suggestion's status
+      tags:
+      - me
+      - ai
+  /me/suggestions/quota:
+    get:
+      description: Returns how many suggestion runs the caller has used in the last
+        24h and the configured per-user daily limit.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api_handlers.QuotaView'
+      security:
+      - BearerAuth: []
+      summary: Get my AI suggestion run quota
       tags:
       - me
       - ai

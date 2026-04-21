@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/service"
@@ -23,6 +24,14 @@ type AISuggestionsWorker struct {
 
 func NewAISuggestionsWorker(svc *service.SuggestionsService) *AISuggestionsWorker {
 	return &AISuggestionsWorker{svc: svc}
+}
+
+// Timeout raises the per-job ceiling well above River's 60s default. Ollama
+// with a 32B thinking model (qwen3, deepseek-r1) can legitimately take 5-10
+// minutes on modest hardware — the provider's own 10m HTTP client timeout
+// and watchCancellation (driven by DB status polling) are the real guards.
+func (w *AISuggestionsWorker) Timeout(*river.Job[models.AISuggestionsJobArgs]) time.Duration {
+	return 20 * time.Minute
 }
 
 func (w *AISuggestionsWorker) Work(ctx context.Context, job *river.Job[models.AISuggestionsJobArgs]) error {
@@ -46,7 +55,15 @@ func (w *AISuggestionsWorker) Work(ctx context.Context, job *river.Job[models.AI
 		slog.Info("ai suggestions cancelled", "user_id", args.UserID)
 		return nil
 	case err != nil:
-		return err
+		// Suggestions runs aren't safe to auto-retry: the common failures
+		// (context-length exceeded, provider 4xx, invalid JSON from the model)
+		// are deterministic — the second attempt will fail the same way, just
+		// spending tokens and cluttering history. Transient failures
+		// (network blip, provider timeout) are better handled by the user
+		// hitting "Run now" again or waiting for the next scheduled pass.
+		// River's default is 25 retries with backoff; JobCancel stops that.
+		slog.Warn("ai suggestions failed — cancelling further attempts", "user_id", args.UserID, "error", err)
+		return river.JobCancel(err)
 	}
 	return nil
 }

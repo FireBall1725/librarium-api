@@ -125,12 +125,13 @@ func main() {
 		slog.Warn("failed to load provider settings", "error", err)
 	}
 
-	// AI providers: Anthropic, OpenAI, and Ollama. Exactly one is active at a
-	// time; the admin picks via the Connections page.
+	// AI providers: Anthropic, OpenAI, Ollama, and Osaurus. Exactly one is
+	// active at a time; the admin picks via the Connections page.
 	aiRegistry := ai.NewRegistry()
 	aiRegistry.Register(ai.NewAnthropicProvider())
 	aiRegistry.Register(ai.NewOpenAIProvider())
 	aiRegistry.Register(ai.NewOllamaProvider())
+	aiRegistry.Register(ai.NewOsaurusProvider())
 	aiSvc := service.NewAIService(aiRegistry, settingsRepo)
 	if err := aiSvc.LoadAll(baseCtx); err != nil {
 		slog.Warn("failed to load AI provider settings", "error", err)

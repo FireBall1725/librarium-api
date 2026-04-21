@@ -171,6 +171,50 @@ func (h *AIHandler) SetPermissions(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, perms)
 }
 
+// ListOllamaModels godoc
+//
+//	@Summary     List locally-pulled Ollama models (admin)
+//	@Description Proxies the configured Ollama host's /api/tags endpoint. Used by the provider-config UI to render a model dropdown instead of a free-text input. Returns 503 when the host is unreachable so the UI can fall back to the text input.
+//	@Tags        admin,ai
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Success     200  {object}  object{models=[]ai.OllamaModel}
+//	@Failure     503  {object}  object{error=string,reachable=boolean}
+//	@Router      /admin/connections/ai/ollama/models [get]
+func (h *AIHandler) ListOllamaModels(w http.ResponseWriter, r *http.Request) {
+	models, err := h.svc.ListOllamaModels(r.Context())
+	if err != nil {
+		respond.JSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error":     err.Error(),
+			"reachable": false,
+		})
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"models": models})
+}
+
+// ListOsaurusModels godoc
+//
+//	@Summary     List models available on the configured Osaurus host (admin)
+//	@Description Proxies the configured Osaurus host's /v1/models endpoint (OpenAI shape). Used by the provider-config UI to render a model dropdown instead of a free-text input. Returns 503 when the host is unreachable so the UI can fall back to the text input.
+//	@Tags        admin,ai
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Success     200  {object}  object{models=[]ai.OsaurusModel}
+//	@Failure     503  {object}  object{error=string,reachable=boolean}
+//	@Router      /admin/connections/ai/osaurus/models [get]
+func (h *AIHandler) ListOsaurusModels(w http.ResponseWriter, r *http.Request) {
+	models, err := h.svc.ListOsaurusModels(r.Context())
+	if err != nil {
+		respond.JSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error":     err.Error(),
+			"reachable": false,
+		})
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"models": models})
+}
+
 // ─── User-scoped AI endpoints ─────────────────────────────────────────────────
 
 // AIUserHandler groups the /me endpoints for AI opt-in and taste profile.
