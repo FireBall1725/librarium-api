@@ -6,7 +6,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
@@ -15,9 +14,6 @@ import (
 	"github.com/fireball1725/librarium-api/internal/auth"
 	"github.com/fireball1725/librarium-api/internal/background"
 	"github.com/fireball1725/librarium-api/internal/config"
-	"github.com/fireball1725/librarium-api/internal/providers"
-	bookProviders "github.com/fireball1725/librarium-api/internal/providers/books"
-	mangaProviders "github.com/fireball1725/librarium-api/internal/providers/manga"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
 	"github.com/jackc/pgx/v5"
@@ -31,7 +27,17 @@ type MetricsCollector interface {
 	RecordRequest(method, path, remoteAddr, client, errMsg string, status int, duration time.Duration)
 }
 
-func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverClient *river.Client[pgx.Tx], metrics MetricsCollector) http.Handler {
+// RouterDeps holds the singleton services the HTTP layer must share with the
+// worker process. In particular: any service that caches mutable state (like
+// the AI or book provider registries) must be the same instance everywhere,
+// otherwise changes made via the HTTP admin endpoints won't be visible to
+// background jobs.
+type RouterDeps struct {
+	AISvc       *service.AIService
+	ProviderSvc *service.ProviderService
+}
+
+func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverClient *river.Client[pgx.Tx], metrics MetricsCollector, deps RouterDeps) http.Handler {
 	jwtSvc := auth.NewJWTService(cfg.JWTSecret, cfg.JWTAccessTTL)
 
 	userRepo := repository.NewUserRepo(db)
@@ -58,23 +64,20 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mediaTypeRepo := repository.NewMediaTypeRepo(db)
 	importJobRepo := repository.NewImportJobRepo(db)
 
-	// Build provider registry
-	registry := providers.NewRegistry()
-	registry.Register(bookProviders.NewTestProvider())
-	registry.Register(bookProviders.NewOpenLibraryProvider())
-	registry.Register(bookProviders.NewGoogleBooksProvider())
-	registry.Register(bookProviders.NewISBNdbProvider())
-	registry.Register(bookProviders.NewHardcoverProvider())
-	registry.Register(mangaProviders.NewMangaDexProvider())
+	// Book and AI provider services are built in main.go and passed in so the
+	// HTTP handlers and the worker share the same registry instances — that's
+	// required for SetActiveProvider / ConfigureProvider to affect what the
+	// worker sees on its next job.
+	providerSvc := deps.ProviderSvc
+	aiSvc := deps.AISvc
 
-	providerSvc := service.NewProviderService(registry, settingsRepo)
-	if err := providerSvc.LoadAll(context.Background()); err != nil {
-		log.Printf("warning: failed to load provider settings: %v", err)
-	}
+	aiUserSvc := service.NewAIUserService(repository.NewUserAISettingsRepo(db))
+	jobSvc := service.NewJobService(settingsRepo)
+	aiSuggestionsRepo := repository.NewAISuggestionsRepo(db)
 
 	seriesVolumesRepo := repository.NewSeriesVolumesRepo(db)
 
-	contributorSvc := service.NewContributorService(contributorRepo, bookRepo, coverRepo, registry, cfg.CoverStoragePath)
+	contributorSvc := service.NewContributorService(contributorRepo, bookRepo, coverRepo, providerSvc.Registry(), cfg.CoverStoragePath)
 
 	loanSvc := service.NewLoanService(loanRepo, tagRepo)
 	seriesSvc := service.NewSeriesService(seriesRepo, seriesVolumesRepo, tagRepo)
@@ -93,6 +96,10 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	enrichmentBatchRepo := repository.NewEnrichmentBatchRepo(db)
 
 	providerHandler := handlers.NewProviderHandler(providerSvc)
+	aiHandler := handlers.NewAIHandler(aiSvc)
+	aiUserHandler := handlers.NewAIUserHandler(aiUserSvc)
+	jobsHandler := handlers.NewJobsHandler(jobSvc)
+	aiSuggestionsHandler := handlers.NewAISuggestionsHandler(aiSuggestionsRepo, riverClient, jobSvc)
 
 	authHandler := handlers.NewAuthHandler(authSvc, preferencesRepo)
 	setupHandler := handlers.NewSetupHandler(authSvc, userRepo)
@@ -178,6 +185,44 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("POST /api/v1/admin/providers/{name}/test", requireAdmin(http.HandlerFunc(providerHandler.TestProvider)))
 	mux.Handle("GET /api/v1/admin/providers/order", requireAdmin(http.HandlerFunc(providerHandler.GetProviderOrder)))
 	mux.Handle("PUT /api/v1/admin/providers/order", requireAdmin(http.HandlerFunc(providerHandler.SetProviderOrder)))
+
+	// Admin — AI connections (instance admin only)
+	// More specific paths must come before /{provider} routes so the mux picks the right handler.
+	mux.Handle("GET /api/v1/admin/connections/ai/permissions", requireAdmin(http.HandlerFunc(aiHandler.GetPermissions)))
+	mux.Handle("PUT /api/v1/admin/connections/ai/permissions", requireAdmin(http.HandlerFunc(aiHandler.SetPermissions)))
+	mux.Handle("POST /api/v1/admin/connections/ai/active", requireAdmin(http.HandlerFunc(aiHandler.SetActiveProvider)))
+	mux.Handle("GET /api/v1/admin/connections/ai/ollama/models", requireAdmin(http.HandlerFunc(aiHandler.ListOllamaModels)))
+	mux.Handle("GET /api/v1/admin/connections/ai/osaurus/models", requireAdmin(http.HandlerFunc(aiHandler.ListOsaurusModels)))
+	mux.Handle("POST /api/v1/admin/connections/ai/{provider}/test", requireAdmin(http.HandlerFunc(aiHandler.TestProvider)))
+	mux.Handle("PUT /api/v1/admin/connections/ai/{provider}", requireAdmin(http.HandlerFunc(aiHandler.ConfigureProvider)))
+	mux.Handle("GET /api/v1/admin/connections/ai", requireAdmin(http.HandlerFunc(aiHandler.ListProviders)))
+
+	// Admin — configurable scheduled jobs (instance admin only)
+	mux.Handle("GET /api/v1/admin/jobs", requireAdmin(http.HandlerFunc(jobsHandler.ListJobs)))
+	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions", requireAdmin(http.HandlerFunc(jobsHandler.GetAISuggestionsJob)))
+	mux.Handle("PUT /api/v1/admin/jobs/ai-suggestions", requireAdmin(http.HandlerFunc(jobsHandler.UpdateAISuggestionsJob)))
+	mux.Handle("POST /api/v1/admin/jobs/ai-suggestions/run", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminRunSuggestions)))
+	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions/runs", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminListRuns)))
+	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions/runs/{id}", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminGetRun)))
+	mux.Handle("DELETE /api/v1/admin/jobs/ai-suggestions/runs/{id}", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminCancelRun)))
+	mux.Handle("DELETE /api/v1/admin/jobs/ai-suggestions/runs", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminClearFinishedRuns)))
+
+	// User-scoped AI endpoints
+	mux.Handle("GET /api/v1/me/ai-prefs", requireAuth(http.HandlerFunc(aiUserHandler.GetPrefs)))
+	mux.Handle("PUT /api/v1/me/ai-prefs", requireAuth(http.HandlerFunc(aiUserHandler.UpdatePrefs)))
+	mux.Handle("GET /api/v1/me/taste-profile", requireAuth(http.HandlerFunc(aiUserHandler.GetTasteProfile)))
+	mux.Handle("PUT /api/v1/me/taste-profile", requireAuth(http.HandlerFunc(aiUserHandler.UpdateTasteProfile)))
+
+	// User-scoped AI suggestions
+	// More specific paths (/run, /runs, /runs/{id}) must come before the {id}
+	// catch-alls so the mux picks the right handler.
+	mux.Handle("GET /api/v1/me/suggestions", requireAuth(http.HandlerFunc(aiSuggestionsHandler.ListSuggestions)))
+	mux.Handle("POST /api/v1/me/suggestions/run", requireAuth(http.HandlerFunc(aiSuggestionsHandler.RunNow)))
+	mux.Handle("GET /api/v1/me/suggestions/quota", requireAuth(http.HandlerFunc(aiSuggestionsHandler.GetMyQuota)))
+	mux.Handle("GET /api/v1/me/suggestions/runs", requireAuth(http.HandlerFunc(aiSuggestionsHandler.ListMyRuns)))
+	mux.Handle("GET /api/v1/me/suggestions/runs/{id}", requireAuth(http.HandlerFunc(aiSuggestionsHandler.GetMyRun)))
+	mux.Handle("PUT /api/v1/me/suggestions/{id}/status", requireAuth(http.HandlerFunc(aiSuggestionsHandler.UpdateSuggestionStatus)))
+	mux.Handle("POST /api/v1/me/suggestions/{id}/block", requireAuth(http.HandlerFunc(aiSuggestionsHandler.BlockSuggestion)))
 
 	// Lookup (any authenticated user)
 	mux.Handle("GET /api/v1/lookup/isbn/{isbn}", requireAuth(http.HandlerFunc(providerHandler.LookupISBN)))

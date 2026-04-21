@@ -35,9 +35,11 @@ import (
 	// resolve names like "America/Toronto" without a filesystem zoneinfo.
 	_ "time/tzdata"
 
+	"github.com/fireball1725/librarium-api/internal/ai"
 	"github.com/fireball1725/librarium-api/internal/api"
 	"github.com/fireball1725/librarium-api/internal/config"
 	"github.com/fireball1725/librarium-api/internal/db"
+	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/providers"
 	bookProviders "github.com/fireball1725/librarium-api/internal/providers/books"
 	mangaProviders "github.com/fireball1725/librarium-api/internal/providers/manga"
@@ -123,6 +125,24 @@ func main() {
 		slog.Warn("failed to load provider settings", "error", err)
 	}
 
+	// AI providers: Anthropic, OpenAI, Ollama, and Osaurus. Exactly one is
+	// active at a time; the admin picks via the Connections page.
+	aiRegistry := ai.NewRegistry()
+	aiRegistry.Register(ai.NewAnthropicProvider())
+	aiRegistry.Register(ai.NewOpenAIProvider())
+	aiRegistry.Register(ai.NewOllamaProvider())
+	aiRegistry.Register(ai.NewOsaurusProvider())
+	aiSvc := service.NewAIService(aiRegistry, settingsRepo)
+	if err := aiSvc.LoadAll(baseCtx); err != nil {
+		slog.Warn("failed to load AI provider settings", "error", err)
+	}
+	aiUserSvc := service.NewAIUserService(repository.NewUserAISettingsRepo(pool))
+	jobSvc := service.NewJobService(settingsRepo)
+	aiSuggestionsRepo := repository.NewAISuggestionsRepo(pool)
+	suggestionsSvc := service.NewSuggestionsService(
+		aiSuggestionsRepo, aiRegistry, aiSvc, jobSvc, aiUserSvc, providerSvc,
+	)
+
 	workerBookSvc := service.NewBookService(
 		pool,
 		repository.NewBookRepo(pool),
@@ -156,11 +176,13 @@ func main() {
 		repository.NewEnrichmentBatchRepo(pool),
 		metadataWorker,
 	)
+	aiSuggestionsWorker := workers.NewAISuggestionsWorker(suggestionsSvc)
 
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, importWorker)
 	river.AddWorker(riverWorkers, metadataWorker)
 	river.AddWorker(riverWorkers, enrichmentBatchWorker)
+	river.AddWorker(riverWorkers, aiSuggestionsWorker)
 
 	riverClient, err := river.NewClient[pgx.Tx](riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
@@ -180,6 +202,13 @@ func main() {
 	}
 	slog.Info("river worker started")
 
+	// ── AI suggestions scheduler ─────────────────────────────────────────────
+	// Poll every 5 minutes: for each opted-in user whose last run is older than
+	// the configured cadence, enqueue a River job. Cheap and good enough for a
+	// self-hosted single-node deployment; multi-node deployments will want a
+	// proper distributed cron.
+	go runSuggestionsScheduler(baseCtx, aiSuggestionsRepo, jobSvc, riverClient)
+
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	addr := cfg.Host + ":" + cfg.Port
 	// Only pass the collector when TUI is active — passing a nil *Collector as
@@ -189,7 +218,10 @@ func main() {
 	if collector != nil {
 		metrics = collector
 	}
-	handler := api.NewRouter(baseCtx, pool, cfg, riverClient, metrics)
+	handler := api.NewRouter(baseCtx, pool, cfg, riverClient, metrics, api.RouterDeps{
+		AISvc:       aiSvc,
+		ProviderSvc: providerSvc,
+	})
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      handler,
@@ -325,6 +357,67 @@ func pollQueueStats(ctx context.Context, pool *pgxpool.Pool) tui.QueueStats {
 		s.Active = append(s.Active, info)
 	}
 	return s
+}
+
+// runSuggestionsScheduler is a simple in-process cron for AI suggestions.
+// Every five minutes it reads the admin job config; if enabled, it walks every
+// opted-in user and enqueues a River job for any whose last run is older than
+// the cadence. River dedups via its own uniqueness semantics but we also check
+// LastRunAt in-process so we don't hammer the queue on each tick.
+func runSuggestionsScheduler(
+	ctx context.Context,
+	repo *repository.AISuggestionsRepo,
+	jobSvc *service.JobService,
+	riverClient *river.Client[pgx.Tx],
+) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	// Kick off a first pass shortly after startup so freshly-configured
+	// deployments don't sit idle for 5 minutes.
+	first := time.NewTimer(30 * time.Second)
+	defer first.Stop()
+
+	run := func() {
+		cfg, err := jobSvc.GetAISuggestionsConfig(ctx)
+		if err != nil {
+			slog.Warn("ai scheduler: load config failed", "error", err)
+			return
+		}
+		if !cfg.Enabled || cfg.IntervalMinutes <= 0 {
+			return
+		}
+		users, err := repo.ListOptedInUsers(ctx)
+		if err != nil {
+			slog.Warn("ai scheduler: list users failed", "error", err)
+			return
+		}
+		cutoff := time.Now().Add(-time.Duration(cfg.IntervalMinutes) * time.Minute)
+		for _, u := range users {
+			last, err := repo.LastRunAt(ctx, u.UserID)
+			if err != nil {
+				slog.Warn("ai scheduler: last run lookup failed", "user_id", u.UserID, "error", err)
+				continue
+			}
+			if !last.IsZero() && last.After(cutoff) {
+				continue
+			}
+			if _, err := riverClient.Insert(ctx,
+				models.AISuggestionsJobArgs{UserID: u.UserID, TriggeredBy: "scheduler"}, nil); err != nil {
+				slog.Warn("ai scheduler: enqueue failed", "user_id", u.UserID, "error", err)
+			}
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-first.C:
+			run()
+		case <-ticker.C:
+			run()
+		}
+	}
 }
 
 // backfillContributorSortNames derives and persists sort_name for contributors
