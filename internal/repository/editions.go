@@ -28,8 +28,8 @@ func NewEditionRepo(db *pgxpool.Pool) *EditionRepo {
 const editionColumns = `
 	id, book_id, format, COALESCE(language,''), COALESCE(edition_name,''),
 	COALESCE(narrator,''), COALESCE(publisher,''), publish_date,
-	COALESCE(isbn_10,''), COALESCE(isbn_13,''), copy_count, COALESCE(description,''),
-	duration_seconds, page_count, is_primary, acquired_at, created_at, updated_at,
+	COALESCE(isbn_10,''), COALESCE(isbn_13,''), COALESCE(description,''),
+	duration_seconds, page_count, is_primary, created_at, updated_at,
 	narrator_contributor_id,
 	(SELECT name FROM contributors WHERE id = narrator_contributor_id)
 `
@@ -41,8 +41,8 @@ const editionColumns = `
 const beEditionColumns = `
 	be.id, be.book_id, be.format, COALESCE(be.language,''), COALESCE(be.edition_name,''),
 	COALESCE(be.narrator,''), COALESCE(be.publisher,''), be.publish_date,
-	COALESCE(be.isbn_10,''), COALESCE(be.isbn_13,''), be.copy_count, COALESCE(be.description,''),
-	be.duration_seconds, be.page_count, be.is_primary, be.acquired_at, be.created_at, be.updated_at,
+	COALESCE(be.isbn_10,''), COALESCE(be.isbn_13,''), COALESCE(be.description,''),
+	be.duration_seconds, be.page_count, be.is_primary, be.created_at, be.updated_at,
 	be.narrator_contributor_id,
 	(SELECT name FROM contributors WHERE id = be.narrator_contributor_id)
 `
@@ -78,20 +78,20 @@ func (r *EditionRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.BookE
 	return e, nil
 }
 
-func (r *EditionRepo) Create(ctx context.Context, tx pgx.Tx, id, bookID uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, isbn10, isbn13, description string, durationSeconds, pageCount any, isPrimary bool, acquiredAt any, narratorContributorID any) error {
+func (r *EditionRepo) Create(ctx context.Context, tx pgx.Tx, id, bookID uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, isbn10, isbn13, description string, durationSeconds, pageCount any, isPrimary bool, narratorContributorID any) error {
 	const q = `
 		INSERT INTO book_editions
-			(id, book_id, format, language, edition_name, narrator, publisher, publish_date, isbn_10, isbn_13, description, duration_seconds, page_count, is_primary, acquired_at, narrator_contributor_id)
+			(id, book_id, format, language, edition_name, narrator, publisher, publish_date, isbn_10, isbn_13, description, duration_seconds, page_count, is_primary, narrator_contributor_id)
 		VALUES
-			($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), $8, NULLIF($9,''), NULLIF($10,''), NULLIF($11,''), $12, $13, $14, $15, $16)`
-	_, err := tx.Exec(ctx, q, id, bookID, format, language, editionName, narrator, publisher, publishDate, isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, acquiredAt, narratorContributorID)
+			($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), $8, NULLIF($9,''), NULLIF($10,''), NULLIF($11,''), $12, $13, $14, $15)`
+	_, err := tx.Exec(ctx, q, id, bookID, format, language, editionName, narrator, publisher, publishDate, isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
 	if err != nil {
 		return fmt.Errorf("inserting edition: %w", err)
 	}
 	return nil
 }
 
-func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, isbn10, isbn13, description string, durationSeconds, pageCount any, copyCount int, isPrimary bool, acquiredAt any, narratorContributorID any) error {
+func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, isbn10, isbn13, description string, durationSeconds, pageCount any, isPrimary bool, narratorContributorID any) error {
 	const q = `
 		UPDATE book_editions
 		SET format                   = $2,
@@ -105,12 +105,10 @@ func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, forma
 		    description              = NULLIF($10, ''),
 		    duration_seconds         = $11,
 		    page_count               = $12,
-		    copy_count               = $13,
-		    is_primary               = $14,
-		    acquired_at              = $15,
-		    narrator_contributor_id  = $16
+		    is_primary               = $13,
+		    narrator_contributor_id  = $14
 		WHERE id = $1`
-	_, err := tx.Exec(ctx, q, id, format, language, editionName, narrator, publisher, publishDate, isbn10, isbn13, description, durationSeconds, pageCount, copyCount, isPrimary, acquiredAt, narratorContributorID)
+	_, err := tx.Exec(ctx, q, id, format, language, editionName, narrator, publisher, publishDate, isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
 	if err != nil {
 		return fmt.Errorf("updating edition: %w", err)
 	}
@@ -135,7 +133,6 @@ func scanEdition(s scanner) (*models.BookEdition, error) {
 		pgPubDate               pgtype.Date
 		pgDuration              pgtype.Int4
 		pgPageCount             pgtype.Int4
-		pgAcquiredAt            pgtype.Date
 		pgNarratorContributorID pgtype.UUID
 		pgNarratorContribName   pgtype.Text
 		e                       models.BookEdition
@@ -143,8 +140,8 @@ func scanEdition(s scanner) (*models.BookEdition, error) {
 	err := s.Scan(
 		&pgID, &pgBookID, &e.Format, &e.Language, &e.EditionName,
 		&e.Narrator, &e.Publisher, &pgPubDate,
-		&e.ISBN10, &e.ISBN13, &e.CopyCount, &e.Description,
-		&pgDuration, &pgPageCount, &e.IsPrimary, &pgAcquiredAt, &e.CreatedAt, &e.UpdatedAt,
+		&e.ISBN10, &e.ISBN13, &e.Description,
+		&pgDuration, &pgPageCount, &e.IsPrimary, &e.CreatedAt, &e.UpdatedAt,
 		&pgNarratorContributorID, &pgNarratorContribName,
 	)
 	if err != nil {
@@ -164,10 +161,6 @@ func scanEdition(s scanner) (*models.BookEdition, error) {
 		v := int(pgPageCount.Int32)
 		e.PageCount = &v
 	}
-	if pgAcquiredAt.Valid {
-		t := pgAcquiredAt.Time
-		e.AcquiredAt = &t
-	}
 	if pgNarratorContributorID.Valid {
 		id := uuid.UUID(pgNarratorContributorID.Bytes)
 		e.NarratorContributorID = &id
@@ -183,7 +176,8 @@ func (r *EditionRepo) ListMissingFiles(ctx context.Context, libraryID uuid.UUID)
 	q := `SELECT ` + beEditionColumns + `
 		FROM book_editions be
 		JOIN books b ON b.id = be.book_id
-		WHERE b.library_id = $1
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1
 		  AND be.format IN ('ebook','digital','audiobook')
 		  AND NOT EXISTS (SELECT 1 FROM edition_files ef WHERE ef.edition_id = be.id)
 		ORDER BY b.title, be.format`
@@ -203,15 +197,17 @@ func (r *EditionRepo) ListMissingFiles(ctx context.Context, libraryID uuid.UUID)
 	return out, rows.Err()
 }
 
-// FindByISBN returns the first edition in a library whose isbn_10 or isbn_13
-// matches the given value. Returns ErrNotFound if none match.
-func (r *EditionRepo) FindByISBN(ctx context.Context, libraryID uuid.UUID, isbn string) (*models.BookEdition, error) {
-	q := `SELECT ` + beEditionColumns + `
-		FROM book_editions be
-		JOIN books b ON b.id = be.book_id
-		WHERE b.library_id = $1 AND (be.isbn_10 = $2 OR be.isbn_13 = $2)
+// FindByISBN returns the edition (globally, regardless of library) whose
+// isbn_10 or isbn_13 matches the given value. Returns ErrNotFound if none
+// match. Callers that need library scoping can check library_book_editions
+// afterwards.
+func (r *EditionRepo) FindByISBN(ctx context.Context, isbn string) (*models.BookEdition, error) {
+	q := `SELECT ` + editionColumns + `
+		FROM book_editions
+		WHERE isbn_10 = $1 OR isbn_13 = $1
+		ORDER BY created_at ASC
 		LIMIT 1`
-	e, err := scanEdition(r.db.QueryRow(ctx, q, libraryID, isbn))
+	e, err := scanEdition(r.db.QueryRow(ctx, q, isbn))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -221,12 +217,35 @@ func (r *EditionRepo) FindByISBN(ctx context.Context, libraryID uuid.UUID, isbn 
 	return e, nil
 }
 
-// IncrementCopyCount atomically increments the copy_count for an edition.
-func (r *EditionRepo) IncrementCopyCount(ctx context.Context, editionID uuid.UUID) error {
-	_, err := r.db.Exec(ctx,
-		`UPDATE book_editions SET copy_count = copy_count + 1 WHERE id = $1`,
-		editionID,
-	)
+// FindByISBNInLibrary returns the edition with the given ISBN, but only if
+// the given library holds it via library_book_editions. Returns ErrNotFound
+// if the edition doesn't exist or isn't held by that library.
+func (r *EditionRepo) FindByISBNInLibrary(ctx context.Context, libraryID uuid.UUID, isbn string) (*models.BookEdition, error) {
+	q := `SELECT ` + beEditionColumns + `
+		FROM book_editions be
+		JOIN library_book_editions lbe ON lbe.book_edition_id = be.id
+		WHERE lbe.library_id = $1 AND (be.isbn_10 = $2 OR be.isbn_13 = $2)
+		LIMIT 1`
+	e, err := scanEdition(r.db.QueryRow(ctx, q, libraryID, isbn))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finding edition by isbn in library: %w", err)
+	}
+	return e, nil
+}
+
+// IncrementCopyCount bumps the copy count for an edition in a specific
+// library. Upserts — if the (library, edition) row doesn't exist, creates
+// it with copy_count = 1.
+func (r *EditionRepo) IncrementCopyCount(ctx context.Context, libraryID, editionID uuid.UUID) error {
+	const q = `
+		INSERT INTO library_book_editions (library_id, book_edition_id, copy_count)
+		VALUES ($1, $2, 1)
+		ON CONFLICT (library_id, book_edition_id)
+		DO UPDATE SET copy_count = library_book_editions.copy_count + 1`
+	_, err := r.db.Exec(ctx, q, libraryID, editionID)
 	if err != nil {
 		return fmt.Errorf("incrementing copy count: %w", err)
 	}

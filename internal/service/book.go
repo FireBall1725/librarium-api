@@ -32,6 +32,7 @@ func (e ErrUpstreamHTTP) Error() string {
 type BookService struct {
 	pool         *pgxpool.Pool
 	books        *repository.BookRepo
+	libraryBooks *repository.LibraryBookRepo
 	contributors *repository.ContributorRepo
 	editions     *repository.EditionRepo
 	tags         *repository.TagRepo
@@ -40,8 +41,8 @@ type BookService struct {
 	coverPath    string
 }
 
-func NewBookService(pool *pgxpool.Pool, books *repository.BookRepo, contributors *repository.ContributorRepo, editions *repository.EditionRepo, tags *repository.TagRepo, genres *repository.GenreRepo, covers *repository.CoverRepo, coverPath string) *BookService {
-	return &BookService{pool: pool, books: books, contributors: contributors, editions: editions, tags: tags, genres: genres, covers: covers, coverPath: coverPath}
+func NewBookService(pool *pgxpool.Pool, books *repository.BookRepo, libraryBooks *repository.LibraryBookRepo, contributors *repository.ContributorRepo, editions *repository.EditionRepo, tags *repository.TagRepo, genres *repository.GenreRepo, covers *repository.CoverRepo, coverPath string) *BookService {
+	return &BookService{pool: pool, books: books, libraryBooks: libraryBooks, contributors: contributors, editions: editions, tags: tags, genres: genres, covers: covers, coverPath: coverPath}
 }
 
 // ─── Media types ──────────────────────────────────────────────────────────────
@@ -78,16 +79,29 @@ type BookRequest struct {
 }
 
 func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.UUID, req BookRequest) (*models.Book, error) {
-	// If an ISBN is provided and already exists in this library, increment the
-	// copy count on the matching edition and return the existing book.
+	// If an ISBN is provided and already exists globally (in any library or
+	// floating), we reuse the existing book + edition and bump the copy count
+	// for *this* library via the junction. If this library didn't already
+	// hold the book, the library_books junction row gets added too.
 	if req.Edition != nil {
 		isbn := req.Edition.ISBN13
 		if isbn == "" {
 			isbn = req.Edition.ISBN10
 		}
 		if isbn != "" {
-			if existing, err := s.editions.FindByISBN(ctx, libraryID, isbn); err == nil && existing != nil {
-				if incrErr := s.editions.IncrementCopyCount(ctx, existing.ID); incrErr != nil {
+			if existing, err := s.editions.FindByISBN(ctx, isbn); err == nil && existing != nil {
+				tx, txErr := s.pool.Begin(ctx)
+				if txErr != nil {
+					return nil, fmt.Errorf("beginning transaction: %w", txErr)
+				}
+				defer tx.Rollback(ctx)
+				if err := s.libraryBooks.AddBookToLibrary(ctx, tx, libraryID, existing.BookID, &callerID); err != nil {
+					return nil, err
+				}
+				if err := tx.Commit(ctx); err != nil {
+					return nil, fmt.Errorf("committing transaction: %w", err)
+				}
+				if incrErr := s.editions.IncrementCopyCount(ctx, libraryID, existing.ID); incrErr != nil {
 					return nil, fmt.Errorf("incrementing copy count: %w", incrErr)
 				}
 				return s.books.FindByID(ctx, existing.BookID)
@@ -103,10 +117,14 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 	}
 	defer tx.Rollback(ctx)
 
-	if err := s.books.Create(ctx, tx, bookID, libraryID,
+	if err := s.books.Create(ctx, tx, bookID,
 		req.Title, req.Subtitle, req.MediaTypeID,
-		req.Description, callerID,
+		req.Description,
 	); err != nil {
+		return nil, err
+	}
+
+	if err := s.libraryBooks.AddBookToLibrary(ctx, tx, libraryID, bookID, &callerID); err != nil {
 		return nil, err
 	}
 
@@ -126,12 +144,22 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 
 	if req.Edition != nil {
 		e := req.Edition
-		if err := s.editions.Create(ctx, tx, uuid.New(), bookID,
+		editionID := uuid.New()
+		if err := s.editions.Create(ctx, tx, editionID, bookID,
 			e.Format, e.Language, e.EditionName, e.Narrator, e.Publisher,
 			e.PublishDate, e.ISBN10, e.ISBN13, e.Description,
-			e.DurationSeconds, e.PageCount, e.IsPrimary, e.AcquiredAt,
+			e.DurationSeconds, e.PageCount, e.IsPrimary,
 			e.NarratorContributorID,
 		); err != nil {
+			return nil, err
+		}
+		// Record that this library holds 1 copy of this new edition.
+		var acq *any
+		if e.AcquiredAt != nil {
+			v := any(*e.AcquiredAt)
+			acq = &v
+		}
+		if err := s.libraryBooks.SetEditionCopyCount(ctx, tx, libraryID, editionID, 1, acq); err != nil {
 			return nil, err
 		}
 	}
@@ -144,11 +172,33 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 }
 
 func (s *BookService) GetBook(ctx context.Context, id uuid.UUID) (*models.Book, error) {
-	return s.books.FindByID(ctx, id)
+	b, err := s.books.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	libs, err := s.libraryBooks.LibrariesForBook(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("loading libraries for book: %w", err)
+	}
+	b.Libraries = libs
+	return b, nil
+}
+
+// hydrateLibraries loads the library membership list for each of the given
+// books. Used by list paths so client UI can render "in libraries X, Y".
+func (s *BookService) hydrateLibraries(ctx context.Context, books []*models.Book) error {
+	for _, b := range books {
+		libs, err := s.libraryBooks.LibrariesForBook(ctx, b.ID)
+		if err != nil {
+			return fmt.Errorf("loading libraries for book %s: %w", b.ID, err)
+		}
+		b.Libraries = libs
+	}
+	return nil
 }
 
 func (s *BookService) FindBookByISBN(ctx context.Context, libraryID uuid.UUID, isbn string) (*models.Book, error) {
-	edition, err := s.editions.FindByISBN(ctx, libraryID, isbn)
+	edition, err := s.editions.FindByISBNInLibrary(ctx, libraryID, isbn)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +206,14 @@ func (s *BookService) FindBookByISBN(ctx context.Context, libraryID uuid.UUID, i
 }
 
 func (s *BookService) ListBooks(ctx context.Context, libraryID uuid.UUID, opts repository.ListBooksOpts) ([]*models.Book, int, error) {
-	return s.books.List(ctx, libraryID, opts)
+	books, total, err := s.books.List(ctx, libraryID, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.hydrateLibraries(ctx, books); err != nil {
+		return nil, 0, err
+	}
+	return books, total, nil
 }
 
 func (s *BookService) ListBookLetters(ctx context.Context, libraryID uuid.UUID) ([]string, error) {
@@ -244,7 +301,7 @@ func (s *BookService) CreateEdition(ctx context.Context, bookID uuid.UUID, req E
 	if err := s.editions.Create(ctx, tx, editionID, bookID,
 		req.Format, req.Language, req.EditionName, req.Narrator, req.Publisher,
 		req.PublishDate, req.ISBN10, req.ISBN13, req.Description,
-		req.DurationSeconds, req.PageCount, req.IsPrimary, req.AcquiredAt,
+		req.DurationSeconds, req.PageCount, req.IsPrimary,
 		req.NarratorContributorID,
 	); err != nil {
 		return nil, err
@@ -273,11 +330,13 @@ func (s *BookService) UpdateEdition(ctx context.Context, id uuid.UUID, req Editi
 	if err := s.editions.Update(ctx, tx, id,
 		req.Format, req.Language, req.EditionName, req.Narrator, req.Publisher,
 		req.PublishDate, req.ISBN10, req.ISBN13, req.Description,
-		req.DurationSeconds, req.PageCount, req.CopyCount, req.IsPrimary, req.AcquiredAt,
+		req.DurationSeconds, req.PageCount, req.IsPrimary,
 		req.NarratorContributorID,
 	); err != nil {
 		return nil, err
 	}
+	// CopyCount and AcquiredAt are per-library now and not managed on this
+	// generic Update path; use library-scoped endpoints for those.
 
 	if req.NarratorContributorID != nil {
 		// Look up the book_id from the edition to link the contributor.

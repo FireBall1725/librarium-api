@@ -85,9 +85,9 @@ func booksSelect(userStatusArg int) string {
 
 	return `
 	SELECT
-		b.id, b.library_id, b.title, b.subtitle,
+		b.id, b.title, b.subtitle,
 		b.media_type_id, mt.display_name,
-		b.description, b.added_by, b.created_at, b.updated_at,
+		b.description, b.created_at, b.updated_at,
 		(
 			SELECT COALESCE(
 				json_agg(
@@ -179,12 +179,16 @@ func booksSelect(userStatusArg int) string {
 	JOIN media_types mt ON mt.id = b.media_type_id`
 }
 
-func (r *BookRepo) Create(ctx context.Context, tx pgx.Tx, id, libraryID uuid.UUID, title, subtitle string, mediaTypeID uuid.UUID, description string, addedBy uuid.UUID) error {
+// Create inserts a new book (work). Library ownership is a separate concern —
+// call AddToLibrary on the LibraryBookRepo after creating to associate the
+// book with a library. A book with no library_books rows is a floating book
+// (e.g. an un-owned suggestion).
+func (r *BookRepo) Create(ctx context.Context, tx pgx.Tx, id uuid.UUID, title, subtitle string, mediaTypeID uuid.UUID, description string) error {
 	const q = `
-		INSERT INTO books (id, library_id, title, subtitle, media_type_id, description, added_by)
-		VALUES ($1, $2, $3, NULLIF($4,''), $5, NULLIF($6,''), $7)`
+		INSERT INTO books (id, title, subtitle, media_type_id, description)
+		VALUES ($1, $2, NULLIF($3,''), $4, NULLIF($5,''))`
 
-	_, err := tx.Exec(ctx, q, id, libraryID, title, subtitle, mediaTypeID, description, addedBy)
+	_, err := tx.Exec(ctx, q, id, title, subtitle, mediaTypeID, description)
 	if err != nil {
 		return fmt.Errorf("inserting book: %w", err)
 	}
@@ -263,23 +267,19 @@ func (r *BookRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Book, er
 func (r *BookRepo) ListByContributor(ctx context.Context, libraryID, contributorID, callerID uuid.UUID) ([]*models.Book, error) {
 	var args []any
 	var q string
+	const scope = `
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1
+		  AND EXISTS (
+		    SELECT 1 FROM book_contributors bc2
+		    WHERE bc2.book_id = b.id AND bc2.contributor_id = $2
+		  )
+		ORDER BY natural_sort_key(b.title)`
 	if callerID != uuid.Nil {
-		q = booksSelect(3) + `
-			WHERE b.library_id = $1
-			  AND EXISTS (
-			    SELECT 1 FROM book_contributors bc2
-			    WHERE bc2.book_id = b.id AND bc2.contributor_id = $2
-			  )
-			ORDER BY natural_sort_key(b.title)`
+		q = booksSelect(3) + scope
 		args = []any{libraryID, contributorID, callerID}
 	} else {
-		q = booksSelect(0) + `
-			WHERE b.library_id = $1
-			  AND EXISTS (
-			    SELECT 1 FROM book_contributors bc2
-			    WHERE bc2.book_id = b.id AND bc2.contributor_id = $2
-			  )
-			ORDER BY natural_sort_key(b.title)`
+		q = booksSelect(0) + scope
 		args = []any{libraryID, contributorID}
 	}
 
@@ -310,7 +310,11 @@ type BookFingerprint struct {
 // Fingerprint returns the total book count and the most recent updated_at
 // (formatted RFC3339) for a library. MaxUpdatedAt is nil when empty.
 func (r *BookRepo) Fingerprint(ctx context.Context, libraryID uuid.UUID) (BookFingerprint, error) {
-	const q = `SELECT COUNT(*), MAX(updated_at) FROM books WHERE library_id = $1`
+	const q = `
+		SELECT COUNT(*), MAX(b.updated_at)
+		FROM books b
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1`
 	var fp BookFingerprint
 	var maxTS pgtype.Timestamptz
 	if err := r.db.QueryRow(ctx, q, libraryID).Scan(&fp.Total, &maxTS); err != nil {
@@ -329,7 +333,8 @@ func (r *BookRepo) ListBookLetters(ctx context.Context, libraryID uuid.UUID) ([]
 	const q = `
 		SELECT DISTINCT upper(substr(sort_title(b.title), 1, 1)) AS letter
 		FROM books b
-		WHERE b.library_id = $1
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1
 		  AND sort_title(b.title) ~ '^[A-Za-z]'
 		ORDER BY letter`
 	rows, err := r.db.Query(ctx, q, libraryID)
@@ -644,14 +649,16 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 		}
 	}
 
-	where := "WHERE b.library_id = $1"
+	// Library scope routes through the library_books junction.
+	where := "WHERE lb.library_id = $1"
 	for _, c := range conditions {
 		where += " AND " + c
 	}
+	scopeJoin := " JOIN library_books lb ON lb.book_id = b.id "
 
 	// Count
 	var total int
-	countQ := "SELECT COUNT(*) FROM books b JOIN media_types mt ON mt.id = b.media_type_id " + where
+	countQ := "SELECT COUNT(*) FROM books b JOIN media_types mt ON mt.id = b.media_type_id " + scopeJoin + where
 	if err := r.db.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting books: %w", err)
 	}
@@ -673,7 +680,7 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 	if opts.Sort == "publish_date" {
 		nullsClause = " NULLS LAST"
 	}
-	listQ := selectQuery + " " + where +
+	listQ := selectQuery + scopeJoin + where +
 		fmt.Sprintf(" ORDER BY %s %s%s LIMIT $%d OFFSET $%d", sortCol, sortDir, nullsClause, argIdx, argIdx+1)
 
 	rows, err := r.db.Query(ctx, listQ, args...)
@@ -735,9 +742,7 @@ func (r *BookRepo) Delete(ctx context.Context, id uuid.UUID) error {
 func scanBook(s scanner) (*models.Book, error) {
 	var (
 		pgID           pgtype.UUID
-		pgLibraryID    pgtype.UUID
 		pgMediaTypeID  pgtype.UUID
-		pgAddedBy      pgtype.UUID
 		pgSubtitle     pgtype.Text
 		pgDesc         pgtype.Text
 		mediaTypeName  string
@@ -754,9 +759,9 @@ func scanBook(s scanner) (*models.Book, error) {
 	)
 
 	err := s.Scan(
-		&pgID, &pgLibraryID, &b.Title, &pgSubtitle,
+		&pgID, &b.Title, &pgSubtitle,
 		&pgMediaTypeID, &mediaTypeName,
-		&pgDesc, &pgAddedBy, &b.CreatedAt, &b.UpdatedAt,
+		&pgDesc, &b.CreatedAt, &b.UpdatedAt,
 		&contribJSON, &tagsJSON, &genresJSON, &b.HasCover,
 		&seriesJSON, &shelvesJSON, &publisher, &publishYear, &language,
 		&userReadStatus,
@@ -766,7 +771,6 @@ func scanBook(s scanner) (*models.Book, error) {
 	}
 
 	b.ID = uuid.UUID(pgID.Bytes)
-	b.LibraryID = uuid.UUID(pgLibraryID.Bytes)
 	b.MediaTypeID = uuid.UUID(pgMediaTypeID.Bytes)
 	b.MediaType = mediaTypeName
 	b.Subtitle = pgSubtitle.String
@@ -777,11 +781,6 @@ func scanBook(s scanner) (*models.Book, error) {
 	if publishYear.Valid {
 		y := int(publishYear.Int32)
 		b.PublishYear = &y
-	}
-
-	if pgAddedBy.Valid {
-		id := uuid.UUID(pgAddedBy.Bytes)
-		b.AddedBy = &id
 	}
 
 	b.Contributors = []models.BookContributor{}
@@ -863,9 +862,19 @@ type CurrentlyReadingBook struct {
 // ordered by when the interaction was last updated (most recent first).
 // Spans all libraries the user is a member of.
 func (r *BookRepo) CurrentlyReading(ctx context.Context, userID uuid.UUID, limit int) ([]*CurrentlyReadingBook, error) {
+	// Under M2M a book may live in several libraries the user is a member of.
+	// Pick the earliest-added library as the book's representative (inner
+	// DISTINCT ON), then order the final result by last-interaction time.
 	q := `
+		WITH user_book AS (
+			SELECT DISTINCT ON (lb.book_id)
+				lb.book_id, lb.library_id
+			FROM library_books lb
+			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			ORDER BY lb.book_id, lb.added_at ASC
+		)
 		SELECT
-			b.id, b.library_id, l.name,
+			b.id, ub.library_id, l.name,
 			b.title, b.updated_at,
 			EXISTS(
 				SELECT 1 FROM cover_images ci
@@ -878,8 +887,8 @@ func (r *BookRepo) CurrentlyReading(ctx context.Context, userID uuid.UUID, limit
 				WHERE bc.book_id = b.id
 			), '') AS authors
 		FROM books b
-		JOIN libraries l ON l.id = b.library_id
-		JOIN library_memberships lm ON lm.library_id = b.library_id AND lm.user_id = $1
+		JOIN user_book ub ON ub.book_id = b.id
+		JOIN libraries l ON l.id = ub.library_id
 		WHERE EXISTS (
 			SELECT 1 FROM book_editions be
 			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
@@ -933,9 +942,16 @@ type RecentlyAddedBook struct {
 // is a member of.
 func (r *BookRepo) RecentlyAdded(ctx context.Context, userID uuid.UUID, limit int) ([]*RecentlyAddedBook, error) {
 	q := `
+		WITH user_book AS (
+			SELECT DISTINCT ON (lb.book_id)
+				lb.book_id, lb.library_id, lb.added_at
+			FROM library_books lb
+			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			ORDER BY lb.book_id, lb.added_at ASC
+		)
 		SELECT
-			b.id, b.library_id, l.name,
-			b.title, b.created_at,
+			b.id, ub.library_id, l.name,
+			b.title, ub.added_at,
 			EXISTS(
 				SELECT 1 FROM cover_images ci
 				WHERE ci.entity_type = 'book' AND ci.entity_id = b.id AND ci.is_primary = true
@@ -960,9 +976,9 @@ func (r *BookRepo) RecentlyAdded(ctx context.Context, userID uuid.UUID, limit in
 				LIMIT 1
 			), '') AS read_status
 		FROM books b
-		JOIN libraries l ON l.id = b.library_id
-		JOIN library_memberships lm ON lm.library_id = b.library_id AND lm.user_id = $1
-		ORDER BY b.created_at DESC
+		JOIN user_book ub ON ub.book_id = b.id
+		JOIN libraries l ON l.id = ub.library_id
+		ORDER BY ub.added_at DESC
 		LIMIT $2`
 
 	rows, err := r.db.Query(ctx, q, userID, limit)
@@ -996,9 +1012,16 @@ func (r *BookRepo) RecentlyAdded(ctx context.Context, userID uuid.UUID, limit in
 // mediaTypes is empty, all media types are eligible.
 func (r *BookRepo) PicksOfTheDay(ctx context.Context, userID uuid.UUID, mediaTypes []string, daySeed string, limit int) ([]*RecentlyAddedBook, error) {
 	q := `
+		WITH user_book AS (
+			SELECT DISTINCT ON (lb.book_id)
+				lb.book_id, lb.library_id, lb.added_at
+			FROM library_books lb
+			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			ORDER BY lb.book_id, lb.added_at ASC
+		)
 		SELECT
-			b.id, b.library_id, l.name,
-			b.title, b.created_at,
+			b.id, ub.library_id, l.name,
+			b.title, ub.added_at,
 			EXISTS(
 				SELECT 1 FROM cover_images ci
 				WHERE ci.entity_type = 'book' AND ci.entity_id = b.id AND ci.is_primary = true
@@ -1011,8 +1034,8 @@ func (r *BookRepo) PicksOfTheDay(ctx context.Context, userID uuid.UUID, mediaTyp
 			), '') AS authors,
 			'' AS read_status
 		FROM books b
-		JOIN libraries l ON l.id = b.library_id
-		JOIN library_memberships lm ON lm.library_id = b.library_id AND lm.user_id = $1
+		JOIN user_book ub ON ub.book_id = b.id
+		JOIN libraries l ON l.id = ub.library_id
 		JOIN media_types mt ON mt.id = b.media_type_id
 		WHERE (cardinality($2::text[]) = 0 OR mt.name = ANY($2))
 		  AND NOT EXISTS (
@@ -1073,18 +1096,24 @@ type MonthlyReadBucket struct {
 func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*DashboardStats, error) {
 	var s DashboardStats
 	err := r.db.QueryRow(ctx, `
+		WITH user_book AS (
+			SELECT DISTINCT ON (lb.book_id) lb.book_id, lb.added_at
+			FROM library_books lb
+			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			ORDER BY lb.book_id, lb.added_at ASC
+		)
 		SELECT
 			COUNT(DISTINCT b.id) AS total_books,
 			COUNT(DISTINCT CASE WHEN ubi.read_status = 'read'    THEN b.id END) AS books_read,
 			COUNT(DISTINCT CASE WHEN ubi.read_status = 'reading' THEN b.id END) AS books_reading,
-			COUNT(DISTINCT CASE WHEN b.created_at >= date_trunc('year', NOW()) THEN b.id END) AS added_this_year,
+			COUNT(DISTINCT CASE WHEN ub.added_at >= date_trunc('year', NOW()) THEN b.id END) AS added_this_year,
 			COUNT(DISTINCT CASE
 				WHEN ubi.read_status = 'read'
 				 AND COALESCE(ubi.date_finished::timestamptz, ubi.updated_at) >= date_trunc('year', NOW())
 				THEN b.id END) AS read_this_year,
 			COUNT(DISTINCT CASE WHEN ubi.is_favorite THEN b.id END) AS favorites_count
 		FROM books b
-		JOIN library_memberships lm ON lm.library_id = b.library_id AND lm.user_id = $1
+		JOIN user_book ub ON ub.book_id = b.id
 		LEFT JOIN book_editions be ON be.book_id = b.id
 		LEFT JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1`,
 		userID,
@@ -1109,7 +1138,8 @@ func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*Da
 				date_trunc('month', COALESCE(ubi.date_finished::timestamptz, ubi.updated_at)) AS m,
 				COUNT(DISTINCT b.id) AS c
 			FROM books b
-			JOIN library_memberships lm ON lm.library_id = b.library_id AND lm.user_id = $1
+			JOIN library_books lb ON lb.book_id = b.id
+			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			JOIN book_editions be ON be.book_id = b.id
 			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1
 			WHERE ubi.read_status = 'read'
@@ -1169,7 +1199,8 @@ func (r *BookRepo) ContinueSeries(ctx context.Context, userID uuid.UUID, limit i
 			SELECT bs.series_id, MAX(bs.position) AS max_pos
 			FROM book_series bs
 			JOIN books b ON b.id = bs.book_id
-			JOIN library_memberships lm ON lm.library_id = b.library_id AND lm.user_id = $1
+			JOIN library_books lb ON lb.book_id = b.id
+			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			JOIN book_editions be ON be.book_id = b.id
 			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1
 			WHERE ubi.read_status = 'read'
@@ -1178,11 +1209,13 @@ func (r *BookRepo) ContinueSeries(ctx context.Context, userID uuid.UUID, limit i
 		next_books AS (
 			-- The lowest position > max_pos that the user has NOT yet marked 'read'
 			SELECT DISTINCT ON (bs.series_id)
-				bs.series_id, bs.book_id, bs.position, urp.max_pos
+				bs.series_id, bs.book_id, bs.position, urp.max_pos,
+				lb.library_id
 			FROM book_series bs
 			JOIN user_read_positions urp ON urp.series_id = bs.series_id
 			JOIN books b ON b.id = bs.book_id
-			JOIN library_memberships lm ON lm.library_id = b.library_id AND lm.user_id = $1
+			JOIN library_books lb ON lb.book_id = b.id
+			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			WHERE bs.position > urp.max_pos
 			  AND NOT EXISTS (
 				SELECT 1
@@ -1196,7 +1229,7 @@ func (r *BookRepo) ContinueSeries(ctx context.Context, userID uuid.UUID, limit i
 		)
 		SELECT
 			s.id, s.name, nb.position, nb.max_pos,
-			b.id, b.library_id, l.name, b.title, b.updated_at,
+			b.id, nb.library_id, l.name, b.title, b.updated_at,
 			EXISTS(
 				SELECT 1 FROM cover_images ci
 				WHERE ci.entity_type = 'book' AND ci.entity_id = b.id AND ci.is_primary = true
@@ -1222,7 +1255,7 @@ func (r *BookRepo) ContinueSeries(ctx context.Context, userID uuid.UUID, limit i
 		FROM next_books nb
 		JOIN series s  ON s.id  = nb.series_id
 		JOIN books  b  ON b.id  = nb.book_id
-		JOIN libraries l ON l.id = b.library_id
+		JOIN libraries l ON l.id = nb.library_id
 		ORDER BY nb.position ASC, lower(s.name)
 		LIMIT $2`
 
@@ -1270,16 +1303,22 @@ type FinishedBook struct {
 // De-duplicates by book (multiple editions read collapse to a single row).
 func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit int) ([]*FinishedBook, error) {
 	q := `
-		WITH finished AS (
+		WITH user_book AS (
+			SELECT DISTINCT ON (lb.book_id) lb.book_id, lb.library_id
+			FROM library_books lb
+			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			ORDER BY lb.book_id, lb.added_at ASC
+		),
+		finished AS (
 			SELECT DISTINCT ON (b.id)
 				b.id AS book_id,
-				b.library_id,
+				ub.library_id,
 				b.title,
 				COALESCE(ubi.date_finished::timestamptz, ubi.updated_at) AS finished_at,
 				ubi.rating,
 				ubi.is_favorite
 			FROM books b
-			JOIN library_memberships lm ON lm.library_id = b.library_id AND lm.user_id = $1
+			JOIN user_book ub ON ub.book_id = b.id
 			JOIN book_editions be ON be.book_id = b.id
 			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1
 			WHERE ubi.read_status = 'read'

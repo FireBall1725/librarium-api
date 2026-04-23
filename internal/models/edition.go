@@ -48,18 +48,27 @@ type BookEdition struct {
 	PublishDate            *time.Time
 	ISBN10                 string
 	ISBN13                 string
-	CopyCount              int
 	Description            string
 	DurationSeconds        *int
 	PageCount              *int
 	IsPrimary              bool
-	AcquiredAt             *time.Time
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 	NarratorContributorID   *uuid.UUID
 	NarratorContributorName string
 	// Files is populated by the service layer — not a DB column on book_editions.
 	Files []*EditionFile
+}
+
+// LibraryBookEdition is a row in the library_book_editions junction — how
+// many copies of a given edition a specific library holds, and when that
+// library acquired them.
+type LibraryBookEdition struct {
+	LibraryID     uuid.UUID
+	BookEditionID uuid.UUID
+	CopyCount     int
+	AcquiredAt    *time.Time
+	CreatedAt     time.Time
 }
 
 type UserBookInteraction struct {

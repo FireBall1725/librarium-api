@@ -297,9 +297,7 @@ func (w *MetadataWorker) applyMerged(
 		Description:     primary.Description,
 		DurationSeconds: primary.DurationSeconds,
 		PageCount:       newPageCount,
-		CopyCount:       primary.CopyCount,
 		IsPrimary:       primary.IsPrimary,
-		AcquiredAt:      primary.AcquiredAt,
 	}); err != nil {
 		return fmt.Errorf("updating edition: %w", err)
 	}

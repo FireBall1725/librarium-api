@@ -146,6 +146,7 @@ func main() {
 	workerBookSvc := service.NewBookService(
 		pool,
 		repository.NewBookRepo(pool),
+		repository.NewLibraryBookRepo(pool),
 		repository.NewContributorRepo(pool),
 		repository.NewEditionRepo(pool),
 		repository.NewTagRepo(pool),
@@ -157,6 +158,7 @@ func main() {
 		pool,
 		repository.NewImportJobRepo(pool),
 		repository.NewBookRepo(pool),
+		repository.NewLibraryBookRepo(pool),
 		repository.NewContributorRepo(pool),
 		repository.NewEditionRepo(pool),
 		repository.NewTagRepo(pool),

@@ -558,14 +558,22 @@ func decodeBookRequest(r *http.Request) (*service.BookRequest, error) {
 func bookBody(b *models.Book) map[string]any {
 	var coverURL any
 	if b.HasCover {
-		// Include updated_at as a cache-buster so browsers fetch the new image
-		// when the cover changes rather than serving a stale cached version.
-		coverURL = fmt.Sprintf("/api/v1/libraries/%s/books/%s/cover?v=%d",
-			b.LibraryID, b.ID, b.UpdatedAt.Unix())
+		// Library-agnostic cover URL; a book can now live in multiple libraries
+		// so the cover path is keyed by book id, not library+book. Includes
+		// updated_at as a cache-buster.
+		coverURL = fmt.Sprintf("/api/v1/books/%s/cover?v=%d",
+			b.ID, b.UpdatedAt.Unix())
 	}
-	body := map[string]any{
+	// Preserve the legacy `library_id` field for clients that expect it by
+	// picking the first library this book belongs to. Empty if floating.
+	var primaryLibraryID any
+	if len(b.Libraries) > 0 {
+		primaryLibraryID = b.Libraries[0].ID
+	}
+	return map[string]any{
 		"id":               b.ID,
-		"library_id":       b.LibraryID,
+		"library_id":       primaryLibraryID,
+		"libraries":        b.Libraries,
 		"title":            b.Title,
 		"subtitle":         b.Subtitle,
 		"media_type_id":    b.MediaTypeID,
@@ -584,10 +592,6 @@ func bookBody(b *models.Book) map[string]any {
 		"language":         b.Language,
 		"user_read_status": b.UserReadStatus,
 	}
-	if b.AddedBy != nil {
-		body["added_by"] = b.AddedBy
-	}
-	return body
 }
 
 // parseFlexDate tries several date formats and returns the parsed time.
