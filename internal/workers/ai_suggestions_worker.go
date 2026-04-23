@@ -37,7 +37,7 @@ func (w *AISuggestionsWorker) Timeout(*river.Job[models.AISuggestionsJobArgs]) t
 func (w *AISuggestionsWorker) Work(ctx context.Context, job *river.Job[models.AISuggestionsJobArgs]) error {
 	args := job.Args
 	slog.Info("ai suggestions job started", "user_id", args.UserID, "triggered_by", args.TriggeredBy)
-	_, err := w.svc.RunForUser(ctx, args.UserID, args.TriggeredBy)
+	_, err := w.svc.RunForUser(ctx, args.UserID, args.TriggeredBy, args.Steering)
 	switch {
 	case errors.Is(err, service.ErrAIDisabled):
 		// Soft skip — don't retry. Nothing to do for this user right now.

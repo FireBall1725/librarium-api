@@ -1,5 +1,31 @@
 basePath: /api/v1
 definitions:
+  github_com_fireball1725_librarium-api_internal_ai.OllamaModel:
+    properties:
+      digest:
+        type: string
+      family:
+        type: string
+      modified:
+        type: string
+      name:
+        type: string
+      parameter_size:
+        type: string
+      quantization:
+        type: string
+      size:
+        type: integer
+    type: object
+  github_com_fireball1725_librarium-api_internal_ai.OsaurusModel:
+    properties:
+      created:
+        type: integer
+      id:
+        type: string
+      owned_by:
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch:
     properties:
       book_ids:
@@ -188,6 +214,27 @@ definitions:
         type: object
       skip_duplicates:
         type: boolean
+    type: object
+  github_com_fireball1725_librarium-api_internal_models.SuggestionSteering:
+    properties:
+      author_ids:
+        items:
+          type: string
+        type: array
+      genre_ids:
+        items:
+          type: string
+        type: array
+      notes:
+        type: string
+      series_ids:
+        items:
+          type: string
+        type: array
+      tag_ids:
+        items:
+          type: string
+        type: array
     type: object
   github_com_fireball1725_librarium-api_internal_providers.BookResult:
     properties:
@@ -494,11 +541,59 @@ definitions:
       type:
         type: string
     type: object
+  internal_api_handlers.MeSeriesResult:
+    properties:
+      id:
+        type: string
+      library_id:
+        type: string
+      library_name:
+        type: string
+      name:
+        type: string
+    type: object
+  internal_api_handlers.MeTagResult:
+    properties:
+      ambiguous:
+        description: |-
+          Ambiguous is true when another accessible library has a tag with the
+          same (case-insensitive) name. The client appends " · <library>" in
+          that case.
+        type: boolean
+      id:
+        type: string
+      library_id:
+        type: string
+      library_name:
+        type: string
+      name:
+        type: string
+    type: object
+  internal_api_handlers.NamedRef:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  internal_api_handlers.NamedTagRef:
+    properties:
+      id:
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+    type: object
   internal_api_handlers.QuotaView:
     properties:
+      available:
+        type: boolean
       limit:
         type: integer
       resets_at:
+        type: string
+      unavailable_reason:
         type: string
       unlimited:
         type: boolean
@@ -523,6 +618,8 @@ definitions:
         type: string
       status:
         type: string
+      steering:
+        $ref: '#/definitions/internal_api_handlers.SteeringView'
       tokens_in:
         type: integer
       tokens_out:
@@ -531,6 +628,27 @@ definitions:
         type: string
       user_id:
         type: string
+    type: object
+  internal_api_handlers.SteeringView:
+    properties:
+      authors:
+        items:
+          $ref: '#/definitions/internal_api_handlers.NamedRef'
+        type: array
+      genres:
+        items:
+          $ref: '#/definitions/internal_api_handlers.NamedRef'
+        type: array
+      notes:
+        type: string
+      series:
+        items:
+          $ref: '#/definitions/internal_api_handlers.NamedRef'
+        type: array
+      tags:
+        items:
+          $ref: '#/definitions/internal_api_handlers.NamedTagRef'
+        type: array
     type: object
   internal_api_handlers.SuggestionView:
     properties:
@@ -558,6 +676,20 @@ definitions:
         type: string
       type:
         type: string
+    type: object
+  internal_api_handlers.ollamaModelsResponse:
+    properties:
+      models:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_ai.OllamaModel'
+        type: array
+    type: object
+  internal_api_handlers.osaurusModelsResponse:
+    properties:
+      models:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_ai.OsaurusModel'
+        type: array
     type: object
   responses.BookResponse:
     properties:
@@ -1132,6 +1264,62 @@ paths:
       security:
       - BearerAuth: []
       summary: Set the active AI provider (admin)
+      tags:
+      - admin
+      - ai
+  /admin/connections/ai/ollama/models:
+    get:
+      description: Proxies the configured Ollama host's /api/tags endpoint. Used by
+        the provider-config UI to render a model dropdown instead of a free-text input.
+        Returns 503 when the host is unreachable so the UI can fall back to the text
+        input.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api_handlers.ollamaModelsResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            properties:
+              error:
+                type: string
+              reachable:
+                type: boolean
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List locally-pulled Ollama models (admin)
+      tags:
+      - admin
+      - ai
+  /admin/connections/ai/osaurus/models:
+    get:
+      description: Proxies the configured Osaurus host's /v1/models endpoint (OpenAI
+        shape). Used by the provider-config UI to render a model dropdown instead
+        of a free-text input. Returns 503 when the host is unreachable so the UI can
+        fall back to the text input.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api_handlers.osaurusModelsResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            properties:
+              error:
+                type: string
+              reachable:
+                type: boolean
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List models available on the configured Osaurus host (admin)
       tags:
       - admin
       - ai
@@ -6873,10 +7061,42 @@ paths:
       tags:
       - me
       - ai
+  /me/series:
+    get:
+      description: Returns series from every library the caller can access, filtered
+        by an optional case-insensitive substring in `q`. Results are capped at 20.
+      parameters:
+      - description: Name substring
+        in: query
+        name: q
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api_handlers.MeSeriesResult'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search series across my libraries
+      tags:
+      - me
   /me/suggestions:
     get:
       description: Returns the current AI-generated recommendations for the caller.
-        Filter by type (buy | read_next) and status.
+        Filter by type (buy | read_next) and status, or scope to a specific run via
+        `run_id`. When `run_id` is set the status filter is ignored — the scoped view
+        returns every suggestion that run produced.
       parameters:
       - description: 'Filter by type: buy | read_next'
         in: query
@@ -6885,6 +7105,10 @@ paths:
       - description: 'Filter by status: new | dismissed | interested | added_to_library'
         in: query
         name: status
+        type: string
+      - description: Scope to a specific run ID
+        in: query
+        name: run_id
         type: string
       produces:
       - application/json
@@ -6895,6 +7119,20 @@ paths:
             items:
               $ref: '#/definitions/internal_api_handlers.SuggestionView'
             type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
       security:
       - BearerAuth: []
       summary: List my AI suggestions
@@ -7004,13 +7242,32 @@ paths:
       - ai
   /me/suggestions/run:
     post:
-      description: Enqueues a background job to regenerate suggestions. Rate-limited
-        by admin config.
+      consumes:
+      - application/json
+      description: Enqueues a background job to regenerate suggestions. Accepts an
+        optional `steering` body to bias this run toward specific authors, series,
+        genres, tags, and/or free-form notes. Rate-limited by admin config.
+      parameters:
+      - description: Optional steering payload
+        in: body
+        name: body
+        schema:
+          properties:
+            steering:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.SuggestionSteering'
+          type: object
       produces:
       - application/json
       responses:
         "202":
           description: Accepted
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
         "429":
           description: Too Many Requests
           schema:
@@ -7081,6 +7338,38 @@ paths:
       tags:
       - me
       - ai
+  /me/tags:
+    get:
+      description: Returns tags from every library the caller can access, filtered
+        by an optional case-insensitive substring in `q`. Tags are per-library; the
+        response marks names as ambiguous when the same name exists in multiple libraries
+        so the UI can disambiguate. Results are capped at 20.
+      parameters:
+      - description: Name substring
+        in: query
+        name: q
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api_handlers.MeTagResult'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search tags across my libraries
+      tags:
+      - me
   /me/taste-profile:
     get:
       description: Returns the JSON taste profile the user has saved. Empty object

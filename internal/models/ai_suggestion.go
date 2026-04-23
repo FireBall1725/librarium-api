@@ -4,10 +4,35 @@
 package models
 
 import (
+	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// SuggestionSteering is the user-provided per-run steering payload — IDs reference
+// live taxonomy rows at ask time; display names are hydrated on read. Notes is a
+// free-form hint ("cozy autumn reads"). All fields optional; callers must reject
+// wholly-empty payloads before persisting.
+type SuggestionSteering struct {
+	AuthorIDs []uuid.UUID `json:"author_ids,omitempty"`
+	SeriesIDs []uuid.UUID `json:"series_ids,omitempty"`
+	GenreIDs  []uuid.UUID `json:"genre_ids,omitempty"`
+	TagIDs    []uuid.UUID `json:"tag_ids,omitempty"`
+	Notes     string      `json:"notes,omitempty"`
+}
+
+// IsEmpty reports whether no steering field is set. An empty steering payload
+// should be persisted as SQL NULL rather than '{}' so the "unsteered run" check
+// stays a single IS NULL test.
+func (s SuggestionSteering) IsEmpty() bool {
+	return len(s.AuthorIDs) == 0 &&
+		len(s.SeriesIDs) == 0 &&
+		len(s.GenreIDs) == 0 &&
+		len(s.TagIDs) == 0 &&
+		strings.TrimSpace(s.Notes) == ""
+}
 
 // AISuggestionRun is one execution of the suggestions pipeline for one user.
 // Runs are persisted even on failure so the admin can audit cost and errors.
@@ -24,6 +49,10 @@ type AISuggestionRun struct {
 	EstimatedCostUSD float64
 	StartedAt        time.Time
 	FinishedAt       *time.Time
+	// Steering is the user's per-run ask as raw JSONB, or nil for unsteered
+	// runs. Handlers decode into SuggestionSteering and hydrate the IDs to
+	// display names on the way out.
+	Steering json.RawMessage
 }
 
 // AISuggestion is one rendered recommendation — either a book to buy (not in
@@ -87,9 +116,12 @@ type AIRunEvent struct {
 
 // AISuggestionsJobArgs is the River job payload for a per-user suggestions run.
 // TriggeredBy distinguishes scheduler/admin/user for cost-attribution display.
+// Steering carries the user's per-run ask for manual runs; omitted for
+// scheduled / admin-broadcast runs.
 type AISuggestionsJobArgs struct {
-	UserID      uuid.UUID `json:"user_id"`
-	TriggeredBy string    `json:"triggered_by"`
+	UserID      uuid.UUID           `json:"user_id"`
+	TriggeredBy string              `json:"triggered_by"`
+	Steering    *SuggestionSteering `json:"steering,omitempty"`
 }
 
 func (AISuggestionsJobArgs) Kind() string { return "ai_suggestions" }

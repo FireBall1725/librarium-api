@@ -99,7 +99,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	aiHandler := handlers.NewAIHandler(aiSvc)
 	aiUserHandler := handlers.NewAIUserHandler(aiUserSvc)
 	jobsHandler := handlers.NewJobsHandler(jobSvc)
-	aiSuggestionsHandler := handlers.NewAISuggestionsHandler(aiSuggestionsRepo, riverClient, jobSvc)
+	aiSuggestionsHandler := handlers.NewAISuggestionsHandler(aiSuggestionsRepo, riverClient, jobSvc, aiSvc)
 
 	authHandler := handlers.NewAuthHandler(authSvc, preferencesRepo)
 	setupHandler := handlers.NewSetupHandler(authSvc, userRepo)
@@ -117,6 +117,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	storageLocationHandler := handlers.NewStorageLocationHandler(editionFileSvc)
 	contributorHandler := handlers.NewContributorHandler(contributorSvc)
 	dashboardHandler := handlers.NewDashboardHandler(bookRepo)
+	meLookupHandler := handlers.NewMeLookupHandler(libSvc, seriesRepo, tagRepo)
 
 	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
 	go releaseChecker.Start(ctx)
@@ -212,6 +213,10 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("PUT /api/v1/me/ai-prefs", requireAuth(http.HandlerFunc(aiUserHandler.UpdatePrefs)))
 	mux.Handle("GET /api/v1/me/taste-profile", requireAuth(http.HandlerFunc(aiUserHandler.GetTasteProfile)))
 	mux.Handle("PUT /api/v1/me/taste-profile", requireAuth(http.HandlerFunc(aiUserHandler.UpdateTasteProfile)))
+
+	// User-scoped lookup endpoints (aggregated across the caller's libraries)
+	mux.Handle("GET /api/v1/me/series", requireAuth(http.HandlerFunc(meLookupHandler.SearchSeries)))
+	mux.Handle("GET /api/v1/me/tags", requireAuth(http.HandlerFunc(meLookupHandler.SearchTags)))
 
 	// User-scoped AI suggestions
 	// More specific paths (/run, /runs, /runs/{id}) must come before the {id}

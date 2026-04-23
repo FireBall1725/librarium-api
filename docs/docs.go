@@ -124,6 +124,86 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/connections/ai/ollama/models": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Proxies the configured Ollama host's /api/tags endpoint. Used by the provider-config UI to render a model dropdown instead of a free-text input. Returns 503 when the host is unreachable so the UI can fall back to the text input.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "ai"
+                ],
+                "summary": "List locally-pulled Ollama models (admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.ollamaModelsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                },
+                                "reachable": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/connections/ai/osaurus/models": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Proxies the configured Osaurus host's /v1/models endpoint (OpenAI shape). Used by the provider-config UI to render a model dropdown instead of a free-text input. Returns 503 when the host is unreachable so the UI can fall back to the text input.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin",
+                    "ai"
+                ],
+                "summary": "List models available on the configured Osaurus host (admin)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.osaurusModelsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                },
+                                "reachable": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/connections/ai/permissions": {
             "get": {
                 "security": [
@@ -9196,6 +9276,53 @@ const docTemplate = `{
                 }
             }
         },
+        "/me/series": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns series from every library the caller can access, filtered by an optional case-insensitive substring in ` + "`" + `q` + "`" + `. Results are capped at 20.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Search series across my libraries",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Name substring",
+                        "name": "q",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api_handlers.MeSeriesResult"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/me/suggestions": {
             "get": {
                 "security": [
@@ -9203,7 +9330,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the current AI-generated recommendations for the caller. Filter by type (buy | read_next) and status.",
+                "description": "Returns the current AI-generated recommendations for the caller. Filter by type (buy | read_next) and status, or scope to a specific run via ` + "`" + `run_id` + "`" + `. When ` + "`" + `run_id` + "`" + ` is set the status filter is ignored — the scoped view returns every suggestion that run produced.",
                 "produces": [
                     "application/json"
                 ],
@@ -9224,6 +9351,12 @@ const docTemplate = `{
                         "description": "Filter by status: new | dismissed | interested | added_to_library",
                         "name": "status",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Scope to a specific run ID",
+                        "name": "run_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -9233,6 +9366,28 @@ const docTemplate = `{
                             "type": "array",
                             "items": {
                                 "$ref": "#/definitions/internal_api_handlers.SuggestionView"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
                             }
                         }
                     }
@@ -9272,7 +9427,10 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Enqueues a background job to regenerate suggestions. Rate-limited by admin config.",
+                "description": "Enqueues a background job to regenerate suggestions. Accepts an optional ` + "`" + `steering` + "`" + ` body to bias this run toward specific authors, series, genres, tags, and/or free-form notes. Rate-limited by admin config.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -9281,9 +9439,35 @@ const docTemplate = `{
                     "ai"
                 ],
                 "summary": "Trigger a suggestions run for the caller",
+                "parameters": [
+                    {
+                        "description": "Optional steering payload",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "steering": {
+                                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_models.SuggestionSteering"
+                                }
+                            }
+                        }
+                    }
+                ],
                 "responses": {
                     "202": {
                         "description": "Accepted"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
                     },
                     "429": {
                         "description": "Too Many Requests",
@@ -9504,6 +9688,53 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/tags": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns tags from every library the caller can access, filtered by an optional case-insensitive substring in ` + "`" + `q` + "`" + `. Tags are per-library; the response marks names as ambiguous when the same name exists in multiple libraries so the UI can disambiguate. Results are capped at 20.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Search tags across my libraries",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Name substring",
+                        "name": "q",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api_handlers.MeTagResult"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "properties": {
@@ -10074,6 +10305,46 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_fireball1725_librarium-api_internal_ai.OllamaModel": {
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "type": "string"
+                },
+                "family": {
+                    "type": "string"
+                },
+                "modified": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parameter_size": {
+                    "type": "string"
+                },
+                "quantization": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_ai.OsaurusModel": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "owned_by": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch": {
             "type": "object",
             "properties": {
@@ -10342,6 +10613,38 @@ const docTemplate = `{
                 },
                 "skip_duplicates": {
                     "type": "boolean"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_models.SuggestionSteering": {
+            "type": "object",
+            "properties": {
+                "author_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "genre_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "series_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tag_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -10788,13 +11091,82 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api_handlers.MeSeriesResult": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "library_name": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.MeTagResult": {
+            "type": "object",
+            "properties": {
+                "ambiguous": {
+                    "description": "Ambiguous is true when another accessible library has a tag with the\nsame (case-insensitive) name. The client appends \" · \u003clibrary\u003e\" in\nthat case.",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "library_name": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.NamedRef": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.NamedTagRef": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api_handlers.QuotaView": {
             "type": "object",
             "properties": {
+                "available": {
+                    "type": "boolean"
+                },
                 "limit": {
                     "type": "integer"
                 },
                 "resets_at": {
+                    "type": "string"
+                },
+                "unavailable_reason": {
                     "type": "string"
                 },
                 "unlimited": {
@@ -10832,6 +11204,9 @@ const docTemplate = `{
                 "status": {
                     "type": "string"
                 },
+                "steering": {
+                    "$ref": "#/definitions/internal_api_handlers.SteeringView"
+                },
                 "tokens_in": {
                     "type": "integer"
                 },
@@ -10843,6 +11218,38 @@ const docTemplate = `{
                 },
                 "user_id": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.SteeringView": {
+            "type": "object",
+            "properties": {
+                "authors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api_handlers.NamedRef"
+                    }
+                },
+                "genres": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api_handlers.NamedRef"
+                    }
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "series": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api_handlers.NamedRef"
+                    }
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api_handlers.NamedTagRef"
+                    }
                 }
             }
         },
@@ -10884,6 +11291,28 @@ const docTemplate = `{
                 },
                 "type": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.ollamaModelsResponse": {
+            "type": "object",
+            "properties": {
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_ai.OllamaModel"
+                    }
+                }
+            }
+        },
+        "internal_api_handlers.osaurusModelsResponse": {
+            "type": "object",
+            "properties": {
+                "models": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_ai.OsaurusModel"
+                    }
                 }
             }
         },
