@@ -101,7 +101,7 @@ func (w *EnrichmentBatchWorker) Work(ctx context.Context, job *river.Job[models.
 			continue
 		}
 
-		bookErr := w.metadataWorker.ProcessBook(ctx, bookID, batch.LibraryID, batch.CreatedBy, batch.Force, coverOnly)
+		bookErr := w.metadataWorker.ProcessBook(ctx, bookID, batch.CreatedBy, batch.Force, coverOnly)
 
 		var itemStatus models.EnrichmentBatchItemStatus
 		var itemMsg string

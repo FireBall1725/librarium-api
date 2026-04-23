@@ -338,7 +338,10 @@ func scanBatch(s batchScanner) (*models.EnrichmentBatch, error) {
 		return nil, err
 	}
 	b.ID = uuid.UUID(pgID.Bytes)
-	b.LibraryID = uuid.UUID(pgLibraryID.Bytes)
+	if pgLibraryID.Valid {
+		lid := uuid.UUID(pgLibraryID.Bytes)
+		b.LibraryID = &lid
+	}
 	b.CreatedBy = uuid.UUID(pgCreatedBy.Bytes)
 	b.Type = models.EnrichmentBatchType(batchType)
 	b.Status = models.EnrichmentBatchStatus(status)
@@ -369,7 +372,10 @@ func scanBatchWithLibraryName(s batchScanner) (*models.EnrichmentBatch, error) {
 		return nil, fmt.Errorf("scanning enrichment batch: %w", err)
 	}
 	b.ID = uuid.UUID(pgID.Bytes)
-	b.LibraryID = uuid.UUID(pgLibraryID.Bytes)
+	if pgLibraryID.Valid {
+		lid := uuid.UUID(pgLibraryID.Bytes)
+		b.LibraryID = &lid
+	}
 	b.CreatedBy = uuid.UUID(pgCreatedBy.Bytes)
 	b.Type = models.EnrichmentBatchType(batchType)
 	b.Status = models.EnrichmentBatchStatus(status)

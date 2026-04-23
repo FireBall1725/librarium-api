@@ -795,7 +795,7 @@ func (h *BookHandler) BulkEnrich(w http.ResponseWriter, r *http.Request) {
 
 	batch := &models.EnrichmentBatch{
 		ID:         uuid.New(),
-		LibraryID:  libraryID,
+		LibraryID:  &libraryID,
 		CreatedBy:  caller.UserID,
 		Type:       models.EnrichmentBatchTypeMetadata,
 		Force:      req.Force,
@@ -817,6 +817,64 @@ func (h *BookHandler) BulkEnrich(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	respond.JSON(w, http.StatusAccepted, batch)
+}
+
+// EnrichBook godoc
+//
+// @Summary     Re-enrich metadata for a single book
+// @Description Queues a metadata enrichment job for one book, regardless of
+// @Description library ownership. Used by the BookDetailPage "Refresh
+// @Description metadata" button on floating (suggestion-backed) books and
+// @Description anywhere we want to touch up a single title.
+// @Tags        books
+// @Security    BearerAuth
+// @Param       book_id  path      string  true  "Book UUID"
+// @Success     202      {object}  models.EnrichmentBatch
+// @Failure     400      {object}  object{error=string}
+// @Failure     401      {object}  object{error=string}
+// @Failure     503      {object}  object{error=string}
+// @Router      /books/{book_id}/enrich [post]
+func (h *BookHandler) EnrichBook(w http.ResponseWriter, r *http.Request) {
+	if h.riverClient == nil || h.enrichmentBatches == nil {
+		respond.Error(w, http.StatusServiceUnavailable, "job queue not available")
+		return
+	}
+
+	bookID, err := uuid.Parse(r.PathValue("book_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+
+	caller := middleware.ClaimsFromContext(r.Context())
+	if caller == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	batch := &models.EnrichmentBatch{
+		ID:         uuid.New(),
+		LibraryID:  nil, // library-agnostic — works for floating books
+		CreatedBy:  caller.UserID,
+		Type:       models.EnrichmentBatchTypeMetadata,
+		Force:      true, // one-off re-enrich always overwrites
+		Status:     models.EnrichmentBatchPending,
+		BookIDs:    []uuid.UUID{bookID},
+		TotalBooks: 1,
+	}
+	if err := h.enrichmentBatches.Create(r.Context(), batch); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	if err := h.createBatchItems(r.Context(), batch.ID, batch.BookIDs); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	if _, err := h.riverClient.Insert(r.Context(), models.EnrichmentBatchJobArgs{BatchID: batch.ID}, nil); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
 	respond.JSON(w, http.StatusAccepted, batch)
 }
 
@@ -867,7 +925,7 @@ func (h *BookHandler) BulkRefreshCovers(w http.ResponseWriter, r *http.Request) 
 
 	batch := &models.EnrichmentBatch{
 		ID:         uuid.New(),
-		LibraryID:  libraryID,
+		LibraryID:  &libraryID,
 		CreatedBy:  caller.UserID,
 		Type:       models.EnrichmentBatchTypeCover,
 		Force:      false,

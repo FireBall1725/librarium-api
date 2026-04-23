@@ -59,7 +59,7 @@ func NewMetadataWorker(
 func (w *MetadataWorker) Work(ctx context.Context, job *river.Job[models.MetadataEnrichmentJobArgs]) error {
 	args := job.Args
 	slog.Info("metadata enrichment started", "book_id", args.BookID, "force", args.Force, "cover_only", args.CoverOnly)
-	err := w.ProcessBook(ctx, args.BookID, args.LibraryID, args.CallerID, args.Force, args.CoverOnly)
+	err := w.ProcessBook(ctx, args.BookID, args.CallerID, args.Force, args.CoverOnly)
 	if err != nil && !errors.Is(err, ErrNoUpdate) {
 		return err // only real errors cause River retries
 	}
@@ -71,7 +71,10 @@ func (w *MetadataWorker) Work(ctx context.Context, job *river.Job[models.Metadat
 // Returns ErrNoUpdate when processing succeeded but nothing changed (no ISBN,
 // no covers from providers, already has cover). Returns a real error only for
 // transient failures worth retrying.
-func (w *MetadataWorker) ProcessBook(ctx context.Context, bookID, libraryID, callerID uuid.UUID, force, coverOnly bool) error {
+// ProcessBook enriches or refreshes the cover for a single book. libraryID is
+// no longer a parameter (books belong to zero or more libraries under M2M,
+// and the enrichment itself writes to the global book row regardless).
+func (w *MetadataWorker) ProcessBook(ctx context.Context, bookID, callerID uuid.UUID, force, coverOnly bool) error {
 	// Find an ISBN from the book's editions.
 	editions, err := w.editions.ListByBook(ctx, bookID)
 	if err != nil {
@@ -100,7 +103,7 @@ func (w *MetadataWorker) ProcessBook(ctx context.Context, bookID, libraryID, cal
 
 	// When cover_only=true, skip all text-field updates and only refresh the cover.
 	if !coverOnly {
-		if err := w.applyMerged(ctx, bookID, libraryID, callerID, merged, force); err != nil {
+		if err := w.applyMerged(ctx, bookID, callerID, merged, force); err != nil {
 			return fmt.Errorf("applying merged result: %w", err)
 		}
 	}
@@ -146,10 +149,11 @@ func (w *MetadataWorker) ProcessBook(ctx context.Context, bookID, libraryID, cal
 // When force=false only empty fields are filled; when force=true all fields are overwritten.
 func (w *MetadataWorker) applyMerged(
 	ctx context.Context,
-	bookID, libraryID, callerID uuid.UUID,
+	bookID, callerID uuid.UUID,
 	merged *providers.MergedBookResult,
 	force bool,
 ) error {
+	_ = callerID // reserved for audit trail; applyMerged itself doesn't use it
 	book, err := w.bookSvc.GetBook(ctx, bookID)
 	if err != nil {
 		return err

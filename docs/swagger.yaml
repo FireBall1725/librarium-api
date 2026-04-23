@@ -47,6 +47,10 @@ definitions:
           $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchItem'
         type: array
       library_id:
+        description: |-
+          LibraryID scopes the batch to a library when set. Null for
+          floating-book batches (e.g. re-enriching a suggestion-backed book not
+          yet held by any library).
         type: string
       library_name:
         type: string
@@ -2482,6 +2486,50 @@ paths:
       summary: Register a new user
       tags:
       - auth
+  /books/{book_id}/enrich:
+    post:
+      description: |-
+        Queues a metadata enrichment job for one book, regardless of
+        library ownership. Used by the BookDetailPage "Refresh
+        metadata" button on floating (suggestion-backed) books and
+        anywhere we want to touch up a single title.
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Re-enrich metadata for a single book
+      tags:
+      - books
   /contributors:
     get:
       description: Full-text search for contributors (authors, illustrators, etc.).
@@ -7233,6 +7281,42 @@ paths:
       security:
       - BearerAuth: []
       summary: List my AI suggestions
+      tags:
+      - me
+      - ai
+  /me/suggestions/{id}:
+    delete:
+      description: |-
+        Hard-deletes a single suggestion. Used by both the "Remove"
+        button on SuggestionCard / BookDetailPage and the cleaned-up
+        Dismiss flow (dismiss collapses into delete per the
+        suggestions-as-books plan).
+      parameters:
+      - description: Suggestion ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a suggestion
       tags:
       - me
       - ai

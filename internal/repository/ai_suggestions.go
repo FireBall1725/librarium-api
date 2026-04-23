@@ -503,7 +503,15 @@ func (r *AISuggestionsRepo) ListNewSuggestionKeys(ctx context.Context, userID uu
 // optionally scope to a specific run (non-nil runID). When runID is set, the
 // status filter is ignored — scoped views surface every suggestion the run
 // produced, including ones the user later dismissed or saved.
-func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUID, typeFilter, statusFilter string, runID *uuid.UUID) ([]*models.AISuggestionWithLibrary, error) {
+//
+// since is optional; when non-nil, only suggestions with created_at >= since
+// are returned. Used by the UI to show a 30-day rolling window by default
+// with a "show older" toggle that passes nil.
+//
+// bookID is optional; when non-nil, only suggestions for that specific book
+// are returned. Used by BookDetailPage to know whether to show the
+// remove-suggestion / block controls.
+func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUID, typeFilter, statusFilter string, runID *uuid.UUID, since *time.Time, bookID *uuid.UUID) ([]*models.AISuggestionWithLibrary, error) {
 	// For read_next suggestions, surface one library_id the user is a member
 	// of that holds the referenced book — used for direct navigation on the
 	// client. Under M2M a book can be in multiple libraries; we pick the
@@ -560,6 +568,17 @@ func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUI
 		q += fmt.Sprintf(" AND s.status = $%d", len(args)+1)
 		args = append(args, statusFilter)
 	}
+	// Apply the created_at window for the default "last N days" view. Skipped
+	// when scoping to a specific run — users viewing a run want every row
+	// that run produced regardless of age.
+	if since != nil && runID == nil {
+		q += fmt.Sprintf(" AND s.created_at >= $%d", len(args)+1)
+		args = append(args, *since)
+	}
+	if bookID != nil {
+		q += fmt.Sprintf(" AND s.book_id = $%d", len(args)+1)
+		args = append(args, *bookID)
+	}
 	q += " ORDER BY s.created_at DESC"
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -597,6 +616,22 @@ func (r *AISuggestionsRepo) DeleteForActionTaken(ctx context.Context, userID, bo
 		return 0, fmt.Errorf("delete suggestions on action: %w", err)
 	}
 	return tag.RowsAffected(), nil
+}
+
+// DeleteSuggestion hard-deletes one suggestion scoped to a user. Used by the
+// "Remove suggestion" action on both SuggestionCard (dismiss) and
+// BookDetailPage. Returns ErrNotFound if the row doesn't exist or doesn't
+// belong to the caller.
+func (r *AISuggestionsRepo) DeleteSuggestion(ctx context.Context, id, userID uuid.UUID) error {
+	const q = `DELETE FROM ai_suggestions WHERE id = $1 AND user_id = $2`
+	tag, err := r.db.Exec(ctx, q, id, userID)
+	if err != nil {
+		return fmt.Errorf("delete suggestion: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // UpdateSuggestionStatus changes the user-visible status flag. Returns

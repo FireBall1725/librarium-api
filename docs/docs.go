@@ -2125,6 +2125,70 @@ const docTemplate = `{
                 }
             }
         },
+        "/books/{book_id}/enrich": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Queues a metadata enrichment job for one book, regardless of\nlibrary ownership. Used by the BookDetailPage \"Refresh\nmetadata\" button on floating (suggestion-backed) books and\nanywhere we want to touch up a single title.",
+                "tags": [
+                    "books"
+                ],
+                "summary": "Re-enrich metadata for a single book",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book UUID",
+                        "name": "book_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/contributors": {
             "get": {
                 "security": [
@@ -9707,6 +9771,57 @@ const docTemplate = `{
                 }
             }
         },
+        "/me/suggestions/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hard-deletes a single suggestion. Used by both the \"Remove\"\nbutton on SuggestionCard / BookDetailPage and the cleaned-up\nDismiss flow (dismiss collapses into delete per the\nsuggestions-as-books plan).",
+                "tags": [
+                    "me",
+                    "ai"
+                ],
+                "summary": "Remove a suggestion",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Suggestion ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/me/suggestions/{id}/block": {
             "post": {
                 "security": [
@@ -10514,6 +10629,7 @@ const docTemplate = `{
                     }
                 },
                 "library_id": {
+                    "description": "LibraryID scopes the batch to a library when set. Null for\nfloating-book batches (e.g. re-enriching a suggestion-backed book not\nyet held by any library).",
                     "type": "string"
                 },
                 "library_name": {

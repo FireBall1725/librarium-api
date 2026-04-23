@@ -169,7 +169,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	// the model to pick different titles this run. Without this the model
 	// deterministically regenerates the same picks every time, the unique index
 	// silently drops them, and the user sees no growth in the lists.
-	existing, err := s.repo.ListSuggestions(ctx, userID, "", "new", nil)
+	existing, err := s.repo.ListSuggestions(ctx, userID, "", "new", nil, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("load existing suggestions: %w", err)
 	}
