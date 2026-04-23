@@ -32,15 +32,16 @@ type BookShelfRef struct {
 	Name string    `json:"name"`
 }
 
+// Book represents a work — the abstract creative entity. Library ownership
+// is expressed via the library_books junction (see LibraryBook); a book row
+// no longer carries a single library_id.
 type Book struct {
 	ID           uuid.UUID
-	LibraryID    uuid.UUID
 	Title        string
 	Subtitle     string
 	MediaTypeID  uuid.UUID
 	MediaType    string // display_name from joined media_types row
 	Description  string
-	AddedBy      *uuid.UUID
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	Contributors []BookContributor
@@ -53,4 +54,22 @@ type Book struct {
 	PublishYear    *int
 	Language       string
 	UserReadStatus string
+	// Libraries is the set of libraries holding this book (populated by the
+	// service layer on reads that need it; empty when the book is floating).
+	Libraries []BookLibraryRef
+}
+
+// BookLibraryRef is a lightweight reference to a library that holds this book.
+type BookLibraryRef struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// LibraryBook is a row in the library_books junction — "library X holds book Y".
+type LibraryBook struct {
+	ID        uuid.UUID
+	LibraryID uuid.UUID
+	BookID    uuid.UUID
+	AddedBy   *uuid.UUID
+	AddedAt   time.Time
 }

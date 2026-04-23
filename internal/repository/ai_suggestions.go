@@ -144,7 +144,7 @@ func (r *AISuggestionsRepo) ListLibraryTitles(ctx context.Context, libraryID, us
 	const q = `
 		SELECT
 			b.id,
-			b.library_id,
+			lb.library_id,
 			b.title,
 			COALESCE((
 				SELECT c.name
@@ -193,8 +193,9 @@ func (r *AISuggestionsRepo) ListLibraryTitles(ctx context.Context, libraryID, us
 			) AS has_cover,
 			b.updated_at
 		FROM books b
+		JOIN library_books lb ON lb.book_id = b.id
 		LEFT JOIN media_types mt ON mt.id = b.media_type_id
-		WHERE b.library_id = $1
+		WHERE lb.library_id = $1
 		ORDER BY b.title`
 	rows, err := r.db.Query(ctx, q, libraryID, userID)
 	if err != nil {
@@ -229,7 +230,8 @@ func (r *AISuggestionsRepo) BookExistsInLibrary(ctx context.Context, libraryID u
 			SELECT EXISTS (
 				SELECT 1 FROM book_editions be
 				JOIN books b ON b.id = be.book_id
-				WHERE b.library_id = $1 AND (be.isbn_13 = $2 OR be.isbn_10 = $2)
+				JOIN library_books lb ON lb.book_id = b.id
+				WHERE lb.library_id = $1 AND (be.isbn_13 = $2 OR be.isbn_10 = $2)
 			)`
 		var ok bool
 		if err := r.db.QueryRow(ctx, q, libraryID, isbn).Scan(&ok); err != nil {
@@ -245,7 +247,8 @@ func (r *AISuggestionsRepo) BookExistsInLibrary(ctx context.Context, libraryID u
 	const qTitle = `
 		SELECT EXISTS (
 			SELECT 1 FROM books b
-			WHERE b.library_id = $1 AND lower(b.title) = lower($2)
+			JOIN library_books lb ON lb.book_id = b.id
+			WHERE lb.library_id = $1 AND lower(b.title) = lower($2)
 		)`
 	var ok bool
 	if err := r.db.QueryRow(ctx, qTitle, libraryID, title).Scan(&ok); err != nil {
@@ -492,15 +495,24 @@ func (r *AISuggestionsRepo) ListNewSuggestionKeys(ctx context.Context, userID uu
 // status filter is ignored — scoped views surface every suggestion the run
 // produced, including ones the user later dismissed or saved.
 func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUID, typeFilter, statusFilter string, runID *uuid.UUID) ([]*models.AISuggestionWithLibrary, error) {
-	// LEFT JOIN on books so read_next suggestions (which point into the user's
-	// library) can surface library_id for direct navigation. buy-type rows have
-	// book_id = NULL so the join just returns NULL for them.
+	// For read_next suggestions, surface one library_id the user is a member
+	// of that holds the referenced book — used for direct navigation on the
+	// client. Under M2M a book can be in multiple libraries; we pick the
+	// earliest-added of the user's memberships via a LATERAL subquery. buy
+	// suggestions have book_id NULL so the subquery returns NULL for them.
 	q := `
 		SELECT s.id, s.user_id, s.run_id, s.type, s.book_id, s.book_edition_id,
 		       s.title, COALESCE(s.author,''), COALESCE(s.isbn,''), COALESCE(s.cover_url,''),
-		       COALESCE(s.reasoning,''), s.status, s.created_at, b.library_id
+		       COALESCE(s.reasoning,''), s.status, s.created_at, inlib.library_id
 		FROM ai_suggestions s
-		LEFT JOIN books b ON b.id = s.book_id
+		LEFT JOIN LATERAL (
+		    SELECT lb.library_id
+		    FROM library_books lb
+		    JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = s.user_id
+		    WHERE lb.book_id = s.book_id
+		    ORDER BY lb.added_at ASC
+		    LIMIT 1
+		) inlib ON TRUE
 		WHERE s.user_id = $1`
 	args := []any{userID}
 	if typeFilter != "" {

@@ -33,6 +33,7 @@ type ImportWorker struct {
 	pool         *pgxpool.Pool
 	importJobs   *repository.ImportJobRepo
 	books        *repository.BookRepo
+	libraryBooks *repository.LibraryBookRepo
 	contributors *repository.ContributorRepo
 	editions     *repository.EditionRepo
 	tags         *repository.TagRepo
@@ -45,6 +46,7 @@ func NewImportWorker(
 	pool *pgxpool.Pool,
 	importJobs *repository.ImportJobRepo,
 	books *repository.BookRepo,
+	libraryBooks *repository.LibraryBookRepo,
 	contributors *repository.ContributorRepo,
 	editions *repository.EditionRepo,
 	tags *repository.TagRepo,
@@ -56,6 +58,7 @@ func NewImportWorker(
 		pool:         pool,
 		importJobs:   importJobs,
 		books:        books,
+		libraryBooks: libraryBooks,
 		contributors: contributors,
 		editions:     editions,
 		tags:         tags,
@@ -232,10 +235,16 @@ func (w *ImportWorker) processItem(
 	}
 
 	// ── Duplicate check (ISBN deduplication at edition level) ─────────────────
+	// Under M2M, an edition with a given ISBN exists globally at most once.
+	// If we already have one, add this library to its junction and bump the
+	// copy count there — no duplicate book/edition rows created.
 	if isbn != "" {
-		existing, err := w.editions.FindByISBN(ctx, job.LibraryID, isbn)
+		existing, err := w.editions.FindByISBN(ctx, isbn)
 		if err == nil && existing != nil {
-			if incrErr := w.editions.IncrementCopyCount(ctx, existing.ID); incrErr != nil {
+			if addErr := w.libraryBooks.AddBookToLibrary(ctx, nil, job.LibraryID, existing.BookID, &job.CreatedBy); addErr != nil {
+				return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", addErr), nil
+			}
+			if incrErr := w.editions.IncrementCopyCount(ctx, job.LibraryID, existing.ID); incrErr != nil {
 				return models.ImportItemFailed, fmt.Sprintf("increment copy count: %v", incrErr), nil
 			}
 			bookID := existing.BookID
@@ -347,11 +356,15 @@ func (w *ImportWorker) processItem(
 	}
 	defer tx.Rollback(ctx)
 
-	if err := w.books.Create(ctx, tx, bookID, job.LibraryID,
+	if err := w.books.Create(ctx, tx, bookID,
 		finalTitle, finalSubtitle, mediaTypeID,
-		finalDescription, job.CreatedBy,
+		finalDescription,
 	); err != nil {
 		return models.ImportItemFailed, fmt.Sprintf("creating book: %v", err), nil
+	}
+
+	if err := w.libraryBooks.AddBookToLibrary(ctx, tx, job.LibraryID, bookID, &job.CreatedBy); err != nil {
+		return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", err), nil
 	}
 
 	if len(contribs) > 0 {
@@ -388,12 +401,22 @@ func (w *ImportWorker) processItem(
 		}
 	}
 
-	if err := w.editions.Create(ctx, tx, uuid.New(), bookID,
+	editionID := uuid.New()
+	if err := w.editions.Create(ctx, tx, editionID, bookID,
 		format, editionLang, "", "", finalPublisher,
 		publishDate, finalISBN10, finalISBN13, finalDescription,
-		nil, pageCount, true, acquiredAt, nil,
+		nil, pageCount, true, nil,
 	); err != nil {
 		return models.ImportItemFailed, fmt.Sprintf("creating edition: %v", err), nil
+	}
+	// Record this library's copy of the new edition.
+	var acq *any
+	if acquiredAt != nil {
+		v := any(*acquiredAt)
+		acq = &v
+	}
+	if err := w.libraryBooks.SetEditionCopyCount(ctx, tx, job.LibraryID, editionID, 1, acq); err != nil {
+		return models.ImportItemFailed, fmt.Sprintf("setting library copy count: %v", err), nil
 	}
 
 	if err := tx.Commit(ctx); err != nil {

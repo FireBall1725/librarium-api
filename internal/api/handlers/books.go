@@ -447,8 +447,11 @@ func (h *BookHandler) FindByISBN(w http.ResponseWriter, r *http.Request) {
 
 // DeleteBook godoc
 //
-// @Summary     Delete a book
-// @Description Permanently deletes a book and all its editions from the library.
+// @Summary     Remove a book from a library
+// @Description Drops the library_books junction row for this library/book.
+// @Description The book row itself stays (may be held by other libraries or
+// @Description referenced by AI suggestions). Use the admin endpoint to
+// @Description delete a book entirely.
 // @Tags        books
 // @Security    BearerAuth
 // @Param       library_id  path  string  true  "Library UUID"
@@ -459,6 +462,42 @@ func (h *BookHandler) FindByISBN(w http.ResponseWriter, r *http.Request) {
 // @Failure     404  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books/{book_id} [delete]
 func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+	bookID, err := uuid.Parse(r.PathValue("book_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+	if err := h.svc.RemoveBookFromLibrary(r.Context(), libraryID, bookID); errors.Is(err, repository.ErrNotFound) {
+		respond.Error(w, http.StatusNotFound, "book not found in this library")
+		return
+	} else if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdminDeleteBook godoc
+//
+// @Summary     Delete a book entirely (admin only)
+// @Description Permanently deletes the books row and cascades through all
+// @Description libraries, editions, user interactions, loans, and any other
+// @Description references. Use with care.
+// @Tags        admin
+// @Security    BearerAuth
+// @Param       book_id  path  string  true  "Book UUID"
+// @Success     204
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     403  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /admin/books/{book_id} [delete]
+func (h *BookHandler) AdminDeleteBook(w http.ResponseWriter, r *http.Request) {
 	bookID, err := uuid.Parse(r.PathValue("book_id"))
 	if err != nil {
 		respond.Error(w, http.StatusBadRequest, "invalid book id")
@@ -468,6 +507,44 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusNotFound, "book not found")
 		return
 	} else if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AddBookToLibrary godoc
+//
+// @Summary     Add an existing book to a library
+// @Description Inserts the library_books junction row. Idempotent. Used by
+// @Description the suggestions-as-books "Add to library" CTA and any other
+// @Description flow that wants to attach a floating book to a real library.
+// @Tags        books
+// @Security    BearerAuth
+// @Param       library_id  path  string  true  "Library UUID"
+// @Param       book_id     path  string  true  "Book UUID"
+// @Success     204
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /libraries/{library_id}/books/{book_id} [post]
+func (h *BookHandler) AddBookToLibrary(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+	bookID, err := uuid.Parse(r.PathValue("book_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+	var callerID *uuid.UUID
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		id := claims.UserID
+		callerID = &id
+	}
+	if err := h.svc.AddBookToLibrary(r.Context(), libraryID, bookID, callerID); err != nil {
 		respond.ServerError(w, r, err)
 		return
 	}
@@ -558,14 +635,22 @@ func decodeBookRequest(r *http.Request) (*service.BookRequest, error) {
 func bookBody(b *models.Book) map[string]any {
 	var coverURL any
 	if b.HasCover {
-		// Include updated_at as a cache-buster so browsers fetch the new image
-		// when the cover changes rather than serving a stale cached version.
-		coverURL = fmt.Sprintf("/api/v1/libraries/%s/books/%s/cover?v=%d",
-			b.LibraryID, b.ID, b.UpdatedAt.Unix())
+		// Library-agnostic cover URL; a book can now live in multiple libraries
+		// so the cover path is keyed by book id, not library+book. Includes
+		// updated_at as a cache-buster.
+		coverURL = fmt.Sprintf("/api/v1/books/%s/cover?v=%d",
+			b.ID, b.UpdatedAt.Unix())
 	}
-	body := map[string]any{
+	// Preserve the legacy `library_id` field for clients that expect it by
+	// picking the first library this book belongs to. Empty if floating.
+	var primaryLibraryID any
+	if len(b.Libraries) > 0 {
+		primaryLibraryID = b.Libraries[0].ID
+	}
+	return map[string]any{
 		"id":               b.ID,
-		"library_id":       b.LibraryID,
+		"library_id":       primaryLibraryID,
+		"libraries":        b.Libraries,
 		"title":            b.Title,
 		"subtitle":         b.Subtitle,
 		"media_type_id":    b.MediaTypeID,
@@ -584,10 +669,6 @@ func bookBody(b *models.Book) map[string]any {
 		"language":         b.Language,
 		"user_read_status": b.UserReadStatus,
 	}
-	if b.AddedBy != nil {
-		body["added_by"] = b.AddedBy
-	}
-	return body
 }
 
 // parseFlexDate tries several date formats and returns the parsed time.

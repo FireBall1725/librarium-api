@@ -422,7 +422,6 @@ func editionBody(e *models.BookEdition) map[string]any {
 		"publisher":                 e.Publisher,
 		"isbn_10":                   e.ISBN10,
 		"isbn_13":                   e.ISBN13,
-		"copy_count":                e.CopyCount,
 		"description":               e.Description,
 		"is_primary":                e.IsPrimary,
 		"created_at":                e.CreatedAt,
@@ -430,6 +429,9 @@ func editionBody(e *models.BookEdition) map[string]any {
 		"narrator_contributor_name": e.NarratorContributorName,
 		"files":                     files,
 	}
+	// copy_count and acquired_at are now per-library (library_book_editions).
+	// Callers that need those for a specific library should query that
+	// junction directly. Left out of the legacy per-edition body.
 	if e.NarratorContributorID != nil {
 		body["narrator_contributor_id"] = e.NarratorContributorID
 	} else {
@@ -449,11 +451,6 @@ func editionBody(e *models.BookEdition) map[string]any {
 		body["page_count"] = *e.PageCount
 	} else {
 		body["page_count"] = nil
-	}
-	if e.AcquiredAt != nil {
-		body["acquired_at"] = e.AcquiredAt.Format("2006-01-02")
-	} else {
-		body["acquired_at"] = nil
 	}
 	return body
 }
