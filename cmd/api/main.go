@@ -140,7 +140,11 @@ func main() {
 	jobSvc := service.NewJobService(settingsRepo)
 	aiSuggestionsRepo := repository.NewAISuggestionsRepo(pool)
 	suggestionsSvc := service.NewSuggestionsService(
-		aiSuggestionsRepo, aiRegistry, aiSvc, jobSvc, aiUserSvc, providerSvc,
+		pool,
+		aiSuggestionsRepo,
+		repository.NewBookRepo(pool),
+		repository.NewEditionRepo(pool),
+		aiRegistry, aiSvc, jobSvc, aiUserSvc, providerSvc,
 	)
 
 	workerBookSvc := service.NewBookService(

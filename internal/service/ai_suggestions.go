@@ -18,6 +18,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/providers"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrAIDisabled signals that a suggestions run was skipped because the AI
@@ -52,16 +53,21 @@ const (
 // providers, backfill if buy candidates fell short, persist the batch.
 type SuggestionsService struct {
 	repo       *repository.AISuggestionsRepo
+	books      *repository.BookRepo
+	editions   *repository.EditionRepo
 	aiRegistry *ai.Registry
 	aiSvc      *AIService
 	jobSvc     *JobService
 	userSvc    *AIUserService
 	providers  *ProviderService
-	pool       any // retained if we need transactions later
+	pool       *pgxpool.Pool
 }
 
 func NewSuggestionsService(
+	pool *pgxpool.Pool,
 	repo *repository.AISuggestionsRepo,
+	books *repository.BookRepo,
+	editions *repository.EditionRepo,
 	aiRegistry *ai.Registry,
 	aiSvc *AIService,
 	jobSvc *JobService,
@@ -69,7 +75,10 @@ func NewSuggestionsService(
 	providers *ProviderService,
 ) *SuggestionsService {
 	return &SuggestionsService{
+		pool:       pool,
 		repo:       repo,
+		books:      books,
+		editions:   editions,
 		aiRegistry: aiRegistry,
 		aiSvc:      aiSvc,
 		jobSvc:     jobSvc,
@@ -540,12 +549,110 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 			}
 		}
 
+		// Resolve or create a floating book + edition for this buy suggestion
+		// so the suggestion has a stable book_id clients can use for detail
+		// views. A buy suggestion without a book_id now fails to persist
+		// (post-000008 schema change).
+		bookID, editionID, bookErr := s.resolveFloatingBook(ctx, item.Title, item.Author, item.ISBN)
+		if bookErr != nil {
+			rejected = append(rejected, p.Title)
+			decision["outcome"] = "rejected"
+			decision["reason"] = "floating_book_create_failed"
+			decision["floating_book_error"] = bookErr.Error()
+			s.emit(ctx, runID, "enrichment_decision", decision)
+			continue
+		}
+		item.BookID = &bookID
+		if editionID != uuid.Nil {
+			item.BookEditionID = &editionID
+		}
+
 		seen[normalizeTitle(item.Title)] = struct{}{}
 		accepted = append(accepted, *item)
 		decision["outcome"] = "accepted"
 		s.emit(ctx, runID, "enrichment_decision", decision)
 	}
 	return accepted, rejected
+}
+
+// resolveFloatingBook looks up an existing book + edition by ISBN (global,
+// not library-scoped) and returns its IDs. If no edition with this ISBN
+// exists, creates a new floating book (no library_books rows) and a
+// corresponding edition, then returns both IDs.
+//
+// A "floating" book is one with zero rows in the library_books junction —
+// it's a real work in the catalog that simply hasn't been added to any
+// library yet. Suggestions-as-books uses this to hang full BookPage
+// metadata + re-enrich + BookFinder affordances off a `buy` suggestion.
+func (s *SuggestionsService) resolveFloatingBook(ctx context.Context, title, author, isbn string) (uuid.UUID, uuid.UUID, error) {
+	if isbn != "" {
+		if existing, err := s.editions.FindByISBN(ctx, isbn); err == nil && existing != nil {
+			return existing.BookID, existing.ID, nil
+		}
+	}
+
+	mediaTypeID, err := s.defaultMediaTypeID(ctx)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("resolving default media type: %w", err)
+	}
+
+	bookID := uuid.New()
+	editionID := uuid.New()
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := s.books.Create(ctx, tx, bookID, title, "", mediaTypeID, ""); err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("creating floating book: %w", err)
+	}
+	// Link the author as a contributor on the book so the BookPage renders
+	// with something useful before enrichment fills in the rest.
+	// (Skipped if author is blank — rare for post-enrichment items.)
+	_ = author // contributor linkage is an enhancement; worker enrichment
+	// will populate contributors on a subsequent pass. Leaving a TODO rather
+	// than half-building this path.
+
+	// Create the edition with just the ISBN; other fields (format, language,
+	// page count, etc.) can be filled in by a follow-up metadata enrichment
+	// pass triggered by the BookPage.
+	if err := s.editions.Create(ctx, tx, editionID, bookID,
+		models.EditionFormatPaperback, // placeholder — enrichment will correct
+		"", "", "", "", // language, edition_name, narrator, publisher
+		nil,         // publish_date
+		"", isbn, "", // isbn_10, isbn_13, description
+		nil, nil, // duration_seconds, page_count
+		true, // is_primary
+		nil,  // narrator_contributor_id
+	); err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("creating floating edition: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("commit: %w", err)
+	}
+	return bookID, editionID, nil
+}
+
+// defaultMediaTypeID returns the id of the "Novel" media type (or the first
+// media type in the table if Novel isn't present) for use when creating
+// floating books where we don't yet know the format.
+func (s *SuggestionsService) defaultMediaTypeID(ctx context.Context) (uuid.UUID, error) {
+	types, err := s.books.ListMediaTypes(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	for _, t := range types {
+		if strings.EqualFold(t.Name, "novel") {
+			return t.ID, nil
+		}
+	}
+	if len(types) > 0 {
+		return types[0].ID, nil
+	}
+	return uuid.Nil, fmt.Errorf("no media types defined")
 }
 
 // findByTitleAuthor is the fallback path when ISBN lookup fails or mismatches.
