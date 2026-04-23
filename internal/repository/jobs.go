@@ -224,9 +224,10 @@ func (r *JobRepo) DeleteJob(ctx context.Context, id uuid.UUID) error {
 
 // DeleteFinished hard-deletes every job row in a terminal state
 // (completed/failed/cancelled). Used by the "Clear history" admin action.
+// Includes legacy 'done' for rows written before the status normalizer.
 // Returns the deleted count.
 func (r *JobRepo) DeleteFinished(ctx context.Context, kind string) (int64, error) {
-	where := "status IN ('completed','failed','cancelled')"
+	where := "status IN ('completed','done','failed','cancelled')"
 	args := []any{}
 	if kind != "" {
 		where += " AND kind = $1"
@@ -423,6 +424,23 @@ func scanSchedule(s scanner) (*models.JobSchedule, error) {
 	sched.ID = uuid.UUID(pgID.Bytes)
 	sched.Config = config
 	return &sched, nil
+}
+
+// normalizeStatusForJobs translates the legacy status vocabulary
+// (`processing`/`done`) used by import_jobs and enrichment_batches into
+// the canonical values on the umbrella jobs table (`running`/`completed`).
+// Other values (pending/failed/cancelled) pass through unchanged. Used by
+// the mirroring paths on those two repos; AI suggestions already uses
+// the canonical set directly.
+func normalizeStatusForJobs(s string) string {
+	switch s {
+	case "processing":
+		return "running"
+	case "done":
+		return "completed"
+	default:
+		return s
+	}
 }
 
 // nullableUUID is a small helper — pgx accepts *uuid.UUID natively but

@@ -512,6 +512,7 @@ type RunView struct {
 	TokensIn         int           `json:"tokens_in"`
 	TokensOut        int           `json:"tokens_out"`
 	EstimatedCostUSD float64       `json:"estimated_cost_usd"`
+	SuggestionCount  int           `json:"suggestion_count"`
 	StartedAt        string        `json:"started_at"`
 	FinishedAt       string        `json:"finished_at,omitempty"`
 	Steering         *SteeringView `json:"steering,omitempty"`
@@ -558,6 +559,7 @@ func runToView(r *models.AISuggestionRun, includeUser bool) RunView {
 		TokensIn:         r.TokensIn,
 		TokensOut:        r.TokensOut,
 		EstimatedCostUSD: r.EstimatedCostUSD,
+		SuggestionCount:  r.SuggestionCount,
 		StartedAt:        r.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	if includeUser {
@@ -798,7 +800,9 @@ func (h *AISuggestionsHandler) AdminGetRun(w http.ResponseWriter, r *http.Reques
 		respond.ServerError(w, r, err)
 		return
 	}
-	events, err := h.repo.ListEventsByRun(r.Context(), id)
+	// Events filter by the real run id — the path id may have been an
+	// umbrella job id (resolved by GetRun above).
+	events, err := h.repo.ListEventsByRun(r.Context(), run.ID)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return

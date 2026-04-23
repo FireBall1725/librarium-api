@@ -779,19 +779,24 @@ func (r *AISuggestionsRepo) ListEventsByRun(ctx context.Context, runID uuid.UUID
 	return out, rows.Err()
 }
 
-// GetRun fetches a single run row by ID. Returns ErrNotFound when missing.
-// Callers that need per-user scoping should check UserID after fetching.
+// GetRun fetches a single run row by its own ID or the umbrella jobs row
+// id it hangs off of. The unified history endpoint returns umbrella ids,
+// so accepting both lets the web expand a row without an extra lookup.
+// Returns ErrNotFound when missing. Callers that need per-user scoping
+// should check UserID after fetching.
 func (r *AISuggestionsRepo) GetRun(ctx context.Context, runID uuid.UUID) (*models.AISuggestionRun, error) {
 	const q = `
-		SELECT id, user_id, triggered_by, provider_type, model_id, status,
-		       COALESCE(error,''), tokens_in, tokens_out, estimated_cost_usd,
-		       started_at, finished_at, steering
-		FROM ai_suggestion_runs WHERE id = $1`
+		SELECT r.id, r.user_id, r.triggered_by, r.provider_type, r.model_id, r.status,
+		       COALESCE(r.error,''), r.tokens_in, r.tokens_out, r.estimated_cost_usd,
+		       r.started_at, r.finished_at, r.steering,
+		       (SELECT COUNT(*) FROM ai_suggestions s WHERE s.run_id = r.id)
+		FROM ai_suggestion_runs r WHERE r.id = $1 OR r.job_id = $1
+		LIMIT 1`
 	run := &models.AISuggestionRun{}
 	err := r.db.QueryRow(ctx, q, runID).Scan(
 		&run.ID, &run.UserID, &run.TriggeredBy, &run.ProviderType, &run.ModelID,
 		&run.Status, &run.Error, &run.TokensIn, &run.TokensOut, &run.EstimatedCostUSD,
-		&run.StartedAt, &run.FinishedAt, &run.Steering,
+		&run.StartedAt, &run.FinishedAt, &run.Steering, &run.SuggestionCount,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -803,16 +808,19 @@ func (r *AISuggestionsRepo) GetRun(ctx context.Context, runID uuid.UUID) (*model
 }
 
 // ListRunsByUser returns the caller's most recent suggestion runs, newest first.
+// Each row includes a count of suggestions still linked to it (the FK SET-NULLs
+// when an admin clears history, so this can drop to 0 even for a successful run).
 func (r *AISuggestionsRepo) ListRunsByUser(ctx context.Context, userID uuid.UUID, limit int) ([]*models.AISuggestionRun, error) {
 	if limit <= 0 {
 		limit = 25
 	}
 	const q = `
-		SELECT id, user_id, triggered_by, provider_type, model_id, status,
-		       COALESCE(error,''), tokens_in, tokens_out, estimated_cost_usd,
-		       started_at, finished_at, steering
-		FROM ai_suggestion_runs WHERE user_id = $1
-		ORDER BY started_at DESC LIMIT $2`
+		SELECT r.id, r.user_id, r.triggered_by, r.provider_type, r.model_id, r.status,
+		       COALESCE(r.error,''), r.tokens_in, r.tokens_out, r.estimated_cost_usd,
+		       r.started_at, r.finished_at, r.steering,
+		       (SELECT COUNT(*) FROM ai_suggestions s WHERE s.run_id = r.id)
+		FROM ai_suggestion_runs r WHERE r.user_id = $1
+		ORDER BY r.started_at DESC LIMIT $2`
 	return scanRuns(r.db.Query(ctx, q, userID, limit))
 }
 
@@ -823,11 +831,12 @@ func (r *AISuggestionsRepo) ListRecentRuns(ctx context.Context, limit int) ([]*m
 		limit = 50
 	}
 	const q = `
-		SELECT id, user_id, triggered_by, provider_type, model_id, status,
-		       COALESCE(error,''), tokens_in, tokens_out, estimated_cost_usd,
-		       started_at, finished_at, steering
-		FROM ai_suggestion_runs
-		ORDER BY started_at DESC LIMIT $1`
+		SELECT r.id, r.user_id, r.triggered_by, r.provider_type, r.model_id, r.status,
+		       COALESCE(r.error,''), r.tokens_in, r.tokens_out, r.estimated_cost_usd,
+		       r.started_at, r.finished_at, r.steering,
+		       (SELECT COUNT(*) FROM ai_suggestions s WHERE s.run_id = r.id)
+		FROM ai_suggestion_runs r
+		ORDER BY r.started_at DESC LIMIT $1`
 	return scanRuns(r.db.Query(ctx, q, limit))
 }
 
@@ -842,7 +851,7 @@ func scanRuns(rows pgx.Rows, err error) ([]*models.AISuggestionRun, error) {
 		if err := rows.Scan(
 			&run.ID, &run.UserID, &run.TriggeredBy, &run.ProviderType, &run.ModelID,
 			&run.Status, &run.Error, &run.TokensIn, &run.TokensOut, &run.EstimatedCostUSD,
-			&run.StartedAt, &run.FinishedAt, &run.Steering,
+			&run.StartedAt, &run.FinishedAt, &run.Steering, &run.SuggestionCount,
 		); err != nil {
 			return nil, err
 		}

@@ -44,7 +44,7 @@ func (r *ImportJobRepo) CreateJob(ctx context.Context, job *models.ImportJob, it
 		INSERT INTO jobs (kind, status, triggered_by, created_by)
 		VALUES ('import', $1, 'user', $2)
 		RETURNING id`,
-		string(job.Status), job.CreatedBy,
+		normalizeStatusForJobs(string(job.Status)), job.CreatedBy,
 	).Scan(&umbrellaID); err != nil {
 		return fmt.Errorf("creating umbrella job: %w", err)
 	}
@@ -178,7 +178,7 @@ func (r *ImportJobRepo) UpdateJobStatus(ctx context.Context, id uuid.UUID, statu
 			       started_at  = CASE WHEN $2 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
 			       finished_at = CASE WHEN $2 IN ('completed','failed','cancelled') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
 			 WHERE id = $1`
-		if _, err := r.db.Exec(ctx, updJob, uuid.UUID(pgJobID.Bytes), string(status), processed, failed, skipped, total); err != nil {
+		if _, err := r.db.Exec(ctx, updJob, uuid.UUID(pgJobID.Bytes), normalizeStatusForJobs(string(status)), processed, failed, skipped, total); err != nil {
 			return fmt.Errorf("mirroring status to umbrella job: %w", err)
 		}
 	}
