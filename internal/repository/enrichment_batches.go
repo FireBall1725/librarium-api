@@ -37,18 +37,21 @@ func (r *EnrichmentBatchRepo) Create(ctx context.Context, batch *models.Enrichme
 	defer tx.Rollback(ctx)
 
 	// Create the umbrella jobs row first so the batch row can reference it
-	// via job_id. Kind is "enrichment"; status mirrors the batch.
+	// via job_id. Kind is "enrichment"; status mirrors the batch, translated
+	// from the legacy processing/done vocabulary to the canonical
+	// running/completed set the umbrella uses.
 	triggeredBy := "user"
 	if batch.LibraryID == nil {
-		// No library context = floating-book re-enrich from the BookDetailPage.
-		triggeredBy = "user"
+		// No library context = floating-book re-enrich or the cover-backfill
+		// scheduler. Both trace back to an admin/system trigger.
+		triggeredBy = "admin"
 	}
 	var jobID uuid.UUID
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO jobs (kind, status, triggered_by, created_by)
 		VALUES ('enrichment', $1, $2, $3)
 		RETURNING id`,
-		string(batch.Status), triggeredBy, batch.CreatedBy,
+		normalizeStatusForJobs(string(batch.Status)), triggeredBy, batch.CreatedBy,
 	).Scan(&jobID); err != nil {
 		return fmt.Errorf("creating umbrella job: %w", err)
 	}
@@ -68,12 +71,16 @@ func (r *EnrichmentBatchRepo) Create(ctx context.Context, batch *models.Enrichme
 }
 
 // Get returns a single enrichment batch by ID (no items).
+// Get resolves a batch by either its own id or the umbrella jobs row id
+// it hangs off of. The unified history endpoint returns umbrella ids, so
+// accepting both lets the web expand a row without an extra lookup.
 func (r *EnrichmentBatchRepo) Get(ctx context.Context, id uuid.UUID) (*models.EnrichmentBatch, error) {
 	const q = `
 		SELECT id, library_id, created_by, type, force, status, book_ids,
 		       total_books, processed_books, failed_books, skipped_books, created_at, updated_at
 		FROM   enrichment_batches
-		WHERE  id = $1`
+		WHERE  id = $1 OR job_id = $1
+		LIMIT  1`
 	row := r.db.QueryRow(ctx, q, id)
 	batch, err := scanBatch(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -82,13 +89,15 @@ func (r *EnrichmentBatchRepo) Get(ctx context.Context, id uuid.UUID) (*models.En
 	return batch, err
 }
 
-// GetWithItems returns a batch including its per-book items.
+// GetWithItems returns a batch including its per-book items. The input id
+// may be either the batch id or its umbrella job id; item listing always
+// uses the resolved batch id.
 func (r *EnrichmentBatchRepo) GetWithItems(ctx context.Context, id uuid.UUID) (*models.EnrichmentBatch, error) {
 	batch, err := r.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	items, err := r.ListItems(ctx, id)
+	items, err := r.ListItems(ctx, batch.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -218,15 +227,20 @@ func (r *EnrichmentBatchRepo) ResyncCounters(ctx context.Context, batchID uuid.U
 // UpdateStatus updates the status of a batch. Never overwrites a
 // 'cancelled' status. Mirrors the change to the umbrella jobs row so the
 // unified history stays consistent, stamping started_at/finished_at when
-// transitioning into/out of running.
+// transitioning into/out of running and copying the batch counters into
+// jobs.progress so the UI can render "N/M books" without joining back to
+// the legacy table.
 func (r *EnrichmentBatchRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status models.EnrichmentBatchStatus) error {
 	const q = `
 		UPDATE enrichment_batches
 		SET    status = $2, updated_at = now()
 		WHERE  id = $1 AND status != 'cancelled'
-		RETURNING job_id`
-	var pgJobID pgtype.UUID
-	if err := r.db.QueryRow(ctx, q, id, string(status)).Scan(&pgJobID); err != nil {
+		RETURNING job_id, processed_books, failed_books, skipped_books, total_books`
+	var (
+		pgJobID                            pgtype.UUID
+		processed, failed, skipped, total  int
+	)
+	if err := r.db.QueryRow(ctx, q, id, string(status)).Scan(&pgJobID, &processed, &failed, &skipped, &total); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil // either missing or already cancelled — caller doesn't care
 		}
@@ -236,10 +250,11 @@ func (r *EnrichmentBatchRepo) UpdateStatus(ctx context.Context, id uuid.UUID, st
 		const updJob = `
 			UPDATE jobs
 			   SET status      = $2,
+			       progress    = jsonb_build_object('processed', $3::int, 'failed', $4::int, 'skipped', $5::int, 'total', $6::int),
 			       started_at  = CASE WHEN $2 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
 			       finished_at = CASE WHEN $2 IN ('completed','failed','cancelled') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
 			 WHERE id = $1`
-		if _, err := r.db.Exec(ctx, updJob, uuid.UUID(pgJobID.Bytes), string(status)); err != nil {
+		if _, err := r.db.Exec(ctx, updJob, uuid.UUID(pgJobID.Bytes), normalizeStatusForJobs(string(status)), processed, failed, skipped, total); err != nil {
 			return fmt.Errorf("mirroring status to umbrella job: %w", err)
 		}
 	}

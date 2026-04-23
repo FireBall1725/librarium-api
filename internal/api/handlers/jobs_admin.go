@@ -10,12 +10,19 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
 	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 )
+
+// cronParser parses the standard 5-field expressions the UI emits. Kept
+// package-level so repeated calls don't reallocate; Parse itself is
+// stateless so this is safe to reuse.
+var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
 // UnifiedJobsHandler backs the /admin/jobs/history surface — one entry
 // point that returns every kind of job in one shape. Kind-specific
@@ -212,6 +219,10 @@ func (h *UnifiedJobsHandler) DeleteHistory(w http.ResponseWriter, r *http.Reques
 // ─── Schedules ───────────────────────────────────────────────────────────────
 
 // ScheduleView is a job_schedules row enriched with registry display info.
+// next_fire_at is computed server-side from the cron expression + the
+// schedule row's last_fired_at (or created_at when never fired). The UI
+// uses it to render a live countdown and sort; keeping the calculation
+// server-side avoids cross-timezone weirdness on the client.
 type ScheduleView struct {
 	ID          string          `json:"id"`
 	Kind        string          `json:"kind"`
@@ -221,6 +232,7 @@ type ScheduleView struct {
 	Enabled     bool            `json:"enabled"`
 	Config      json.RawMessage `json:"config"`
 	LastFiredAt *time.Time      `json:"last_fired_at,omitempty"`
+	NextFireAt  *time.Time      `json:"next_fire_at,omitempty"`
 }
 
 // ListSchedules godoc
@@ -256,9 +268,104 @@ func (h *UnifiedJobsHandler) ListSchedules(w http.ResponseWriter, r *http.Reques
 		if len(v.Config) == 0 {
 			v.Config = json.RawMessage("{}")
 		}
+		// Compute next fire only for enabled schedules — a disabled row
+		// has no meaningful "next run" and the UI can render a dash.
+		if s.Enabled {
+			if t, ok := computeNextFire(s); ok {
+				v.NextFireAt = &t
+			}
+		}
 		out = append(out, v)
 	}
 	respond.JSON(w, http.StatusOK, out)
+}
+
+// computeNextFire parses the schedule's cron expression and returns the
+// next scheduled fire time based on last_fired_at (or created_at when
+// the schedule has never fired). Mirrors the scheduler's own logic so
+// the UI sees the same next-run the scheduler will actually use.
+func computeNextFire(s *models.JobSchedule) (time.Time, bool) {
+	sched, err := cronParser.Parse(s.Cron)
+	if err != nil {
+		return time.Time{}, false
+	}
+	prev := s.CreatedAt
+	if s.LastFiredAt != nil {
+		prev = *s.LastFiredAt
+	}
+	next := sched.Next(prev)
+	// If the computed next is already in the past (admin re-enabled a
+	// schedule whose last fire was long ago), roll forward to the next
+	// fire from "now".
+	if next.Before(time.Now()) {
+		next = sched.Next(time.Now())
+	}
+	return next, true
+}
+
+// RunNow godoc
+//
+//	@Summary     Run a scheduled job once, now
+//	@Description Fires the kind's Enqueue hook immediately, bypassing the
+//	@Description cron. Creates an umbrella jobs row with triggered_by=admin
+//	@Description so the run shows up in history as admin-triggered.
+//	@Tags        admin,jobs
+//	@Security    BearerAuth
+//	@Param       kind  path  string  true  "job kind"
+//	@Success     202   {object}  handlers.JobView
+//	@Failure     400   {object}  object{error=string}
+//	@Failure     404   {object}  object{error=string}
+//	@Router      /admin/jobs/schedules/{kind}/run [post]
+func (h *UnifiedJobsHandler) RunNow(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if kind == "" {
+		respond.Error(w, http.StatusBadRequest, "missing kind")
+		return
+	}
+	def := h.registry.Get(jobs.Kind(kind))
+	if def == nil {
+		respond.Error(w, http.StatusNotFound, "unknown job kind")
+		return
+	}
+	if def.Enqueue == nil {
+		respond.Error(w, http.StatusBadRequest, "this kind doesn't support manual run")
+		return
+	}
+	// Look up the schedule's config (if any) — admin-run uses whatever
+	// the kind has stored. Missing schedule = empty config.
+	var cfg json.RawMessage = json.RawMessage("{}")
+	if s, err := h.jobs.GetSchedule(r.Context(), kind); err == nil && s != nil {
+		if len(s.Config) > 0 {
+			cfg = s.Config
+		}
+	}
+
+	now := time.Now()
+	j := &models.Job{
+		Kind:        kind,
+		Status:      models.JobStatusRunning,
+		TriggeredBy: models.JobTriggeredByAdmin,
+		StartedAt:   &now,
+	}
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		uid := claims.UserID
+		j.CreatedBy = &uid
+	}
+	if err := h.jobs.CreateJob(r.Context(), j); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	if err := def.Enqueue(r.Context(), jobs.TriggerCtx{
+		JobID:       j.ID,
+		TriggeredBy: models.JobTriggeredByAdmin,
+		CreatedBy:   j.CreatedBy,
+	}, cfg); err != nil {
+		_ = h.jobs.MarkFinished(r.Context(), j.ID, models.JobStatusFailed, err.Error())
+		respond.ServerError(w, r, err)
+		return
+	}
+	_ = h.jobs.MarkFinished(r.Context(), j.ID, models.JobStatusCompleted, "")
+	respond.JSON(w, http.StatusAccepted, toJobView(j))
 }
 
 // UpdateSchedule godoc

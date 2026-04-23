@@ -53,6 +53,10 @@ type AISuggestionRun struct {
 	// runs. Handlers decode into SuggestionSteering and hydrate the IDs to
 	// display names on the way out.
 	Steering json.RawMessage
+	// SuggestionCount is the number of ai_suggestions rows still linked to
+	// this run (FK is SET NULL on clear, so this drops to 0 once the admin
+	// wipes the pipeline log). Populated by list queries, zero otherwise.
+	SuggestionCount int
 }
 
 // AISuggestion is one rendered recommendation — either a book to buy (not in

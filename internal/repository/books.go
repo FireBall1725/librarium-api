@@ -821,6 +821,40 @@ func scanBook(s scanner) (*models.Book, error) {
 	return &b, nil
 }
 
+// ListBooksMissingCover returns every book id that has no primary cover
+// image associated with it. Used by the cover-backfill scheduled job to
+// find candidates for metadata enrichment.
+func (r *BookRepo) ListBooksMissingCover(ctx context.Context, limit int) ([]uuid.UUID, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	const q = `
+		SELECT b.id
+		  FROM books b
+		 WHERE NOT EXISTS (
+		         SELECT 1 FROM cover_images ci
+		          WHERE ci.entity_type = 'book'
+		            AND ci.entity_id   = b.id
+		            AND ci.is_primary  = TRUE
+		       )
+		 ORDER BY b.created_at DESC
+		 LIMIT $1`
+	rows, err := r.db.Query(ctx, q, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing books missing cover: %w", err)
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var pgID pgtype.UUID
+		if err := rows.Scan(&pgID); err != nil {
+			return nil, err
+		}
+		out = append(out, uuid.UUID(pgID.Bytes))
+	}
+	return out, rows.Err()
+}
+
 // TitlesByIDs returns a map of book ID → title for the given IDs.
 // Missing IDs are simply absent from the result map.
 func (r *BookRepo) TitlesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {

@@ -28,6 +28,7 @@ const (
 	KindImport         Kind = "import"
 	KindEnrichment     Kind = "enrichment"
 	KindAISuggestions  Kind = "ai_suggestions"
+	KindCoverBackfill  Kind = "cover_backfill"
 )
 
 // TriggerCtx is everything the Enqueue hook of a Definition needs
