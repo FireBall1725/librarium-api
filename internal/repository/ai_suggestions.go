@@ -473,8 +473,15 @@ func (r *AISuggestionsRepo) AppendSuggestions(ctx context.Context, userID, runID
 // 'new' suggestions. Used by the service to dedupe a new run's candidates
 // against what's already in the pool, so a backfill pass doesn't churn on a
 // title the unique index would silently drop anyway.
+//
+// Post-000008 the title lives on the joined books row, not on the suggestion
+// itself.
 func (r *AISuggestionsRepo) ListNewSuggestionKeys(ctx context.Context, userID uuid.UUID) (map[string]struct{}, error) {
-	const q = `SELECT lower(title) FROM ai_suggestions WHERE user_id = $1 AND status = 'new'`
+	const q = `
+		SELECT lower(b.title)
+		  FROM ai_suggestions s
+		  JOIN books b ON b.id = s.book_id
+		 WHERE s.user_id = $1 AND s.status = 'new'`
 	rows, err := r.db.Query(ctx, q, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list new keys: %w", err)
