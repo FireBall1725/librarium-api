@@ -14,6 +14,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/auth"
 	"github.com/fireball1725/librarium-api/internal/background"
 	"github.com/fireball1725/librarium-api/internal/config"
+	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
 	"github.com/jackc/pgx/v5"
@@ -35,6 +36,7 @@ type MetricsCollector interface {
 type RouterDeps struct {
 	AISvc       *service.AIService
 	ProviderSvc *service.ProviderService
+	JobRegistry *jobs.Registry
 }
 
 func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverClient *river.Client[pgx.Tx], metrics MetricsCollector, deps RouterDeps) http.Handler {
@@ -100,6 +102,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	aiHandler := handlers.NewAIHandler(aiSvc)
 	aiUserHandler := handlers.NewAIUserHandler(aiUserSvc)
 	jobsHandler := handlers.NewJobsHandler(jobSvc)
+	unifiedJobsHandler := handlers.NewUnifiedJobsHandler(repository.NewJobRepo(db), deps.JobRegistry)
 	aiSuggestionsHandler := handlers.NewAISuggestionsHandler(aiSuggestionsRepo, riverClient, jobSvc, aiSvc)
 
 	authHandler := handlers.NewAuthHandler(authSvc, preferencesRepo)
@@ -201,6 +204,15 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 
 	// Admin — configurable scheduled jobs (instance admin only)
 	mux.Handle("GET /api/v1/admin/jobs", requireAdmin(http.HandlerFunc(jobsHandler.ListJobs)))
+	// Unified jobs surface (history/detail/cancel/delete + schedules). The
+	// existing per-kind endpoints stay registered below until the web side
+	// of the jobs-framework migration lands (PR 2).
+	mux.Handle("GET /api/v1/admin/jobs/history", requireAdmin(http.HandlerFunc(unifiedJobsHandler.History)))
+	mux.Handle("DELETE /api/v1/admin/jobs/history", requireAdmin(http.HandlerFunc(unifiedJobsHandler.DeleteHistory)))
+	mux.Handle("GET /api/v1/admin/jobs/schedules", requireAdmin(http.HandlerFunc(unifiedJobsHandler.ListSchedules)))
+	mux.Handle("PUT /api/v1/admin/jobs/schedules/{kind}", requireAdmin(http.HandlerFunc(unifiedJobsHandler.UpdateSchedule)))
+	mux.Handle("GET /api/v1/admin/jobs/{id}", requireAdmin(http.HandlerFunc(unifiedJobsHandler.Detail)))
+	mux.Handle("DELETE /api/v1/admin/jobs/{id}", requireAdmin(http.HandlerFunc(unifiedJobsHandler.Delete)))
 	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions", requireAdmin(http.HandlerFunc(jobsHandler.GetAISuggestionsJob)))
 	mux.Handle("PUT /api/v1/admin/jobs/ai-suggestions", requireAdmin(http.HandlerFunc(jobsHandler.UpdateAISuggestionsJob)))
 	mux.Handle("POST /api/v1/admin/jobs/ai-suggestions/run", requireAdmin(http.HandlerFunc(aiSuggestionsHandler.AdminRunSuggestions)))

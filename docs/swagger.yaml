@@ -545,6 +545,35 @@ definitions:
       type:
         type: string
     type: object
+  internal_api_handlers.JobView:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      error:
+        type: string
+      finished_at:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+      progress:
+        items:
+          type: integer
+        type: array
+      schedule_id:
+        type: string
+      started_at:
+        type: string
+      status:
+        type: string
+      triggered_by:
+        type: string
+      updated_at:
+        type: string
+    type: object
   internal_api_handlers.MeSeriesResult:
     properties:
       id:
@@ -631,6 +660,27 @@ definitions:
       triggered_by:
         type: string
       user_id:
+        type: string
+    type: object
+  internal_api_handlers.ScheduleView:
+    properties:
+      config:
+        items:
+          type: integer
+        type: array
+      cron:
+        type: string
+      description:
+        type: string
+      display_name:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      kind:
+        type: string
+      last_fired_at:
         type: string
     type: object
   internal_api_handlers.SteeringView:
@@ -1440,6 +1490,48 @@ paths:
       tags:
       - admin
       - jobs
+  /admin/jobs/{id}:
+    delete:
+      parameters:
+      - description: job id
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Delete a job entirely
+      tags:
+      - admin
+      - jobs
+    get:
+      parameters:
+      - description: job id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              events:
+                type: array
+              job:
+                $ref: '#/definitions/internal_api_handlers.JobView'
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get unified job detail with event log
+      tags:
+      - admin
+      - jobs
   /admin/jobs/ai-suggestions:
     get:
       produces:
@@ -1604,6 +1696,125 @@ paths:
       security:
       - BearerAuth: []
       summary: Get any AI suggestion run (admin)
+      tags:
+      - admin
+      - jobs
+  /admin/jobs/history:
+    delete:
+      parameters:
+      - description: restrict to one kind
+        in: query
+        name: kind
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              deleted:
+                type: integer
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Clear finished job history
+      tags:
+      - admin
+      - jobs
+    get:
+      description: Returns jobs across every kind in a single paginated list.
+      parameters:
+      - description: filter by kind
+        in: query
+        name: kind
+        type: string
+      - description: filter by status
+        in: query
+        name: status
+        type: string
+      - description: RFC3339 or NNd
+        in: query
+        name: since
+        type: string
+      - description: default 50, max 500
+        in: query
+        name: limit
+        type: integer
+      - description: 0-based
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  $ref: '#/definitions/internal_api_handlers.JobView'
+                type: array
+              total:
+                type: integer
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List unified job history
+      tags:
+      - admin
+      - jobs
+  /admin/jobs/schedules:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api_handlers.ScheduleView'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List job schedules
+      tags:
+      - admin
+      - jobs
+  /admin/jobs/schedules/{kind}:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: job kind
+        in: path
+        name: kind
+        required: true
+        type: string
+      - description: schedule
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            config:
+              type: object
+            cron:
+              type: string
+            enabled:
+              type: boolean
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api_handlers.ScheduleView'
+      security:
+      - BearerAuth: []
+      summary: Upsert a job schedule
       tags:
       - admin
       - jobs

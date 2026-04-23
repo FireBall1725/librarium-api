@@ -37,11 +37,23 @@ func (r *ImportJobRepo) CreateJob(ctx context.Context, job *models.ImportJob, it
 	}
 	defer tx.Rollback(ctx)
 
+	// Create the umbrella jobs row first so the import row can reference it
+	// via job_id. Kind is "import"; status mirrors the import row.
+	var umbrellaID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO jobs (kind, status, triggered_by, created_by)
+		VALUES ('import', $1, 'user', $2)
+		RETURNING id`,
+		string(job.Status), job.CreatedBy,
+	).Scan(&umbrellaID); err != nil {
+		return fmt.Errorf("creating umbrella job: %w", err)
+	}
+
 	const qJob = `
-		INSERT INTO import_jobs (id, library_id, created_by, status, total_rows, options)
-		VALUES ($1, $2, $3, $4, $5, $6)`
+		INSERT INTO import_jobs (id, job_id, library_id, created_by, status, total_rows, options)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	if _, err := tx.Exec(ctx, qJob,
-		job.ID, job.LibraryID, job.CreatedBy,
+		job.ID, umbrellaID, job.LibraryID, job.CreatedBy,
 		string(job.Status), job.TotalRows, optionsJSON,
 	); err != nil {
 		return fmt.Errorf("inserting import job: %w", err)
@@ -139,14 +151,36 @@ func (r *ImportJobRepo) listItems(ctx context.Context, jobID uuid.UUID) ([]model
 }
 
 // UpdateJobStatus updates the status and counters of a job.
-// It never overwrites a 'cancelled' status so a user cancel cannot be undone by the worker.
+// It never overwrites a 'cancelled' status so a user cancel cannot be
+// undone by the worker. Mirrors the status and progress counters to the
+// umbrella jobs row so unified history stays in sync.
 func (r *ImportJobRepo) UpdateJobStatus(ctx context.Context, id uuid.UUID, status models.ImportJobStatus, processed, failed, skipped int) error {
 	const q = `
 		UPDATE import_jobs
 		SET status = $2, processed_rows = $3, failed_rows = $4, skipped_rows = $5, updated_at = now()
-		WHERE id = $1 AND status != 'cancelled'`
-	if _, err := r.db.Exec(ctx, q, id, string(status), processed, failed, skipped); err != nil {
+		WHERE id = $1 AND status != 'cancelled'
+		RETURNING job_id, total_rows`
+	var (
+		pgJobID pgtype.UUID
+		total   int
+	)
+	if err := r.db.QueryRow(ctx, q, id, string(status), processed, failed, skipped).Scan(&pgJobID, &total); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // already cancelled / missing
+		}
 		return fmt.Errorf("updating import job status: %w", err)
+	}
+	if pgJobID.Valid {
+		const updJob = `
+			UPDATE jobs
+			   SET status      = $2,
+			       progress    = jsonb_build_object('processed', $3::int, 'failed', $4::int, 'skipped', $5::int, 'total', $6::int),
+			       started_at  = CASE WHEN $2 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
+			       finished_at = CASE WHEN $2 IN ('completed','failed','cancelled') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
+			 WHERE id = $1`
+		if _, err := r.db.Exec(ctx, updJob, uuid.UUID(pgJobID.Bytes), string(status), processed, failed, skipped, total); err != nil {
+			return fmt.Errorf("mirroring status to umbrella job: %w", err)
+		}
 	}
 	return nil
 }
