@@ -15,7 +15,13 @@ import (
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 )
+
+// cronParser parses the standard 5-field expressions the UI emits. Kept
+// package-level so repeated calls don't reallocate; Parse itself is
+// stateless so this is safe to reuse.
+var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
 // UnifiedJobsHandler backs the /admin/jobs/history surface — one entry
 // point that returns every kind of job in one shape. Kind-specific
@@ -212,6 +218,10 @@ func (h *UnifiedJobsHandler) DeleteHistory(w http.ResponseWriter, r *http.Reques
 // ─── Schedules ───────────────────────────────────────────────────────────────
 
 // ScheduleView is a job_schedules row enriched with registry display info.
+// next_fire_at is computed server-side from the cron expression + the
+// schedule row's last_fired_at (or created_at when never fired). The UI
+// uses it to render a live countdown and sort; keeping the calculation
+// server-side avoids cross-timezone weirdness on the client.
 type ScheduleView struct {
 	ID          string          `json:"id"`
 	Kind        string          `json:"kind"`
@@ -221,6 +231,7 @@ type ScheduleView struct {
 	Enabled     bool            `json:"enabled"`
 	Config      json.RawMessage `json:"config"`
 	LastFiredAt *time.Time      `json:"last_fired_at,omitempty"`
+	NextFireAt  *time.Time      `json:"next_fire_at,omitempty"`
 }
 
 // ListSchedules godoc
@@ -256,9 +267,39 @@ func (h *UnifiedJobsHandler) ListSchedules(w http.ResponseWriter, r *http.Reques
 		if len(v.Config) == 0 {
 			v.Config = json.RawMessage("{}")
 		}
+		// Compute next fire only for enabled schedules — a disabled row
+		// has no meaningful "next run" and the UI can render a dash.
+		if s.Enabled {
+			if t, ok := computeNextFire(s); ok {
+				v.NextFireAt = &t
+			}
+		}
 		out = append(out, v)
 	}
 	respond.JSON(w, http.StatusOK, out)
+}
+
+// computeNextFire parses the schedule's cron expression and returns the
+// next scheduled fire time based on last_fired_at (or created_at when
+// the schedule has never fired). Mirrors the scheduler's own logic so
+// the UI sees the same next-run the scheduler will actually use.
+func computeNextFire(s *models.JobSchedule) (time.Time, bool) {
+	sched, err := cronParser.Parse(s.Cron)
+	if err != nil {
+		return time.Time{}, false
+	}
+	prev := s.CreatedAt
+	if s.LastFiredAt != nil {
+		prev = *s.LastFiredAt
+	}
+	next := sched.Next(prev)
+	// If the computed next is already in the past (admin re-enabled a
+	// schedule whose last fire was long ago), roll forward to the next
+	// fire from "now".
+	if next.Before(time.Now()) {
+		next = sched.Next(time.Now())
+	}
+	return next, true
 }
 
 // UpdateSchedule godoc
