@@ -432,14 +432,16 @@ func (r *AISuggestionsRepo) AppendSuggestions(ctx context.Context, userID, runID
 	// would lose AI output order inside a single run.
 	const ins = `
 		INSERT INTO ai_suggestions (user_id, run_id, type, book_id, book_edition_id,
-			title, author, isbn, cover_url, reasoning, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new', clock_timestamp())
+			reasoning, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'new', clock_timestamp())
 		ON CONFLICT DO NOTHING`
 	for _, it := range items {
+		if it.BookID == nil {
+			return fmt.Errorf("insert suggestion: book_id required (type=%s title=%q)", it.Type, it.Title)
+		}
 		if _, err := tx.Exec(ctx, ins, userID, runID, it.Type,
 			it.BookID, it.BookEditionID,
-			it.Title, nilIfEmpty(it.Author), nilIfEmpty(it.ISBN),
-			nilIfEmpty(it.CoverURL), nilIfEmpty(it.Reasoning),
+			nilIfEmpty(it.Reasoning),
 		); err != nil {
 			return fmt.Errorf("insert suggestion: %w", err)
 		}
@@ -471,8 +473,15 @@ func (r *AISuggestionsRepo) AppendSuggestions(ctx context.Context, userID, runID
 // 'new' suggestions. Used by the service to dedupe a new run's candidates
 // against what's already in the pool, so a backfill pass doesn't churn on a
 // title the unique index would silently drop anyway.
+//
+// Post-000008 the title lives on the joined books row, not on the suggestion
+// itself.
 func (r *AISuggestionsRepo) ListNewSuggestionKeys(ctx context.Context, userID uuid.UUID) (map[string]struct{}, error) {
-	const q = `SELECT lower(title) FROM ai_suggestions WHERE user_id = $1 AND status = 'new'`
+	const q = `
+		SELECT lower(b.title)
+		  FROM ai_suggestions s
+		  JOIN books b ON b.id = s.book_id
+		 WHERE s.user_id = $1 AND s.status = 'new'`
 	rows, err := r.db.Query(ctx, q, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list new keys: %w", err)
@@ -500,11 +509,36 @@ func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUI
 	// client. Under M2M a book can be in multiple libraries; we pick the
 	// earliest-added of the user's memberships via a LATERAL subquery. buy
 	// suggestions have book_id NULL so the subquery returns NULL for them.
+	// Book metadata comes from the joined books row now (denorm columns
+	// dropped in 000008). title/author/isbn/cover_url on the suggestion
+	// are derived: title from books.title, author from the book's first
+	// author contributor, isbn from the book's primary edition.
 	q := `
 		SELECT s.id, s.user_id, s.run_id, s.type, s.book_id, s.book_edition_id,
-		       s.title, COALESCE(s.author,''), COALESCE(s.isbn,''), COALESCE(s.cover_url,''),
+		       b.title,
+		       COALESCE((
+		           SELECT c.name
+		             FROM book_contributors bc
+		             JOIN contributors c ON c.id = bc.contributor_id
+		            WHERE bc.book_id = b.id AND bc.role = 'author'
+		            ORDER BY bc.display_order
+		            LIMIT 1
+		       ), '') AS author,
+		       COALESCE((
+		           SELECT COALESCE(NULLIF(e.isbn_13,''), NULLIF(e.isbn_10,''))
+		             FROM book_editions e
+		            WHERE e.book_id = b.id
+		            ORDER BY e.is_primary DESC, e.created_at ASC
+		            LIMIT 1
+		       ), '') AS isbn,
+		       CASE WHEN EXISTS(
+		           SELECT 1 FROM cover_images ci
+		            WHERE ci.entity_type = 'book' AND ci.entity_id = b.id AND ci.is_primary = true
+		       ) THEN '/api/v1/books/' || b.id::text || '/cover?v=' || EXTRACT(EPOCH FROM b.updated_at)::bigint::text
+		            ELSE '' END AS cover_url,
 		       COALESCE(s.reasoning,''), s.status, s.created_at, inlib.library_id
 		FROM ai_suggestions s
+		JOIN books b ON b.id = s.book_id
 		LEFT JOIN LATERAL (
 		    SELECT lb.library_id
 		    FROM library_books lb
@@ -548,6 +582,23 @@ func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUI
 	return out, rows.Err()
 }
 
+// DeleteForActionTaken removes all ai_suggestions rows for (user, type, book)
+// regardless of their current status. Used for the "remove on action" rules:
+//   - type="read_next" when the user logs a read on any edition of the book
+//   - type="buy"       when the user adds the book to a library
+//
+// Returns the number of suggestion rows deleted (0 if none matched — safe to
+// call unconditionally from a hook that fires on every interaction upsert).
+func (r *AISuggestionsRepo) DeleteForActionTaken(ctx context.Context, userID, bookID uuid.UUID, suggestionType string) (int64, error) {
+	const q = `DELETE FROM ai_suggestions
+	            WHERE user_id = $1 AND book_id = $2 AND type = $3`
+	tag, err := r.db.Exec(ctx, q, userID, bookID, suggestionType)
+	if err != nil {
+		return 0, fmt.Errorf("delete suggestions on action: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // UpdateSuggestionStatus changes the user-visible status flag. Returns
 // ErrNotFound if the row doesn't exist or doesn't belong to the caller.
 func (r *AISuggestionsRepo) UpdateSuggestionStatus(ctx context.Context, id, userID uuid.UUID, status string) error {
@@ -563,13 +614,37 @@ func (r *AISuggestionsRepo) UpdateSuggestionStatus(ctx context.Context, id, user
 }
 
 // GetSuggestion fetches one suggestion scoped to a user (for the block flow,
-// which needs title/author/isbn to persist).
+// which needs title/author/isbn to persist). Title/author/isbn are hydrated
+// from the joined books + editions rows now that the denorm columns are
+// gone.
 func (r *AISuggestionsRepo) GetSuggestion(ctx context.Context, id, userID uuid.UUID) (*models.AISuggestion, error) {
 	const q = `
-		SELECT id, user_id, run_id, type, book_id, book_edition_id,
-		       title, COALESCE(author,''), COALESCE(isbn,''), COALESCE(cover_url,''),
-		       COALESCE(reasoning,''), status, created_at
-		FROM ai_suggestions WHERE id = $1 AND user_id = $2`
+		SELECT s.id, s.user_id, s.run_id, s.type, s.book_id, s.book_edition_id,
+		       b.title,
+		       COALESCE((
+		           SELECT c.name
+		             FROM book_contributors bc
+		             JOIN contributors c ON c.id = bc.contributor_id
+		            WHERE bc.book_id = b.id AND bc.role = 'author'
+		            ORDER BY bc.display_order
+		            LIMIT 1
+		       ), '') AS author,
+		       COALESCE((
+		           SELECT COALESCE(NULLIF(e.isbn_13,''), NULLIF(e.isbn_10,''))
+		             FROM book_editions e
+		            WHERE e.book_id = b.id
+		            ORDER BY e.is_primary DESC, e.created_at ASC
+		            LIMIT 1
+		       ), '') AS isbn,
+		       CASE WHEN EXISTS(
+		           SELECT 1 FROM cover_images ci
+		            WHERE ci.entity_type = 'book' AND ci.entity_id = b.id AND ci.is_primary = true
+		       ) THEN '/api/v1/books/' || b.id::text || '/cover?v=' || EXTRACT(EPOCH FROM b.updated_at)::bigint::text
+		            ELSE '' END AS cover_url,
+		       COALESCE(s.reasoning,''), s.status, s.created_at
+		FROM ai_suggestions s
+		JOIN books b ON b.id = s.book_id
+		WHERE s.id = $1 AND s.user_id = $2`
 	s := &models.AISuggestion{}
 	err := r.db.QueryRow(ctx, q, id, userID).Scan(
 		&s.ID, &s.UserID, &s.RunID, &s.Type,

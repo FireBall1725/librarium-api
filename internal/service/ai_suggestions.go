@@ -18,6 +18,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/providers"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrAIDisabled signals that a suggestions run was skipped because the AI
@@ -52,16 +53,23 @@ const (
 // providers, backfill if buy candidates fell short, persist the batch.
 type SuggestionsService struct {
 	repo       *repository.AISuggestionsRepo
+	books      *repository.BookRepo
+	editions   *repository.EditionRepo
+	bookSvc    *BookService
 	aiRegistry *ai.Registry
 	aiSvc      *AIService
 	jobSvc     *JobService
 	userSvc    *AIUserService
 	providers  *ProviderService
-	pool       any // retained if we need transactions later
+	pool       *pgxpool.Pool
 }
 
 func NewSuggestionsService(
+	pool *pgxpool.Pool,
 	repo *repository.AISuggestionsRepo,
+	books *repository.BookRepo,
+	editions *repository.EditionRepo,
+	bookSvc *BookService,
 	aiRegistry *ai.Registry,
 	aiSvc *AIService,
 	jobSvc *JobService,
@@ -69,7 +77,11 @@ func NewSuggestionsService(
 	providers *ProviderService,
 ) *SuggestionsService {
 	return &SuggestionsService{
+		pool:       pool,
 		repo:       repo,
+		books:      books,
+		editions:   editions,
+		bookSvc:    bookSvc,
 		aiRegistry: aiRegistry,
 		aiSvc:      aiSvc,
 		jobSvc:     jobSvc,
@@ -299,7 +311,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	}
 
 	// ── Pass 2: enrich & filter ──────────────────────────────────────────────
-	buyItems, rejectedBuyTitles := s.enrichBuy(ctx, runID, user.LibraryID, buyParsed, cfg.MaxBuyPerUser, existingKeys)
+	buyItems, rejectedBuyTitles := s.enrichBuy(ctx, runID, userID, user.LibraryID, buyParsed, cfg.MaxBuyPerUser, existingKeys)
 	readNextItems := s.resolveReadNext(ctx, runID, user.LibraryID, titles, readNextParsed, cfg.MaxReadNextPerUser, existingKeys)
 
 	// ── Pass 3: backfill if buy fell short ───────────────────────────────────
@@ -362,7 +374,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		for _, it := range buyItems {
 			existingKeys[normalizeTitle(it.Title)] = struct{}{}
 		}
-		bfItems, bfRejected := s.enrichBuy(ctx, runID, user.LibraryID, bfParsed, cfg.MaxBuyPerUser-len(buyItems), existingKeys)
+		bfItems, bfRejected := s.enrichBuy(ctx, runID, userID, user.LibraryID, bfParsed, cfg.MaxBuyPerUser-len(buyItems), existingKeys)
 		buyItems = append(buyItems, bfItems...)
 		rejectedBuyTitles = append(rejectedBuyTitles, bfRejected...)
 	}
@@ -418,7 +430,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 // book) are applied here too. Emits an enrichment_decision event per candidate.
 // `seen` is mutated to include every accepted title's normalized key so the
 // caller can feed the same set into a subsequent backfill without redos.
-func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, libraryID uuid.UUID, parsed []ParsedSuggestion, max int, seen map[string]struct{}) ([]repository.SuggestionInput, []string) {
+func (s *SuggestionsService) enrichBuy(ctx context.Context, runID, userID uuid.UUID, libraryID uuid.UUID, parsed []ParsedSuggestion, max int, seen map[string]struct{}) ([]repository.SuggestionInput, []string) {
 	var accepted []repository.SuggestionInput
 	var rejected []string
 	for _, p := range parsed {
@@ -460,6 +472,7 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 		// search. Models hallucinate ISBNs far more often than they hallucinate
 		// the entire book, so recovering from a bad ISBN is high-value.
 		var item *repository.SuggestionInput
+		var itemMeta floatingBookMetadata
 		var primaryReason string
 		if p.ISBN != "" {
 			merged, err := s.providers.LookupISBNMerged(ctx, p.ISBN)
@@ -485,6 +498,29 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 					it.CoverURL = merged.Covers[0].CoverURL
 				}
 				item = &it
+				itemMeta = floatingBookMetadata{
+					Title:       merged.Title.Value,
+					ISBN10:      fieldValue(merged.ISBN10),
+					ISBN13:      fieldValueOr(merged.ISBN13, p.ISBN),
+					Description: fieldValue(merged.Description),
+					Publisher:   fieldValue(merged.Publisher),
+					PublishDate: fieldValue(merged.PublishDate),
+					Language:    fieldValue(merged.Language),
+					PageCount:   fieldValuePageCount(merged.PageCount),
+				}
+				if len(merged.Covers) > 0 {
+					itemMeta.CoverURL = merged.Covers[0].CoverURL
+				}
+				if merged.Subtitle != nil {
+					itemMeta.Subtitle = merged.Subtitle.Value
+				}
+				if merged.Authors != nil && merged.Authors.Value != "" {
+					for _, a := range strings.Split(merged.Authors.Value, ",") {
+						if trimmed := strings.TrimSpace(a); trimmed != "" {
+							itemMeta.Authors = append(itemMeta.Authors, trimmed)
+						}
+					}
+				}
 			}
 		} else {
 			primaryReason = "missing_isbn"
@@ -538,6 +574,38 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 				CoverURL:  fallback.CoverURL,
 				Reasoning: p.Reason,
 			}
+			itemMeta = floatingBookMetadata{
+				Title:       fallback.Title,
+				Authors:     fallback.Authors,
+				ISBN13:      fallback.ISBN13,
+				ISBN10:      fallback.ISBN10,
+				Description: fallback.Description,
+				Publisher:   fallback.Publisher,
+				PublishDate: fallback.PublishDate,
+				Language:    fallback.Language,
+				PageCount:   fallback.PageCount,
+				CoverURL:    fallback.CoverURL,
+			}
+		}
+
+		// Resolve or create a floating book + edition for this buy suggestion
+		// so the suggestion has a stable book_id clients can use for detail
+		// views. A buy suggestion without a book_id now fails to persist
+		// (post-000008 schema change). Populates the full metadata from the
+		// provider result so the BookDetailPage renders with author,
+		// description, publisher, etc. immediately.
+		bookID, editionID, bookErr := s.resolveFloatingBook(ctx, userID, itemMeta)
+		if bookErr != nil {
+			rejected = append(rejected, p.Title)
+			decision["outcome"] = "rejected"
+			decision["reason"] = "floating_book_create_failed"
+			decision["floating_book_error"] = bookErr.Error()
+			s.emit(ctx, runID, "enrichment_decision", decision)
+			continue
+		}
+		item.BookID = &bookID
+		if editionID != uuid.Nil {
+			item.BookEditionID = &editionID
 		}
 
 		seen[normalizeTitle(item.Title)] = struct{}{}
@@ -546,6 +614,216 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 		s.emit(ctx, runID, "enrichment_decision", decision)
 	}
 	return accepted, rejected
+}
+
+// floatingBookMetadata carries the enrichment result into resolveFloatingBook
+// so we can populate the full book + edition + contributors on create rather
+// than leaving the row empty until a follow-up enrichment pass.
+type floatingBookMetadata struct {
+	Title       string
+	Subtitle    string
+	Description string
+	Authors     []string
+	Publisher   string
+	PublishDate string // free-form; parsed leniently
+	Language    string
+	PageCount   *int
+	ISBN10      string
+	ISBN13      string
+	CoverURL    string // external URL; downloaded and stored after the book row exists
+}
+
+// resolveFloatingBook looks up an existing book + edition by ISBN (global,
+// not library-scoped) and returns its IDs. If no edition with this ISBN
+// exists, creates a new floating book (no library_books rows) populated
+// with every metadata field we already have from the enrichment result —
+// description, publisher, contributors (authors as book_contributors rows),
+// language, publish date, page count — so the BookDetailPage renders
+// something meaningful immediately rather than a bare title.
+//
+// A "floating" book is one with zero rows in the library_books junction —
+// it's a real work in the catalog that simply hasn't been added to any
+// library yet. Suggestions-as-books uses this to hang full BookPage
+// metadata + BookFinder affordances off a `buy` suggestion.
+//
+// Cover image download is not handled here — the provider's CoverURL is
+// an external URL; copying it into cover storage is a separate concern
+// owned by the metadata enrichment worker. Floating books render with
+// their title-initial fallback until a library acquisition triggers a
+// full enrichment pass.
+func (s *SuggestionsService) resolveFloatingBook(ctx context.Context, callerID uuid.UUID, meta floatingBookMetadata) (uuid.UUID, uuid.UUID, error) {
+	// Prefer ISBN-13, fall back to ISBN-10 for the global lookup.
+	lookupISBN := meta.ISBN13
+	if lookupISBN == "" {
+		lookupISBN = meta.ISBN10
+	}
+	if lookupISBN != "" {
+		if existing, err := s.editions.FindByISBN(ctx, lookupISBN); err == nil && existing != nil {
+			return existing.BookID, existing.ID, nil
+		}
+	}
+
+	mediaTypeID, err := s.defaultMediaTypeID(ctx)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("resolving default media type: %w", err)
+	}
+
+	// Resolve author names to contributor IDs up-front (outside the tx so
+	// a search/insert there doesn't block the transaction longer than
+	// necessary).
+	type contribResolve struct {
+		id   uuid.UUID
+		role string
+	}
+	var contribs []contribResolve
+	for _, name := range meta.Authors {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		c, err := s.findOrCreateContributor(ctx, name)
+		if err != nil {
+			// Non-fatal — skip this author and keep going. A thin book
+			// page beats a failed run.
+			slog.Warn("resolving author contributor", "name", name, "error", err)
+			continue
+		}
+		contribs = append(contribs, contribResolve{id: c.ID, role: "author"})
+	}
+
+	var publishDate *time.Time
+	if meta.PublishDate != "" {
+		for _, layout := range []string{"2006-01-02", "2006-01", "2006", "January 2, 2006", "Jan 2, 2006"} {
+			if t, perr := time.Parse(layout, meta.PublishDate); perr == nil {
+				publishDate = &t
+				break
+			}
+		}
+	}
+
+	bookID := uuid.New()
+	editionID := uuid.New()
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := s.books.Create(ctx, tx, bookID,
+		meta.Title, meta.Subtitle, mediaTypeID, meta.Description,
+	); err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("creating floating book: %w", err)
+	}
+
+	for i, c := range contribs {
+		if err := s.books.EnsureBookContributor(ctx, tx, bookID, c.id, c.role); err != nil {
+			return uuid.Nil, uuid.Nil, fmt.Errorf("linking contributor: %w", err)
+		}
+		_ = i // display_order is handled by EnsureBookContributor
+	}
+
+	if err := s.editions.Create(ctx, tx, editionID, bookID,
+		models.EditionFormatPaperback, // placeholder until real enrichment
+		meta.Language, "", "", // language, edition_name, narrator
+		meta.Publisher, publishDate,
+		meta.ISBN10, meta.ISBN13, "", // description lives on book, not edition
+		nil,            // duration_seconds
+		meta.PageCount, // page_count
+		true,           // is_primary
+		nil,            // narrator_contributor_id
+	); err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("creating floating edition: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, uuid.Nil, fmt.Errorf("commit: %w", err)
+	}
+
+	// Fetch the cover after the book row exists. Non-fatal on failure —
+	// users can re-enrich later when they add the book to a library.
+	// cover_images.created_by FKs to users(id), so we attribute to the user
+	// whose suggestion this is rather than uuid.Nil.
+	if meta.CoverURL != "" && s.bookSvc != nil {
+		if ferr := s.bookSvc.FetchCoverFromURL(ctx, bookID, callerID, meta.CoverURL); ferr != nil {
+			slog.Warn("fetching floating-book cover",
+				"book_id", bookID, "url", meta.CoverURL, "error", ferr)
+		}
+	}
+
+	return bookID, editionID, nil
+}
+
+// fieldValue returns the string value of a FieldResult, or "" when the
+// provider merge didn't agree on one.
+func fieldValue(f *providers.FieldResult) string {
+	if f == nil {
+		return ""
+	}
+	return f.Value
+}
+
+// fieldValueOr returns the FieldResult's value, or a fallback string when the
+// field is absent.
+func fieldValueOr(f *providers.FieldResult, fallback string) string {
+	if f == nil || f.Value == "" {
+		return fallback
+	}
+	return f.Value
+}
+
+// fieldValuePageCount parses a FieldResult string as a page count, returning
+// a *int or nil when absent/unparseable. The merged page_count field is
+// stringified; we re-convert here.
+func fieldValuePageCount(f *providers.FieldResult) *int {
+	if f == nil || f.Value == "" {
+		return nil
+	}
+	var n int
+	if _, err := fmt.Sscanf(f.Value, "%d", &n); err != nil || n <= 0 {
+		return nil
+	}
+	return &n
+}
+
+// findOrCreateContributor looks up a contributor by exact name match (case
+// insensitive) and returns it, or creates one if none exists.
+func (s *SuggestionsService) findOrCreateContributor(ctx context.Context, name string) (*models.Contributor, error) {
+	// Lazy contributor repo — we don't want a wiring change just for this
+	// one helper; route through the existing BookRepo since we already have
+	// it, via raw pool access.
+	const findQ = `SELECT id FROM contributors WHERE lower(name) = lower($1) LIMIT 1`
+	var pgID uuid.UUID
+	err := s.pool.QueryRow(ctx, findQ, name).Scan(&pgID)
+	if err == nil {
+		return &models.Contributor{ID: pgID, Name: name}, nil
+	}
+	const insertQ = `INSERT INTO contributors (id, name, sort_name, is_corporate) VALUES ($1, $2, $3, false) RETURNING id`
+	newID := uuid.New()
+	sortName := DeriveSortName(name)
+	if err := s.pool.QueryRow(ctx, insertQ, newID, name, sortName).Scan(&pgID); err != nil {
+		return nil, err
+	}
+	return &models.Contributor{ID: pgID, Name: name}, nil
+}
+
+// defaultMediaTypeID returns the id of the "Novel" media type (or the first
+// media type in the table if Novel isn't present) for use when creating
+// floating books where we don't yet know the format.
+func (s *SuggestionsService) defaultMediaTypeID(ctx context.Context) (uuid.UUID, error) {
+	types, err := s.books.ListMediaTypes(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	for _, t := range types {
+		if strings.EqualFold(t.Name, "novel") {
+			return t.ID, nil
+		}
+	}
+	if len(types) > 0 {
+		return types[0].ID, nil
+	}
+	return uuid.Nil, fmt.Errorf("no media types defined")
 }
 
 // findByTitleAuthor is the fallback path when ISBN lookup fails or mismatches.

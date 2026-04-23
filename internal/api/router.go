@@ -90,7 +90,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 		RegistrationEnabled: cfg.RegistrationEnabled,
 	})
 	libSvc := service.NewLibraryService(db, libraryRepo, membershipRepo, roleRepo, userRepo, shelfRepo)
-	bookSvc := service.NewBookService(db, bookRepo, libraryBookRepo, contributorRepo, editionRepo, tagRepo, genreRepo, coverRepo, cfg.CoverStoragePath)
+	bookSvc := service.NewBookService(db, bookRepo, libraryBookRepo, contributorRepo, editionRepo, tagRepo, genreRepo, coverRepo, aiSuggestionsRepo, cfg.CoverStoragePath)
 	editionFileSvc := service.NewEditionFileService(bookRepo, editionRepo, editionFileRepo, storageLocationRepo, cfg.EbookStoragePath, cfg.AudiobookStoragePath, cfg.EbookPathTemplate, cfg.AudiobookPathTemplate)
 	shelfSvc := service.NewShelfService(shelfRepo, tagRepo)
 	importSvc := service.NewImportService(importJobRepo, riverClient)
@@ -290,6 +290,16 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	// Library-agnostic cover route for books that may live in multiple
 	// libraries (or none — floating suggestion books). Just needs auth.
 	mux.Handle("GET /api/v1/books/{book_id}/cover", requireAuth(http.HandlerFunc(bookHandler.ServeBookCover)))
+	// Library-agnostic book reads for BookDetailPage on floating suggestion
+	// books. Same handlers as their library-scoped counterparts — those only
+	// consume book_id.
+	mux.Handle("GET /api/v1/books/{book_id}", requireAuth(http.HandlerFunc(bookHandler.GetBook)))
+	mux.Handle("GET /api/v1/books/{book_id}/editions", requireAuth(http.HandlerFunc(bookHandler.ListEditions)))
+	// Per-book re-enrichment against a floating book still needs a library
+	// context (enrichment_batches.library_id is non-null today). Add that
+	// endpoint in a follow-up when either (a) we make library_id nullable on
+	// the batch, or (b) we decide on a picker UX. For now, users can
+	// re-enrich after adding the book to a library.
 	mux.Handle("POST /api/v1/libraries/{library_id}/books/{book_id}/cover/fetch", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.FetchBookCover)))
 	mux.Handle("PUT /api/v1/libraries/{library_id}/books/{book_id}/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.UploadBookCover)))
 	mux.Handle("DELETE /api/v1/libraries/{library_id}/books/{book_id}/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.DeleteBookCover)))
