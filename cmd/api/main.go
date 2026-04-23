@@ -51,6 +51,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/tui"
 	"github.com/fireball1725/librarium-api/internal/version"
 	"github.com/fireball1725/librarium-api/internal/workers"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -286,9 +287,99 @@ func main() {
 		Description: "Fetches missing metadata / covers from providers for a batch of books.",
 		Schedulable: false,
 	})
+	// Cover backfill — first scheduled kind shipped through the unified
+	// framework. Walks the catalog for books with no primary cover and
+	// queues cover-only enrichment batches for them, chunked to avoid
+	// one giant job. Non-fatal per-chunk — a single failing ISBN lookup
+	// shouldn't stall the sweep.
+	const coverBackfillChunk = 50
+	coverBookRepo := repository.NewBookRepo(pool)
+	coverEnrichmentRepo := repository.NewEnrichmentBatchRepo(pool)
+	jobRegistry.Register(&jobs.Definition{
+		Kind:        jobs.KindCoverBackfill,
+		DisplayName: "Cover backfill",
+		Description: "Finds books without a cover image and queues cover-only metadata enrichment for them.",
+		Schedulable: true,
+		DefaultCron: "0 3 * * *",
+		Enqueue: func(ctx context.Context, trig jobs.TriggerCtx, _ json.RawMessage) error {
+			ids, err := coverBookRepo.ListBooksMissingCover(ctx, 1000)
+			if err != nil {
+				return fmt.Errorf("list books missing cover: %w", err)
+			}
+			if len(ids) == 0 {
+				slog.Info("cover backfill: no books missing covers")
+				return nil
+			}
+			for i := 0; i < len(ids); i += coverBackfillChunk {
+				end := i + coverBackfillChunk
+				if end > len(ids) {
+					end = len(ids)
+				}
+				chunk := ids[i:end]
+				batch := &models.EnrichmentBatch{
+					ID:         uuid.New(),
+					LibraryID:  nil, // catalog-wide — not scoped to a library
+					CreatedBy:  uuid.Nil,
+					Type:       models.EnrichmentBatchTypeCover,
+					Force:      false,
+					Status:     models.EnrichmentBatchPending,
+					BookIDs:    chunk,
+					TotalBooks: len(chunk),
+				}
+				if err := coverEnrichmentRepo.Create(ctx, batch); err != nil {
+					slog.Warn("cover backfill: creating batch failed", "error", err)
+					continue
+				}
+				items := make([]models.EnrichmentBatchItem, 0, len(chunk))
+				for _, id := range chunk {
+					bookID := id
+					items = append(items, models.EnrichmentBatchItem{
+						ID:      uuid.New(),
+						BatchID: batch.ID,
+						BookID:  &bookID,
+						Status:  models.EnrichmentItemPending,
+					})
+				}
+				if err := coverEnrichmentRepo.CreateItems(ctx, items); err != nil {
+					slog.Warn("cover backfill: creating items failed", "batch_id", batch.ID, "error", err)
+					continue
+				}
+				if _, err := riverClient.Insert(ctx,
+					models.EnrichmentBatchJobArgs{BatchID: batch.ID}, nil); err != nil {
+					slog.Warn("cover backfill: enqueue failed", "batch_id", batch.ID, "error", err)
+				}
+			}
+			slog.Info("cover backfill: enqueued", "books", len(ids))
+			return nil
+		},
+	})
 
 	// Kick the scheduler off after registry is populated.
 	jobRepoForSched := repository.NewJobRepo(pool)
+	// Seed default schedule rows for any schedulable kind that doesn't
+	// have one yet. Ensures new kinds (e.g. cover_backfill) show up in
+	// the admin UI on first boot after upgrade without a custom
+	// migration per kind — the Definition itself carries the default
+	// cron, and the seed is idempotent via the kind UNIQUE constraint.
+	for _, def := range jobRegistry.All() {
+		if !def.Schedulable {
+			continue
+		}
+		if _, err := jobRepoForSched.GetSchedule(baseCtx, string(def.Kind)); err == nil {
+			continue // already there
+		}
+		cron := def.DefaultCron
+		if cron == "" {
+			cron = "0 3 * * *"
+		}
+		if err := jobRepoForSched.UpsertSchedule(baseCtx, &models.JobSchedule{
+			Kind:    string(def.Kind),
+			Cron:    cron,
+			Enabled: false, // admin flips this on from the UI
+		}); err != nil {
+			slog.Warn("seeding schedule failed", "kind", def.Kind, "error", err)
+		}
+	}
 	scheduler := jobs.NewScheduler(jobRegistry, jobRepoForSched)
 	go scheduler.Run(baseCtx)
 
