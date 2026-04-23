@@ -139,13 +139,9 @@ func main() {
 	aiUserSvc := service.NewAIUserService(repository.NewUserAISettingsRepo(pool))
 	jobSvc := service.NewJobService(settingsRepo)
 	aiSuggestionsRepo := repository.NewAISuggestionsRepo(pool)
-	suggestionsSvc := service.NewSuggestionsService(
-		pool,
-		aiSuggestionsRepo,
-		repository.NewBookRepo(pool),
-		repository.NewEditionRepo(pool),
-		aiRegistry, aiSvc, jobSvc, aiUserSvc, providerSvc,
-	)
+	// workerBookSvc is constructed immediately below; the suggestions worker
+	// needs it to fetch floating-book covers after creation. Build workerBookSvc
+	// first so we can pass it through.
 
 	workerBookSvc := service.NewBookService(
 		pool,
@@ -158,6 +154,14 @@ func main() {
 		repository.NewCoverRepo(pool),
 		aiSuggestionsRepo,
 		cfg.CoverStoragePath,
+	)
+	suggestionsSvc := service.NewSuggestionsService(
+		pool,
+		aiSuggestionsRepo,
+		repository.NewBookRepo(pool),
+		repository.NewEditionRepo(pool),
+		workerBookSvc,
+		aiRegistry, aiSvc, jobSvc, aiUserSvc, providerSvc,
 	)
 	importWorker := workers.NewImportWorker(
 		pool,

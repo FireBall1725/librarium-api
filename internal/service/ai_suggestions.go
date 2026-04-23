@@ -55,6 +55,7 @@ type SuggestionsService struct {
 	repo       *repository.AISuggestionsRepo
 	books      *repository.BookRepo
 	editions   *repository.EditionRepo
+	bookSvc    *BookService
 	aiRegistry *ai.Registry
 	aiSvc      *AIService
 	jobSvc     *JobService
@@ -68,6 +69,7 @@ func NewSuggestionsService(
 	repo *repository.AISuggestionsRepo,
 	books *repository.BookRepo,
 	editions *repository.EditionRepo,
+	bookSvc *BookService,
 	aiRegistry *ai.Registry,
 	aiSvc *AIService,
 	jobSvc *JobService,
@@ -79,6 +81,7 @@ func NewSuggestionsService(
 		repo:       repo,
 		books:      books,
 		editions:   editions,
+		bookSvc:    bookSvc,
 		aiRegistry: aiRegistry,
 		aiSvc:      aiSvc,
 		jobSvc:     jobSvc,
@@ -505,6 +508,9 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 					Language:    fieldValue(merged.Language),
 					PageCount:   fieldValuePageCount(merged.PageCount),
 				}
+				if len(merged.Covers) > 0 {
+					itemMeta.CoverURL = merged.Covers[0].CoverURL
+				}
 				if merged.Subtitle != nil {
 					itemMeta.Subtitle = merged.Subtitle.Value
 				}
@@ -578,6 +584,7 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 				PublishDate: fallback.PublishDate,
 				Language:    fallback.Language,
 				PageCount:   fallback.PageCount,
+				CoverURL:    fallback.CoverURL,
 			}
 		}
 
@@ -623,6 +630,7 @@ type floatingBookMetadata struct {
 	PageCount   *int
 	ISBN10      string
 	ISBN13      string
+	CoverURL    string // external URL; downloaded and stored after the book row exists
 }
 
 // resolveFloatingBook looks up an existing book + edition by ISBN (global,
@@ -731,6 +739,18 @@ func (s *SuggestionsService) resolveFloatingBook(ctx context.Context, meta float
 	if err := tx.Commit(ctx); err != nil {
 		return uuid.Nil, uuid.Nil, fmt.Errorf("commit: %w", err)
 	}
+
+	// Fetch the cover after the book row exists. Non-fatal on failure —
+	// users can re-enrich later when they add the book to a library. Uses
+	// uuid.Nil as caller because this isn't a user-triggered per-cover
+	// action; the cover_images row records the source URL for provenance.
+	if meta.CoverURL != "" && s.bookSvc != nil {
+		if ferr := s.bookSvc.FetchCoverFromURL(ctx, bookID, uuid.Nil, meta.CoverURL); ferr != nil {
+			slog.Warn("fetching floating-book cover",
+				"book_id", bookID, "url", meta.CoverURL, "error", ferr)
+		}
+	}
+
 	return bookID, editionID, nil
 }
 
