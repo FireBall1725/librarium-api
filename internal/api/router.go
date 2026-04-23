@@ -228,6 +228,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/me/suggestions/runs", requireAuth(http.HandlerFunc(aiSuggestionsHandler.ListMyRuns)))
 	mux.Handle("GET /api/v1/me/suggestions/runs/{id}", requireAuth(http.HandlerFunc(aiSuggestionsHandler.GetMyRun)))
 	mux.Handle("PUT /api/v1/me/suggestions/{id}/status", requireAuth(http.HandlerFunc(aiSuggestionsHandler.UpdateSuggestionStatus)))
+	mux.Handle("DELETE /api/v1/me/suggestions/{id}", requireAuth(http.HandlerFunc(aiSuggestionsHandler.DeleteSuggestion)))
 	mux.Handle("POST /api/v1/me/suggestions/{id}/block", requireAuth(http.HandlerFunc(aiSuggestionsHandler.BlockSuggestion)))
 
 	// Lookup (any authenticated user)
@@ -295,11 +296,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	// consume book_id.
 	mux.Handle("GET /api/v1/books/{book_id}", requireAuth(http.HandlerFunc(bookHandler.GetBook)))
 	mux.Handle("GET /api/v1/books/{book_id}/editions", requireAuth(http.HandlerFunc(bookHandler.ListEditions)))
-	// Per-book re-enrichment against a floating book still needs a library
-	// context (enrichment_batches.library_id is non-null today). Add that
-	// endpoint in a follow-up when either (a) we make library_id nullable on
-	// the batch, or (b) we decide on a picker UX. For now, users can
-	// re-enrich after adding the book to a library.
+	// Single-book re-enrichment — works for floating books too since
+	// enrichment_batches.library_id is nullable post-000009.
+	mux.Handle("POST /api/v1/books/{book_id}/enrich", requireAuth(http.HandlerFunc(bookHandler.EnrichBook)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/books/{book_id}/cover/fetch", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.FetchBookCover)))
 	mux.Handle("PUT /api/v1/libraries/{library_id}/books/{book_id}/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.UploadBookCover)))
 	mux.Handle("DELETE /api/v1/libraries/{library_id}/books/{book_id}/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.DeleteBookCover)))

@@ -100,6 +100,32 @@ func (h *AISuggestionsHandler) ListSuggestions(w http.ResponseWriter, r *http.Re
 	typeFilter := r.URL.Query().Get("type")
 	statusFilter := r.URL.Query().Get("status")
 
+	// since accepts either an RFC3339 timestamp or a relative token like "30d"
+	// / "7d". A missing or empty value means no window. The UI uses "30d" on
+	// initial load and passes nothing when the user clicks "Show older".
+	var sincePtr *time.Time
+	if s := r.URL.Query().Get("since"); s != "" {
+		if d, ok := parseRelativeDays(s); ok {
+			t := time.Now().Add(-time.Duration(d) * 24 * time.Hour)
+			sincePtr = &t
+		} else if t, err := time.Parse(time.RFC3339, s); err == nil {
+			sincePtr = &t
+		} else {
+			respond.Error(w, http.StatusBadRequest, "invalid since: expected RFC3339 or NNd")
+			return
+		}
+	}
+
+	var bookIDPtr *uuid.UUID
+	if s := r.URL.Query().Get("book_id"); s != "" {
+		bookID, err := uuid.Parse(s)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid book_id")
+			return
+		}
+		bookIDPtr = &bookID
+	}
+
 	var runIDPtr *uuid.UUID
 	if s := r.URL.Query().Get("run_id"); s != "" {
 		runID, err := uuid.Parse(s)
@@ -128,7 +154,14 @@ func (h *AISuggestionsHandler) ListSuggestions(w http.ResponseWriter, r *http.Re
 		statusFilter = "new"
 	}
 
-	items, err := h.repo.ListSuggestions(r.Context(), claims.UserID, typeFilter, statusFilter, runIDPtr)
+	// When filtering by book_id, clear the default status=new fallback so the
+	// caller sees every suggestion they have for the book (including
+	// interested, dismissed, etc.). The BookDetailPage needs that to decide
+	// whether to offer "Remove suggestion".
+	if bookIDPtr != nil && r.URL.Query().Get("status") == "" {
+		statusFilter = ""
+	}
+	items, err := h.repo.ListSuggestions(r.Context(), claims.UserID, typeFilter, statusFilter, runIDPtr, sincePtr, bookIDPtr)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -179,6 +212,42 @@ func (h *AISuggestionsHandler) UpdateSuggestionStatus(w http.ResponseWriter, r *
 		return
 	}
 	if err := h.repo.UpdateSuggestionStatus(r.Context(), id, claims.UserID, body.Status); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respond.Error(w, http.StatusNotFound, "suggestion not found")
+			return
+		}
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteSuggestion godoc
+//
+//	@Summary     Remove a suggestion
+//	@Description Hard-deletes a single suggestion. Used by both the "Remove"
+//	@Description button on SuggestionCard / BookDetailPage and the cleaned-up
+//	@Description Dismiss flow (dismiss collapses into delete per the
+//	@Description suggestions-as-books plan).
+//	@Tags        me,ai
+//	@Security    BearerAuth
+//	@Param       id    path      string  true  "Suggestion ID"
+//	@Success     204
+//	@Failure     400   {object}  object{error=string}
+//	@Failure     404   {object}  object{error=string}
+//	@Router      /me/suggestions/{id} [delete]
+func (h *AISuggestionsHandler) DeleteSuggestion(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := h.repo.DeleteSuggestion(r.Context(), id, claims.UserID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			respond.Error(w, http.StatusNotFound, "suggestion not found")
 			return
@@ -839,5 +908,24 @@ func (h *AISuggestionsHandler) AdminClearFinishedRuns(w http.ResponseWriter, r *
 		return
 	}
 	respond.JSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+}
+
+// parseRelativeDays accepts tokens like "30d", "7d" and returns the integer
+// day count. Returns (0, false) for anything else.
+func parseRelativeDays(s string) (int, bool) {
+	if len(s) < 2 || s[len(s)-1] != 'd' {
+		return 0, false
+	}
+	n := 0
+	for _, r := range s[:len(s)-1] {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+		n = n*10 + int(r-'0')
+	}
+	if n <= 0 || n > 3650 {
+		return 0, false
+	}
+	return n, true
 }
 

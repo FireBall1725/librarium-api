@@ -178,9 +178,10 @@ func (w *ImportWorker) spawnEnrichmentBatch(
 		bookIDs[i] = b.id
 	}
 
+	libraryID := importJob.LibraryID
 	batch := &models.EnrichmentBatch{
 		ID:         batchID,
-		LibraryID:  importJob.LibraryID,
+		LibraryID:  &libraryID,
 		CreatedBy:  importJob.CreatedBy,
 		Type:       batchType,
 		Force:      false,

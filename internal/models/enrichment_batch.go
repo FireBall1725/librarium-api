@@ -55,7 +55,10 @@ type EnrichmentBatchItem struct {
 // metadata or cover refresh operation.
 type EnrichmentBatch struct {
 	ID             uuid.UUID              `json:"id"`
-	LibraryID      uuid.UUID              `json:"library_id"`
+	// LibraryID scopes the batch to a library when set. Null for
+	// floating-book batches (e.g. re-enriching a suggestion-backed book not
+	// yet held by any library).
+	LibraryID      *uuid.UUID             `json:"library_id,omitempty"`
 	LibraryName    string                 `json:"library_name,omitempty"`
 	CreatedBy      uuid.UUID              `json:"created_by"`
 	Type           EnrichmentBatchType    `json:"type"`
