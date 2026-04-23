@@ -257,8 +257,24 @@ func (s *BookService) UpdateBook(ctx context.Context, id uuid.UUID, req BookRequ
 	return s.books.FindByID(ctx, id)
 }
 
+// DeleteBook permanently deletes a book. Cascades through library_books,
+// book_editions, user_book_interactions, loans, ai_suggestions, and every
+// other FK that references the book. Admin-only at the handler layer.
 func (s *BookService) DeleteBook(ctx context.Context, id uuid.UUID) error {
 	return s.books.Delete(ctx, id)
+}
+
+// AddBookToLibrary attaches an existing book to a library via the
+// library_books junction. Idempotent — re-adding a book already in the
+// library is a no-op.
+func (s *BookService) AddBookToLibrary(ctx context.Context, libraryID, bookID uuid.UUID, addedBy *uuid.UUID) error {
+	return s.libraryBooks.AddBookToLibrary(ctx, nil, libraryID, bookID, addedBy)
+}
+
+// RemoveBookFromLibrary drops the library_books junction row for this
+// (library, book). The book row itself stays.
+func (s *BookService) RemoveBookFromLibrary(ctx context.Context, libraryID, bookID uuid.UUID) error {
+	return s.libraryBooks.RemoveBookFromLibrary(ctx, libraryID, bookID)
 }
 
 // ─── Editions ─────────────────────────────────────────────────────────────────

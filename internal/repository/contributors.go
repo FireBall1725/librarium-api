@@ -113,7 +113,8 @@ func (r *ContributorRepo) ListForLibrary(ctx context.Context, libraryID uuid.UUI
 		FROM contributors c
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
-		WHERE b.library_id = $1
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1
 		GROUP BY c.id
 		ORDER BY c.name`
 
@@ -137,7 +138,7 @@ func (r *ContributorRepo) ListForLibrary(ctx context.Context, libraryID uuid.UUI
 // ListForLibraryPaged returns a paginated, filtered, sorted slice of contributors
 // who have at least one book in the given library.
 func (r *ContributorRepo) ListForLibraryPaged(ctx context.Context, libraryID uuid.UUID, opts ContributorListOpts) ([]*models.Contributor, int, error) {
-	conditions := []string{"b.library_id = $1"}
+	conditions := []string{"lb.library_id = $1"}
 	args := []any{libraryID}
 	idx := 2
 
@@ -159,6 +160,7 @@ func (r *ContributorRepo) ListForLibraryPaged(ctx context.Context, libraryID uui
 		FROM contributors c
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
+		JOIN library_books lb ON lb.book_id = b.id
 		` + where
 	if err := r.db.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting contributors: %w", err)
@@ -195,6 +197,7 @@ func (r *ContributorRepo) ListForLibraryPaged(ctx context.Context, libraryID uui
 		FROM contributors c
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
+		JOIN library_books lb ON lb.book_id = b.id
 		` + where + `
 		GROUP BY c.id
 		ORDER BY ` + sortCol + ` ` + dir + secondary + `
@@ -225,7 +228,8 @@ func (r *ContributorRepo) LettersForLibrary(ctx context.Context, libraryID uuid.
 		FROM contributors c
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
-		WHERE b.library_id = $1
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1
 		  AND c.name ~ '^[A-Za-z]'
 		ORDER BY letter`
 	rows, err := r.db.Query(ctx, q, libraryID)
@@ -430,19 +434,20 @@ func (r *ContributorRepo) ListWorks(ctx context.Context, contributorID, libraryI
 			SELECT cw.id, cw.contributor_id, cw.title, COALESCE(cw.isbn_13,''),
 			       COALESCE(cw.isbn_10,''), cw.publish_year, COALESCE(cw.cover_url,''),
 			       cw.source, cw.deleted_at, cw.created_at,
-			       (lb.id IS NOT NULL), lb.id
+			       (inlib.id IS NOT NULL), inlib.id
 			FROM contributor_works cw
 			LEFT JOIN LATERAL (
 			    SELECT b.id
 			    FROM books b
 			    JOIN book_editions be ON be.book_id = b.id
-			    WHERE b.library_id = $2
+			    JOIN library_books lbj ON lbj.book_id = b.id
+			    WHERE lbj.library_id = $2
 			      AND (
 			           (cw.isbn_13 <> '' AND be.isbn_13 = cw.isbn_13) OR
 			           (cw.isbn_10 <> '' AND be.isbn_10 = cw.isbn_10)
 			      )
 			    LIMIT 1
-			) lb ON TRUE
+			) inlib ON TRUE
 			WHERE cw.contributor_id = $1 AND cw.deleted_at IS NULL
 			ORDER BY cw.publish_year ASC NULLS LAST, cw.title`
 		args = []any{contributorID, libraryID}

@@ -1132,6 +1132,54 @@ info:
   title: Librarium API
   version: 26.4.0
 paths:
+  /admin/books/{book_id}:
+    delete:
+      description: |-
+        Permanently deletes the books row and cascades through all
+        libraries, editions, user interactions, loans, and any other
+        references. Use with care.
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a book entirely (admin only)
+      tags:
+      - admin
   /admin/connections/ai:
     get:
       description: Returns provider status, masked config, active flag, and config-field
@@ -3606,7 +3654,11 @@ paths:
       - books
   /libraries/{library_id}/books/{book_id}:
     delete:
-      description: Permanently deletes a book and all its editions from the library.
+      description: |-
+        Drops the library_books junction row for this library/book.
+        The book row itself stays (may be held by other libraries or
+        referenced by AI suggestions). Use the admin endpoint to
+        delete a book entirely.
       parameters:
       - description: Library UUID
         in: path
@@ -3644,7 +3696,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Delete a book
+      summary: Remove a book from a library
       tags:
       - books
     get:
@@ -3692,6 +3744,51 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a book
+      tags:
+      - books
+    post:
+      description: |-
+        Inserts the library_books junction row. Idempotent. Used by
+        the suggestions-as-books "Add to library" CTA and any other
+        flow that wants to attach a floating book to a real library.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add an existing book to a library
       tags:
       - books
     put:

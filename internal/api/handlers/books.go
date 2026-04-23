@@ -447,8 +447,11 @@ func (h *BookHandler) FindByISBN(w http.ResponseWriter, r *http.Request) {
 
 // DeleteBook godoc
 //
-// @Summary     Delete a book
-// @Description Permanently deletes a book and all its editions from the library.
+// @Summary     Remove a book from a library
+// @Description Drops the library_books junction row for this library/book.
+// @Description The book row itself stays (may be held by other libraries or
+// @Description referenced by AI suggestions). Use the admin endpoint to
+// @Description delete a book entirely.
 // @Tags        books
 // @Security    BearerAuth
 // @Param       library_id  path  string  true  "Library UUID"
@@ -459,6 +462,42 @@ func (h *BookHandler) FindByISBN(w http.ResponseWriter, r *http.Request) {
 // @Failure     404  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books/{book_id} [delete]
 func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+	bookID, err := uuid.Parse(r.PathValue("book_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+	if err := h.svc.RemoveBookFromLibrary(r.Context(), libraryID, bookID); errors.Is(err, repository.ErrNotFound) {
+		respond.Error(w, http.StatusNotFound, "book not found in this library")
+		return
+	} else if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdminDeleteBook godoc
+//
+// @Summary     Delete a book entirely (admin only)
+// @Description Permanently deletes the books row and cascades through all
+// @Description libraries, editions, user interactions, loans, and any other
+// @Description references. Use with care.
+// @Tags        admin
+// @Security    BearerAuth
+// @Param       book_id  path  string  true  "Book UUID"
+// @Success     204
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     403  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /admin/books/{book_id} [delete]
+func (h *BookHandler) AdminDeleteBook(w http.ResponseWriter, r *http.Request) {
 	bookID, err := uuid.Parse(r.PathValue("book_id"))
 	if err != nil {
 		respond.Error(w, http.StatusBadRequest, "invalid book id")
@@ -468,6 +507,44 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusNotFound, "book not found")
 		return
 	} else if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AddBookToLibrary godoc
+//
+// @Summary     Add an existing book to a library
+// @Description Inserts the library_books junction row. Idempotent. Used by
+// @Description the suggestions-as-books "Add to library" CTA and any other
+// @Description flow that wants to attach a floating book to a real library.
+// @Tags        books
+// @Security    BearerAuth
+// @Param       library_id  path  string  true  "Library UUID"
+// @Param       book_id     path  string  true  "Book UUID"
+// @Success     204
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /libraries/{library_id}/books/{book_id} [post]
+func (h *BookHandler) AddBookToLibrary(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+	bookID, err := uuid.Parse(r.PathValue("book_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+	var callerID *uuid.UUID
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		id := claims.UserID
+		callerID = &id
+	}
+	if err := h.svc.AddBookToLibrary(r.Context(), libraryID, bookID, callerID); err != nil {
 		respond.ServerError(w, r, err)
 		return
 	}

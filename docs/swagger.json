@@ -17,6 +17,78 @@
     "host": "localhost:8080",
     "basePath": "/api/v1",
     "paths": {
+        "/admin/books/{book_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Permanently deletes the books row and cascades through all\nlibraries, editions, user interactions, loans, and any other\nreferences. Use with care.",
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Delete a book entirely (admin only)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book UUID",
+                        "name": "book_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/connections/ai": {
             "get": {
                 "security": [
@@ -4379,17 +4451,83 @@
                     }
                 }
             },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Inserts the library_books junction row. Idempotent. Used by\nthe suggestions-as-books \"Add to library\" CTA and any other\nflow that wants to attach a floating book to a real library.",
+                "tags": [
+                    "books"
+                ],
+                "summary": "Add an existing book to a library",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Book UUID",
+                        "name": "book_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
             "delete": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Permanently deletes a book and all its editions from the library.",
+                "description": "Drops the library_books junction row for this library/book.\nThe book row itself stays (may be held by other libraries or\nreferenced by AI suggestions). Use the admin endpoint to\ndelete a book entirely.",
                 "tags": [
                     "books"
                 ],
-                "summary": "Delete a book",
+                "summary": "Remove a book from a library",
                 "parameters": [
                     {
                         "type": "string",

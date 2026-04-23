@@ -231,7 +231,8 @@ func (r *SeriesRepo) ListMatchCandidates(ctx context.Context, libraryID, seriesI
 				'[]'::json
 			) AS other_series
 		FROM books b
-		WHERE b.library_id = $1
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1
 		  AND NOT EXISTS (
 		      SELECT 1 FROM book_series bs
 		      WHERE bs.book_id = b.id AND bs.series_id = $2
@@ -300,7 +301,8 @@ func (r *SeriesRepo) ListOrphanBooks(ctx context.Context, libraryID uuid.UUID, m
 			) AS has_cover
 		FROM books b
 		JOIN media_types mt ON mt.id = b.media_type_id
-		WHERE b.library_id = $1
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1
 		  AND (cardinality($2::text[]) = 0 OR mt.name = ANY($2))
 		  AND NOT EXISTS (SELECT 1 FROM book_series bs WHERE bs.book_id = b.id)
 		ORDER BY b.title`

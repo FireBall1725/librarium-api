@@ -282,9 +282,14 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/libraries/{library_id}/books/{book_id}", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.GetBook)))
 	mux.Handle("PUT /api/v1/libraries/{library_id}/books/{book_id}", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.UpdateBook)))
 	mux.Handle("DELETE /api/v1/libraries/{library_id}/books/{book_id}", requireLibraryPerm("books:delete", http.HandlerFunc(bookHandler.DeleteBook)))
+	mux.Handle("POST /api/v1/libraries/{library_id}/books/{book_id}", requireLibraryPerm("books:create", http.HandlerFunc(bookHandler.AddBookToLibrary)))
+	mux.Handle("DELETE /api/v1/admin/books/{book_id}", requireAdmin(http.HandlerFunc(bookHandler.AdminDeleteBook)))
 
 	// Covers — all operations require library read permission
 	mux.Handle("GET /api/v1/libraries/{library_id}/books/{book_id}/cover", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.ServeBookCover)))
+	// Library-agnostic cover route for books that may live in multiple
+	// libraries (or none — floating suggestion books). Just needs auth.
+	mux.Handle("GET /api/v1/books/{book_id}/cover", requireAuth(http.HandlerFunc(bookHandler.ServeBookCover)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/books/{book_id}/cover/fetch", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.FetchBookCover)))
 	mux.Handle("PUT /api/v1/libraries/{library_id}/books/{book_id}/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.UploadBookCover)))
 	mux.Handle("DELETE /api/v1/libraries/{library_id}/books/{book_id}/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.DeleteBookCover)))
