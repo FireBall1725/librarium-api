@@ -38,11 +38,12 @@ type BookService struct {
 	tags         *repository.TagRepo
 	genres       *repository.GenreRepo
 	covers       *repository.CoverRepo
+	suggestions  *repository.AISuggestionsRepo
 	coverPath    string
 }
 
-func NewBookService(pool *pgxpool.Pool, books *repository.BookRepo, libraryBooks *repository.LibraryBookRepo, contributors *repository.ContributorRepo, editions *repository.EditionRepo, tags *repository.TagRepo, genres *repository.GenreRepo, covers *repository.CoverRepo, coverPath string) *BookService {
-	return &BookService{pool: pool, books: books, libraryBooks: libraryBooks, contributors: contributors, editions: editions, tags: tags, genres: genres, covers: covers, coverPath: coverPath}
+func NewBookService(pool *pgxpool.Pool, books *repository.BookRepo, libraryBooks *repository.LibraryBookRepo, contributors *repository.ContributorRepo, editions *repository.EditionRepo, tags *repository.TagRepo, genres *repository.GenreRepo, covers *repository.CoverRepo, suggestions *repository.AISuggestionsRepo, coverPath string) *BookService {
+	return &BookService{pool: pool, books: books, libraryBooks: libraryBooks, contributors: contributors, editions: editions, tags: tags, genres: genres, covers: covers, suggestions: suggestions, coverPath: coverPath}
 }
 
 // ─── Media types ──────────────────────────────────────────────────────────────
@@ -267,8 +268,22 @@ func (s *BookService) DeleteBook(ctx context.Context, id uuid.UUID) error {
 // AddBookToLibrary attaches an existing book to a library via the
 // library_books junction. Idempotent — re-adding a book already in the
 // library is a no-op.
+//
+// Remove-on-action: when the caller just added a book, any `buy`
+// suggestion they had pointing at that book has served its purpose and
+// gets deleted. Scoped to addedBy when present — otherwise we can't
+// attribute the action to a user, and we leave suggestions alone.
 func (s *BookService) AddBookToLibrary(ctx context.Context, libraryID, bookID uuid.UUID, addedBy *uuid.UUID) error {
-	return s.libraryBooks.AddBookToLibrary(ctx, nil, libraryID, bookID, addedBy)
+	if err := s.libraryBooks.AddBookToLibrary(ctx, nil, libraryID, bookID, addedBy); err != nil {
+		return err
+	}
+	if addedBy != nil && s.suggestions != nil {
+		if _, derr := s.suggestions.DeleteForActionTaken(ctx, *addedBy, bookID, "buy"); derr != nil {
+			slog.Warn("deleting buy suggestions after add-to-library",
+				"user_id", *addedBy, "book_id", bookID, "error", derr)
+		}
+	}
+	return nil
 }
 
 // RemoveBookFromLibrary drops the library_books junction row for this
@@ -393,10 +408,26 @@ func (s *BookService) GetInteraction(ctx context.Context, userID, editionID uuid
 }
 
 func (s *BookService) UpsertInteraction(ctx context.Context, userID, editionID uuid.UUID, req InteractionRequest) (*models.UserBookInteraction, error) {
-	return s.editions.UpsertInteraction(ctx, userID, editionID,
+	interaction, err := s.editions.UpsertInteraction(ctx, userID, editionID,
 		req.ReadStatus, req.Rating, req.Notes, req.Review,
 		req.DateStarted, req.DateFinished, req.IsFavorite,
 	)
+	if err != nil {
+		return nil, err
+	}
+	// Remove-on-action: if the user just logged a read on this edition,
+	// drop any read_next suggestion rows they had pointing at the same book.
+	// The edition's book_id is the key — a read of any edition of the book
+	// counts as reading the book.
+	if req.ReadStatus == "read" && s.suggestions != nil {
+		if edition, eerr := s.editions.FindByID(ctx, editionID); eerr == nil && edition != nil {
+			if _, derr := s.suggestions.DeleteForActionTaken(ctx, userID, edition.BookID, "read_next"); derr != nil {
+				slog.Warn("deleting read_next suggestions after read",
+					"user_id", userID, "book_id", edition.BookID, "error", derr)
+			}
+		}
+	}
+	return interaction, nil
 }
 
 func (s *BookService) DeleteInteraction(ctx context.Context, userID, editionID uuid.UUID) error {

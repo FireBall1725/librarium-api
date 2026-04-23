@@ -575,6 +575,23 @@ func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUI
 	return out, rows.Err()
 }
 
+// DeleteForActionTaken removes all ai_suggestions rows for (user, type, book)
+// regardless of their current status. Used for the "remove on action" rules:
+//   - type="read_next" when the user logs a read on any edition of the book
+//   - type="buy"       when the user adds the book to a library
+//
+// Returns the number of suggestion rows deleted (0 if none matched — safe to
+// call unconditionally from a hook that fires on every interaction upsert).
+func (r *AISuggestionsRepo) DeleteForActionTaken(ctx context.Context, userID, bookID uuid.UUID, suggestionType string) (int64, error) {
+	const q = `DELETE FROM ai_suggestions
+	            WHERE user_id = $1 AND book_id = $2 AND type = $3`
+	tag, err := r.db.Exec(ctx, q, userID, bookID, suggestionType)
+	if err != nil {
+		return 0, fmt.Errorf("delete suggestions on action: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // UpdateSuggestionStatus changes the user-visible status flag. Returns
 // ErrNotFound if the row doesn't exist or doesn't belong to the caller.
 func (r *AISuggestionsRepo) UpdateSuggestionStatus(ctx context.Context, id, userID uuid.UUID, status string) error {

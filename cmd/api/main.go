@@ -156,6 +156,7 @@ func main() {
 		repository.NewTagRepo(pool),
 		repository.NewGenreRepo(pool),
 		repository.NewCoverRepo(pool),
+		aiSuggestionsRepo,
 		cfg.CoverStoragePath,
 	)
 	importWorker := workers.NewImportWorker(
