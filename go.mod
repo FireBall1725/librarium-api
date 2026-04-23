@@ -12,6 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/riverqueue/river v0.34.0
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.34.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/swaggo/swag v1.16.6
 	golang.org/x/crypto v0.50.0
 )

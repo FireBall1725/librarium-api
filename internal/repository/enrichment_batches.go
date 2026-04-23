@@ -30,18 +30,41 @@ func (r *EnrichmentBatchRepo) Create(ctx context.Context, batch *models.Enrichme
 	if err != nil {
 		return fmt.Errorf("marshaling book_ids: %w", err)
 	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Create the umbrella jobs row first so the batch row can reference it
+	// via job_id. Kind is "enrichment"; status mirrors the batch.
+	triggeredBy := "user"
+	if batch.LibraryID == nil {
+		// No library context = floating-book re-enrich from the BookDetailPage.
+		triggeredBy = "user"
+	}
+	var jobID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO jobs (kind, status, triggered_by, created_by)
+		VALUES ('enrichment', $1, $2, $3)
+		RETURNING id`,
+		string(batch.Status), triggeredBy, batch.CreatedBy,
+	).Scan(&jobID); err != nil {
+		return fmt.Errorf("creating umbrella job: %w", err)
+	}
+
 	const q = `
 		INSERT INTO enrichment_batches
-		            (id, library_id, created_by, type, force, status, book_ids, total_books)
-		VALUES      ($1, $2, $3, $4, $5, $6, $7, $8)`
-	if _, err := r.db.Exec(ctx, q,
-		batch.ID, batch.LibraryID, batch.CreatedBy,
+		            (id, job_id, library_id, created_by, type, force, status, book_ids, total_books)
+		VALUES      ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	if _, err := tx.Exec(ctx, q,
+		batch.ID, jobID, batch.LibraryID, batch.CreatedBy,
 		string(batch.Type), batch.Force, string(batch.Status),
 		bookIDsJSON, batch.TotalBooks,
 	); err != nil {
 		return fmt.Errorf("inserting enrichment batch: %w", err)
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // Get returns a single enrichment batch by ID (no items).
@@ -192,14 +215,33 @@ func (r *EnrichmentBatchRepo) ResyncCounters(ctx context.Context, batchID uuid.U
 	return nil
 }
 
-// UpdateStatus updates the status of a batch. Never overwrites a 'cancelled' status.
+// UpdateStatus updates the status of a batch. Never overwrites a
+// 'cancelled' status. Mirrors the change to the umbrella jobs row so the
+// unified history stays consistent, stamping started_at/finished_at when
+// transitioning into/out of running.
 func (r *EnrichmentBatchRepo) UpdateStatus(ctx context.Context, id uuid.UUID, status models.EnrichmentBatchStatus) error {
 	const q = `
 		UPDATE enrichment_batches
 		SET    status = $2, updated_at = now()
-		WHERE  id = $1 AND status != 'cancelled'`
-	if _, err := r.db.Exec(ctx, q, id, string(status)); err != nil {
+		WHERE  id = $1 AND status != 'cancelled'
+		RETURNING job_id`
+	var pgJobID pgtype.UUID
+	if err := r.db.QueryRow(ctx, q, id, string(status)).Scan(&pgJobID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // either missing or already cancelled — caller doesn't care
+		}
 		return fmt.Errorf("updating enrichment batch status: %w", err)
+	}
+	if pgJobID.Valid {
+		const updJob = `
+			UPDATE jobs
+			   SET status      = $2,
+			       started_at  = CASE WHEN $2 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
+			       finished_at = CASE WHEN $2 IN ('completed','failed','cancelled') THEN COALESCE(finished_at, NOW()) ELSE finished_at END
+			 WHERE id = $1`
+		if _, err := r.db.Exec(ctx, updJob, uuid.UUID(pgJobID.Bytes), string(status)); err != nil {
+			return fmt.Errorf("mirroring status to umbrella job: %w", err)
+		}
 	}
 	return nil
 }

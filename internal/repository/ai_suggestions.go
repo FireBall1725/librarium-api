@@ -13,6 +13,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -261,34 +262,58 @@ func (r *AISuggestionsRepo) BookExistsInLibrary(ctx context.Context, libraryID u
 
 // CreateRun inserts a run row in 'running' state and returns its ID. steering
 // is the raw JSON payload persisted on the row (nil for unsteered runs); pass
-// it pre-marshalled so this helper stays taxonomy-agnostic.
-func (r *AISuggestionsRepo) CreateRun(ctx context.Context, userID uuid.UUID, triggeredBy, providerType, modelID string, steering []byte) (uuid.UUID, error) {
+// it pre-marshalled so this helper stays taxonomy-agnostic. jobID links the
+// run to its umbrella jobs row (created by the service layer before calling
+// this helper).
+func (r *AISuggestionsRepo) CreateRun(ctx context.Context, jobID, userID uuid.UUID, triggeredBy, providerType, modelID string, steering []byte) (uuid.UUID, error) {
 	const q = `
-		INSERT INTO ai_suggestion_runs (user_id, triggered_by, provider_type, model_id, status, steering)
-		VALUES ($1, $2, $3, $4, 'running', $5) RETURNING id`
+		INSERT INTO ai_suggestion_runs (job_id, user_id, triggered_by, provider_type, model_id, status, steering)
+		VALUES ($1, $2, $3, $4, $5, 'running', $6) RETURNING id`
 	var id uuid.UUID
 	var steeringArg any
 	if len(steering) > 0 {
 		steeringArg = steering
 	}
-	if err := r.db.QueryRow(ctx, q, userID, triggeredBy, providerType, modelID, steeringArg).Scan(&id); err != nil {
+	if err := r.db.QueryRow(ctx, q, jobID, userID, triggeredBy, providerType, modelID, steeringArg).Scan(&id); err != nil {
 		return uuid.Nil, fmt.Errorf("create run: %w", err)
 	}
 	return id, nil
 }
 
 // FinishRun marks a run complete (or failed) and records usage totals.
+// Mirrors the status to the umbrella jobs row so unified history queries
+// see a consistent final state.
 func (r *AISuggestionsRepo) FinishRun(ctx context.Context, runID uuid.UUID, status, errMsg string, tokensIn, tokensOut int, costUSD float64) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
 	const q = `
 		UPDATE ai_suggestion_runs
 		SET status = $2, error = $3, tokens_in = $4, tokens_out = $5,
 		    estimated_cost_usd = $6, finished_at = $7
-		WHERE id = $1`
-	_, err := r.db.Exec(ctx, q, runID, status, nilIfEmpty(errMsg), tokensIn, tokensOut, costUSD, time.Now())
-	if err != nil {
+		WHERE id = $1
+		RETURNING job_id`
+	var pgJobID pgtype.UUID
+	if err := tx.QueryRow(ctx, q, runID, status, nilIfEmpty(errMsg), tokensIn, tokensOut, costUSD, time.Now()).
+		Scan(&pgJobID); err != nil {
 		return fmt.Errorf("finish run: %w", err)
 	}
-	return nil
+	if pgJobID.Valid {
+		const updJob = `
+			UPDATE jobs
+			   SET status      = $2,
+			       error       = $3,
+			       progress    = jsonb_build_object('tokens_in', $4::int, 'tokens_out', $5::int, 'cost_usd', $6::numeric),
+			       finished_at = COALESCE(finished_at, NOW())
+			 WHERE id = $1`
+		if _, err := tx.Exec(ctx, updJob, uuid.UUID(pgJobID.Bytes), status, errMsg, tokensIn, tokensOut, costUSD); err != nil {
+			return fmt.Errorf("updating umbrella job: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // LastRunAt returns the most recent finished/running run timestamp for a user,
@@ -698,9 +723,10 @@ func (r *AISuggestionsRepo) GetSuggestion(ctx context.Context, id, userID uuid.U
 
 // ─── Run events (observability) ───────────────────────────────────────────────
 
-// AppendEvent writes one pipeline event tied to a run. Sequence is computed
-// server-side via COALESCE(MAX(seq)+1, 0) so callers don't race each other.
-// content is marshaled to JSON; nil is stored as '{}'.
+// AppendEvent writes one pipeline event tied to a run. Routes through
+// job_events via the run's job_id — ai_run_events was collapsed into the
+// unified event log in 000010. Sequence is computed server-side so
+// concurrent callers don't race each other.
 func (r *AISuggestionsRepo) AppendEvent(ctx context.Context, runID uuid.UUID, eventType string, content any) error {
 	var payload []byte
 	if content == nil {
@@ -715,10 +741,12 @@ func (r *AISuggestionsRepo) AppendEvent(ctx context.Context, runID uuid.UUID, ev
 		payload = b
 	}
 	const q = `
-		INSERT INTO ai_run_events (run_id, seq, type, content)
-		VALUES ($1,
-		        COALESCE((SELECT MAX(seq) + 1 FROM ai_run_events WHERE run_id = $1), 0),
-		        $2, $3::jsonb)`
+		INSERT INTO job_events (job_id, seq, type, content)
+		SELECT asr.job_id,
+		       COALESCE((SELECT MAX(seq) + 1 FROM job_events WHERE job_id = asr.job_id), 0),
+		       $2, $3::jsonb
+		  FROM ai_suggestion_runs asr
+		 WHERE asr.id = $1`
 	if _, err := r.db.Exec(ctx, q, runID, eventType, payload); err != nil {
 		return fmt.Errorf("append run event: %w", err)
 	}
@@ -726,10 +754,15 @@ func (r *AISuggestionsRepo) AppendEvent(ctx context.Context, runID uuid.UUID, ev
 }
 
 // ListEventsByRun returns every event recorded for a run, ordered by seq.
+// Translates from the run id to the umbrella job_id and reads from
+// job_events.
 func (r *AISuggestionsRepo) ListEventsByRun(ctx context.Context, runID uuid.UUID) ([]*models.AIRunEvent, error) {
 	const q = `
-		SELECT id, run_id, seq, type, content, created_at
-		FROM ai_run_events WHERE run_id = $1 ORDER BY seq ASC`
+		SELECT ev.id, $1::uuid AS run_id, ev.seq, ev.type, ev.content, ev.created_at
+		  FROM job_events ev
+		  JOIN ai_suggestion_runs asr ON asr.job_id = ev.job_id
+		 WHERE asr.id = $1
+		 ORDER BY ev.seq ASC`
 	rows, err := r.db.Query(ctx, q, runID)
 	if err != nil {
 		return nil, fmt.Errorf("list run events: %w", err)

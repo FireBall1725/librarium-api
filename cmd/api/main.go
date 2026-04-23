@@ -24,6 +24,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -39,6 +41,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/api"
 	"github.com/fireball1725/librarium-api/internal/config"
 	"github.com/fireball1725/librarium-api/internal/db"
+	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/providers"
 	bookProviders "github.com/fireball1725/librarium-api/internal/providers/books"
@@ -155,9 +158,11 @@ func main() {
 		aiSuggestionsRepo,
 		cfg.CoverStoragePath,
 	)
+	jobRepo := repository.NewJobRepo(pool)
 	suggestionsSvc := service.NewSuggestionsService(
 		pool,
 		aiSuggestionsRepo,
+		jobRepo,
 		repository.NewBookRepo(pool),
 		repository.NewEditionRepo(pool),
 		workerBookSvc,
@@ -213,12 +218,9 @@ func main() {
 	}
 	slog.Info("river worker started")
 
-	// ── AI suggestions scheduler ─────────────────────────────────────────────
-	// Poll every 5 minutes: for each opted-in user whose last run is older than
-	// the configured cadence, enqueue a River job. Cheap and good enough for a
-	// self-hosted single-node deployment; multi-node deployments will want a
-	// proper distributed cron.
-	go runSuggestionsScheduler(baseCtx, aiSuggestionsRepo, jobSvc, riverClient)
+	// ── Unified job scheduler ────────────────────────────────────────────────
+	// Walks job_schedules on a 30s tick and fires each kind's Enqueue hook
+	// when its cron expression is due. Kinds register their Enqueue below.
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	addr := cfg.Host + ":" + cfg.Port
@@ -229,7 +231,69 @@ func main() {
 	if collector != nil {
 		metrics = collector
 	}
+	jobRegistry := jobs.NewRegistry()
+	// AI suggestions is the first scheduled kind. Its Enqueue replicates
+	// the previous per-user-fanout behaviour: walk opted-in users, skip
+	// any whose last run is inside the cadence window, enqueue a River
+	// job for everyone else.
+	jobRegistry.Register(&jobs.Definition{
+		Kind:        jobs.KindAISuggestions,
+		DisplayName: "AI suggestions",
+		Description: "Generates per-user book suggestions using the active AI provider.",
+		Schedulable: true,
+		DefaultCron: "0 3 * * *",
+		Enqueue: func(ctx context.Context, trig jobs.TriggerCtx, _ json.RawMessage) error {
+			cfg, err := jobSvc.GetAISuggestionsConfig(ctx)
+			if err != nil {
+				return fmt.Errorf("load ai-suggestions config: %w", err)
+			}
+			if !cfg.Enabled {
+				return nil
+			}
+			users, err := aiSuggestionsRepo.ListOptedInUsers(ctx)
+			if err != nil {
+				return fmt.Errorf("list opted-in users: %w", err)
+			}
+			cutoff := time.Now().Add(-time.Duration(cfg.IntervalMinutes) * time.Minute)
+			for _, u := range users {
+				last, err := aiSuggestionsRepo.LastRunAt(ctx, u.UserID)
+				if err != nil {
+					slog.Warn("ai scheduler: last-run lookup failed", "user_id", u.UserID, "error", err)
+					continue
+				}
+				if !last.IsZero() && last.After(cutoff) {
+					continue
+				}
+				if _, err := riverClient.Insert(ctx,
+					models.AISuggestionsJobArgs{UserID: u.UserID, TriggeredBy: "scheduler"}, nil); err != nil {
+					slog.Warn("ai scheduler: enqueue failed", "user_id", u.UserID, "error", err)
+				}
+			}
+			return nil
+		},
+	})
+	// Import and enrichment are run from user actions (no scheduled
+	// fanout yet), but register them for display on the jobs admin page.
+	jobRegistry.Register(&jobs.Definition{
+		Kind:        jobs.KindImport,
+		DisplayName: "CSV import",
+		Description: "Bulk imports rows from a CSV into the user's library.",
+		Schedulable: false,
+	})
+	jobRegistry.Register(&jobs.Definition{
+		Kind:        jobs.KindEnrichment,
+		DisplayName: "Metadata enrichment",
+		Description: "Fetches missing metadata / covers from providers for a batch of books.",
+		Schedulable: false,
+	})
+
+	// Kick the scheduler off after registry is populated.
+	jobRepoForSched := repository.NewJobRepo(pool)
+	scheduler := jobs.NewScheduler(jobRegistry, jobRepoForSched)
+	go scheduler.Run(baseCtx)
+
 	handler := api.NewRouter(baseCtx, pool, cfg, riverClient, metrics, api.RouterDeps{
+		JobRegistry: jobRegistry,
 		AISvc:       aiSvc,
 		ProviderSvc: providerSvc,
 	})
@@ -368,67 +432,6 @@ func pollQueueStats(ctx context.Context, pool *pgxpool.Pool) tui.QueueStats {
 		s.Active = append(s.Active, info)
 	}
 	return s
-}
-
-// runSuggestionsScheduler is a simple in-process cron for AI suggestions.
-// Every five minutes it reads the admin job config; if enabled, it walks every
-// opted-in user and enqueues a River job for any whose last run is older than
-// the cadence. River dedups via its own uniqueness semantics but we also check
-// LastRunAt in-process so we don't hammer the queue on each tick.
-func runSuggestionsScheduler(
-	ctx context.Context,
-	repo *repository.AISuggestionsRepo,
-	jobSvc *service.JobService,
-	riverClient *river.Client[pgx.Tx],
-) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	// Kick off a first pass shortly after startup so freshly-configured
-	// deployments don't sit idle for 5 minutes.
-	first := time.NewTimer(30 * time.Second)
-	defer first.Stop()
-
-	run := func() {
-		cfg, err := jobSvc.GetAISuggestionsConfig(ctx)
-		if err != nil {
-			slog.Warn("ai scheduler: load config failed", "error", err)
-			return
-		}
-		if !cfg.Enabled || cfg.IntervalMinutes <= 0 {
-			return
-		}
-		users, err := repo.ListOptedInUsers(ctx)
-		if err != nil {
-			slog.Warn("ai scheduler: list users failed", "error", err)
-			return
-		}
-		cutoff := time.Now().Add(-time.Duration(cfg.IntervalMinutes) * time.Minute)
-		for _, u := range users {
-			last, err := repo.LastRunAt(ctx, u.UserID)
-			if err != nil {
-				slog.Warn("ai scheduler: last run lookup failed", "user_id", u.UserID, "error", err)
-				continue
-			}
-			if !last.IsZero() && last.After(cutoff) {
-				continue
-			}
-			if _, err := riverClient.Insert(ctx,
-				models.AISuggestionsJobArgs{UserID: u.UserID, TriggeredBy: "scheduler"}, nil); err != nil {
-				slog.Warn("ai scheduler: enqueue failed", "user_id", u.UserID, "error", err)
-			}
-		}
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-first.C:
-			run()
-		case <-ticker.C:
-			run()
-		}
-	}
 }
 
 // backfillContributorSortNames derives and persists sort_name for contributors

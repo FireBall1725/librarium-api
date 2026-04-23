@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fireball1725/librarium-api/internal/ai"
+	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/providers"
 	"github.com/fireball1725/librarium-api/internal/repository"
@@ -53,6 +54,7 @@ const (
 // providers, backfill if buy candidates fell short, persist the batch.
 type SuggestionsService struct {
 	repo       *repository.AISuggestionsRepo
+	jobRepo    *repository.JobRepo
 	books      *repository.BookRepo
 	editions   *repository.EditionRepo
 	bookSvc    *BookService
@@ -67,6 +69,7 @@ type SuggestionsService struct {
 func NewSuggestionsService(
 	pool *pgxpool.Pool,
 	repo *repository.AISuggestionsRepo,
+	jobRepo *repository.JobRepo,
 	books *repository.BookRepo,
 	editions *repository.EditionRepo,
 	bookSvc *BookService,
@@ -79,6 +82,7 @@ func NewSuggestionsService(
 	return &SuggestionsService{
 		pool:       pool,
 		repo:       repo,
+		jobRepo:    jobRepo,
 		books:      books,
 		editions:   editions,
 		bookSvc:    bookSvc,
@@ -210,13 +214,27 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	prompt := buildSuggestionsPrompt(titles, user.TasteProfile, blocks, perms, cfg, existingBuy, existingReadNext, hydrated)
 
 	// ── Record run starting ──────────────────────────────────────────────────
-	// Stamping the configured model on the run row (and pipeline_start event)
-	// lets the admin read the timeline later and see which model produced the
-	// output — useful when comparing Ollama model choices or spotting a silent
-	// config drift.
+	// Two-step creation — first an umbrella jobs row, then the
+	// kind-specific ai_suggestion_runs row that references it. Stamping the
+	// configured model on the run row (and pipeline_start event) lets the
+	// admin read the timeline later and see which model produced the output.
 	modelID := provider.ConfiguredModel()
-	runID, err := s.repo.CreateRun(ctx, userID, triggeredBy, info.Name, modelID, steeringJSON)
+	job := &models.Job{
+		Kind:        string(jobs.KindAISuggestions),
+		Status:      models.JobStatusRunning,
+		TriggeredBy: models.JobTriggeredBy(triggeredBy),
+		CreatedBy:   &userID,
+	}
+	now := time.Now()
+	job.StartedAt = &now
+	if err := s.jobRepo.CreateJob(ctx, job); err != nil {
+		return nil, fmt.Errorf("create umbrella job: %w", err)
+	}
+	runID, err := s.repo.CreateRun(ctx, job.ID, userID, triggeredBy, info.Name, modelID, steeringJSON)
 	if err != nil {
+		// umbrella row exists but kind-specific row failed; mark umbrella
+		// as failed so it shows up in history with the right state.
+		_ = s.jobRepo.MarkFinished(ctx, job.ID, models.JobStatusFailed, err.Error())
 		return nil, err
 	}
 	start := time.Now()
