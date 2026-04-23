@@ -311,7 +311,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	}
 
 	// ── Pass 2: enrich & filter ──────────────────────────────────────────────
-	buyItems, rejectedBuyTitles := s.enrichBuy(ctx, runID, user.LibraryID, buyParsed, cfg.MaxBuyPerUser, existingKeys)
+	buyItems, rejectedBuyTitles := s.enrichBuy(ctx, runID, userID, user.LibraryID, buyParsed, cfg.MaxBuyPerUser, existingKeys)
 	readNextItems := s.resolveReadNext(ctx, runID, user.LibraryID, titles, readNextParsed, cfg.MaxReadNextPerUser, existingKeys)
 
 	// ── Pass 3: backfill if buy fell short ───────────────────────────────────
@@ -374,7 +374,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		for _, it := range buyItems {
 			existingKeys[normalizeTitle(it.Title)] = struct{}{}
 		}
-		bfItems, bfRejected := s.enrichBuy(ctx, runID, user.LibraryID, bfParsed, cfg.MaxBuyPerUser-len(buyItems), existingKeys)
+		bfItems, bfRejected := s.enrichBuy(ctx, runID, userID, user.LibraryID, bfParsed, cfg.MaxBuyPerUser-len(buyItems), existingKeys)
 		buyItems = append(buyItems, bfItems...)
 		rejectedBuyTitles = append(rejectedBuyTitles, bfRejected...)
 	}
@@ -430,7 +430,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 // book) are applied here too. Emits an enrichment_decision event per candidate.
 // `seen` is mutated to include every accepted title's normalized key so the
 // caller can feed the same set into a subsequent backfill without redos.
-func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, libraryID uuid.UUID, parsed []ParsedSuggestion, max int, seen map[string]struct{}) ([]repository.SuggestionInput, []string) {
+func (s *SuggestionsService) enrichBuy(ctx context.Context, runID, userID uuid.UUID, libraryID uuid.UUID, parsed []ParsedSuggestion, max int, seen map[string]struct{}) ([]repository.SuggestionInput, []string) {
 	var accepted []repository.SuggestionInput
 	var rejected []string
 	for _, p := range parsed {
@@ -594,7 +594,7 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID uuid.UUID, lib
 		// (post-000008 schema change). Populates the full metadata from the
 		// provider result so the BookDetailPage renders with author,
 		// description, publisher, etc. immediately.
-		bookID, editionID, bookErr := s.resolveFloatingBook(ctx, itemMeta)
+		bookID, editionID, bookErr := s.resolveFloatingBook(ctx, userID, itemMeta)
 		if bookErr != nil {
 			rejected = append(rejected, p.Title)
 			decision["outcome"] = "rejected"
@@ -651,7 +651,7 @@ type floatingBookMetadata struct {
 // owned by the metadata enrichment worker. Floating books render with
 // their title-initial fallback until a library acquisition triggers a
 // full enrichment pass.
-func (s *SuggestionsService) resolveFloatingBook(ctx context.Context, meta floatingBookMetadata) (uuid.UUID, uuid.UUID, error) {
+func (s *SuggestionsService) resolveFloatingBook(ctx context.Context, callerID uuid.UUID, meta floatingBookMetadata) (uuid.UUID, uuid.UUID, error) {
 	// Prefer ISBN-13, fall back to ISBN-10 for the global lookup.
 	lookupISBN := meta.ISBN13
 	if lookupISBN == "" {
@@ -741,11 +741,11 @@ func (s *SuggestionsService) resolveFloatingBook(ctx context.Context, meta float
 	}
 
 	// Fetch the cover after the book row exists. Non-fatal on failure —
-	// users can re-enrich later when they add the book to a library. Uses
-	// uuid.Nil as caller because this isn't a user-triggered per-cover
-	// action; the cover_images row records the source URL for provenance.
+	// users can re-enrich later when they add the book to a library.
+	// cover_images.created_by FKs to users(id), so we attribute to the user
+	// whose suggestion this is rather than uuid.Nil.
 	if meta.CoverURL != "" && s.bookSvc != nil {
-		if ferr := s.bookSvc.FetchCoverFromURL(ctx, bookID, uuid.Nil, meta.CoverURL); ferr != nil {
+		if ferr := s.bookSvc.FetchCoverFromURL(ctx, bookID, callerID, meta.CoverURL); ferr != nil {
 			slog.Warn("fetching floating-book cover",
 				"book_id", bookID, "url", meta.CoverURL, "error", ferr)
 		}
