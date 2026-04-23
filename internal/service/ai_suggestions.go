@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -79,8 +80,10 @@ func NewSuggestionsService(
 
 // RunForUser executes the full pipeline for a single user and returns the
 // persisted run record. Safe to call directly from a River worker or an HTTP
-// handler. triggeredBy is one of "scheduler" | "admin" | "user".
-func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, triggeredBy string) (*models.AISuggestionRun, error) {
+// handler. triggeredBy is one of "scheduler" | "admin" | "user". steering is
+// nil for scheduled / admin runs and for unsteered manual runs; when present
+// it's persisted on the run row and rendered into the prompt.
+func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, triggeredBy string, steering *models.SuggestionSteering) (*models.AISuggestionRun, error) {
 	// ── Precondition checks ──────────────────────────────────────────────────
 	user, err := s.repo.GetOptedInUser(ctx, userID)
 	if err != nil {
@@ -154,7 +157,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	// the model to pick different titles this run. Without this the model
 	// deterministically regenerates the same picks every time, the unique index
 	// silently drops them, and the user sees no growth in the lists.
-	existing, err := s.repo.ListSuggestions(ctx, userID, "", "new")
+	existing, err := s.repo.ListSuggestions(ctx, userID, "", "new", nil)
 	if err != nil {
 		return nil, fmt.Errorf("load existing suggestions: %w", err)
 	}
@@ -168,9 +171,31 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		}
 	}
 
+	// ── Hydrate steering (if any) ────────────────────────────────────────────
+	// Names drive both the prompt copy and the row we persist, so the same
+	// lookup serves both needs. An entirely-stale payload (every ID deleted
+	// since the ask) collapses to nil here and flows through as an unsteered
+	// run rather than silently weighting nothing.
+	var hydrated *repository.HydratedSteering
+	var steeringJSON []byte
+	if steering != nil && !steering.IsEmpty() {
+		h, err := s.repo.HydrateSteering(ctx, steering)
+		if err != nil {
+			return nil, fmt.Errorf("hydrate steering: %w", err)
+		}
+		if !h.IsEmpty() {
+			hydrated = h
+			b, err := json.Marshal(steering)
+			if err != nil {
+				return nil, fmt.Errorf("marshal steering: %w", err)
+			}
+			steeringJSON = b
+		}
+	}
+
 	// ── Build prompt ─────────────────────────────────────────────────────────
 	info := provider.Info()
-	prompt := buildSuggestionsPrompt(titles, user.TasteProfile, blocks, perms, cfg, existingBuy, existingReadNext)
+	prompt := buildSuggestionsPrompt(titles, user.TasteProfile, blocks, perms, cfg, existingBuy, existingReadNext, hydrated)
 
 	// ── Record run starting ──────────────────────────────────────────────────
 	// Stamping the configured model on the run row (and pipeline_start event)
@@ -178,7 +203,7 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	// output — useful when comparing Ollama model choices or spotting a silent
 	// config drift.
 	modelID := provider.ConfiguredModel()
-	runID, err := s.repo.CreateRun(ctx, userID, triggeredBy, info.Name, modelID)
+	runID, err := s.repo.CreateRun(ctx, userID, triggeredBy, info.Name, modelID, steeringJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -736,10 +761,58 @@ For "buy" picks, suggest real published books with valid ISBN-13 numbers you are
 Keep reasoning to one sentence focused on why THIS user would enjoy THIS book.`
 
 // buildSuggestionsPrompt assembles the pass-1 prompt. Respects admin
-// permissions by only including the data categories they've enabled.
-func buildSuggestionsPrompt(titles []*repository.LibraryTitle, taste []byte, blocks []*models.AIBlockedItem, perms AIPermissions, cfg AISuggestionsJobConfig, alreadyBuy, alreadyReadNext []string) string {
+// permissions by only including the data categories they've enabled. When
+// steering is non-nil, an explicit "user's ask for THIS run" block is rendered
+// up top so the model treats the request as primary signal rather than just
+// hints blended into the taste profile.
+func buildSuggestionsPrompt(titles []*repository.LibraryTitle, taste []byte, blocks []*models.AIBlockedItem, perms AIPermissions, cfg AISuggestionsJobConfig, alreadyBuy, alreadyReadNext []string, steering *repository.HydratedSteering) string {
 	var b strings.Builder
 	b.WriteString("I have a personal library and want two kinds of book recommendations.\n\n")
+
+	// ── User request for this run (steered only) ────────────────────────────
+	// Rendered first so the model weights this above the passive taste
+	// profile. We list only the dimensions the user actually filled in —
+	// missing ones aren't mentioned at all rather than shown as empty.
+	if !steering.IsEmpty() {
+		b.WriteString("## User request for THIS run\n")
+		b.WriteString("The user has specifically asked for suggestions weighted toward:\n")
+		if len(steering.Authors) > 0 {
+			names := make([]string, 0, len(steering.Authors))
+			for _, a := range steering.Authors {
+				names = append(names, a.Name)
+			}
+			fmt.Fprintf(&b, "  - Authors: %s\n", strings.Join(names, ", "))
+		}
+		if len(steering.Series) > 0 {
+			names := make([]string, 0, len(steering.Series))
+			for _, sr := range steering.Series {
+				names = append(names, sr.Name)
+			}
+			fmt.Fprintf(&b, "  - Series: %s\n", strings.Join(names, ", "))
+		}
+		if len(steering.Genres) > 0 {
+			names := make([]string, 0, len(steering.Genres))
+			for _, g := range steering.Genres {
+				names = append(names, g.Name)
+			}
+			fmt.Fprintf(&b, "  - Genres: %s\n", strings.Join(names, ", "))
+		}
+		if len(steering.Tags) > 0 {
+			names := make([]string, 0, len(steering.Tags))
+			for _, t := range steering.Tags {
+				names = append(names, t.Name)
+			}
+			fmt.Fprintf(&b, "  - Tags: %s\n", strings.Join(names, ", "))
+		}
+		if steering.Notes != "" {
+			fmt.Fprintf(&b, "  - Notes: %s\n", steering.Notes)
+		}
+		b.WriteString("\nPrioritise books that match this request. You may still draw on the\n")
+		b.WriteString("reading history and taste profile below as secondary signal, but when\n")
+		b.WriteString("those conflict with the request above, the request wins. For each\n")
+		b.WriteString("suggestion, briefly cite which part of the request it satisfies in\n")
+		b.WriteString("the reasoning sentence.\n\n")
+	}
 
 	// ── Library summary (high signal, always included when permitted) ───────
 	if perms.FullLibrary && len(titles) > 0 {

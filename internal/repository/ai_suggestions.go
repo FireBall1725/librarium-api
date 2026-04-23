@@ -74,6 +74,19 @@ func (r *AISuggestionsRepo) ListOptedInUsers(ctx context.Context) ([]*OptedInUse
 	return out, rows.Err()
 }
 
+// IsOptedIn reports whether the user has opted into AI features. Distinct
+// from GetOptedInUser: this one doesn't require the user to have any library,
+// because the quota endpoint wants to separate "not opted in" from "no
+// library yet" when reporting availability.
+func (r *AISuggestionsRepo) IsOptedIn(ctx context.Context, userID uuid.UUID) (bool, error) {
+	const q = `SELECT COALESCE((SELECT opt_in FROM user_ai_settings WHERE user_id = $1), FALSE)`
+	var ok bool
+	if err := r.db.QueryRow(ctx, q, userID).Scan(&ok); err != nil {
+		return false, fmt.Errorf("check opt-in: %w", err)
+	}
+	return ok, nil
+}
+
 // GetOptedInUser returns a single user's opt-in row + library if present.
 // Returns nil (no error) if the user isn't opted in or has no library.
 func (r *AISuggestionsRepo) GetOptedInUser(ctx context.Context, userID uuid.UUID) (*OptedInUser, error) {
@@ -243,13 +256,19 @@ func (r *AISuggestionsRepo) BookExistsInLibrary(ctx context.Context, libraryID u
 
 // ─── Runs ─────────────────────────────────────────────────────────────────────
 
-// CreateRun inserts a run row in 'running' state and returns its ID.
-func (r *AISuggestionsRepo) CreateRun(ctx context.Context, userID uuid.UUID, triggeredBy, providerType, modelID string) (uuid.UUID, error) {
+// CreateRun inserts a run row in 'running' state and returns its ID. steering
+// is the raw JSON payload persisted on the row (nil for unsteered runs); pass
+// it pre-marshalled so this helper stays taxonomy-agnostic.
+func (r *AISuggestionsRepo) CreateRun(ctx context.Context, userID uuid.UUID, triggeredBy, providerType, modelID string, steering []byte) (uuid.UUID, error) {
 	const q = `
-		INSERT INTO ai_suggestion_runs (user_id, triggered_by, provider_type, model_id, status)
-		VALUES ($1, $2, $3, $4, 'running') RETURNING id`
+		INSERT INTO ai_suggestion_runs (user_id, triggered_by, provider_type, model_id, status, steering)
+		VALUES ($1, $2, $3, $4, 'running', $5) RETURNING id`
 	var id uuid.UUID
-	if err := r.db.QueryRow(ctx, q, userID, triggeredBy, providerType, modelID).Scan(&id); err != nil {
+	var steeringArg any
+	if len(steering) > 0 {
+		steeringArg = steering
+	}
+	if err := r.db.QueryRow(ctx, q, userID, triggeredBy, providerType, modelID, steeringArg).Scan(&id); err != nil {
 		return uuid.Nil, fmt.Errorf("create run: %w", err)
 	}
 	return id, nil
@@ -468,8 +487,11 @@ func (r *AISuggestionsRepo) ListNewSuggestionKeys(ctx context.Context, userID uu
 }
 
 // ListSuggestions returns the caller's current suggestions. Filter by type
-// ('buy' | 'read_next' | '' for all) and by status ('new' | '' for all).
-func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUID, typeFilter, statusFilter string) ([]*models.AISuggestionWithLibrary, error) {
+// ('buy' | 'read_next' | '' for all), status ('new' | '' for all), and
+// optionally scope to a specific run (non-nil runID). When runID is set, the
+// status filter is ignored — scoped views surface every suggestion the run
+// produced, including ones the user later dismissed or saved.
+func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUID, typeFilter, statusFilter string, runID *uuid.UUID) ([]*models.AISuggestionWithLibrary, error) {
 	// LEFT JOIN on books so read_next suggestions (which point into the user's
 	// library) can surface library_id for direct navigation. buy-type rows have
 	// book_id = NULL so the join just returns NULL for them.
@@ -485,7 +507,10 @@ func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUI
 		q += fmt.Sprintf(" AND s.type = $%d", len(args)+1)
 		args = append(args, typeFilter)
 	}
-	if statusFilter != "" {
+	if runID != nil {
+		q += fmt.Sprintf(" AND s.run_id = $%d", len(args)+1)
+		args = append(args, *runID)
+	} else if statusFilter != "" {
 		q += fmt.Sprintf(" AND s.status = $%d", len(args)+1)
 		args = append(args, statusFilter)
 	}
@@ -605,13 +630,13 @@ func (r *AISuggestionsRepo) GetRun(ctx context.Context, runID uuid.UUID) (*model
 	const q = `
 		SELECT id, user_id, triggered_by, provider_type, model_id, status,
 		       COALESCE(error,''), tokens_in, tokens_out, estimated_cost_usd,
-		       started_at, finished_at
+		       started_at, finished_at, steering
 		FROM ai_suggestion_runs WHERE id = $1`
 	run := &models.AISuggestionRun{}
 	err := r.db.QueryRow(ctx, q, runID).Scan(
 		&run.ID, &run.UserID, &run.TriggeredBy, &run.ProviderType, &run.ModelID,
 		&run.Status, &run.Error, &run.TokensIn, &run.TokensOut, &run.EstimatedCostUSD,
-		&run.StartedAt, &run.FinishedAt,
+		&run.StartedAt, &run.FinishedAt, &run.Steering,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -630,7 +655,7 @@ func (r *AISuggestionsRepo) ListRunsByUser(ctx context.Context, userID uuid.UUID
 	const q = `
 		SELECT id, user_id, triggered_by, provider_type, model_id, status,
 		       COALESCE(error,''), tokens_in, tokens_out, estimated_cost_usd,
-		       started_at, finished_at
+		       started_at, finished_at, steering
 		FROM ai_suggestion_runs WHERE user_id = $1
 		ORDER BY started_at DESC LIMIT $2`
 	return scanRuns(r.db.Query(ctx, q, userID, limit))
@@ -645,7 +670,7 @@ func (r *AISuggestionsRepo) ListRecentRuns(ctx context.Context, limit int) ([]*m
 	const q = `
 		SELECT id, user_id, triggered_by, provider_type, model_id, status,
 		       COALESCE(error,''), tokens_in, tokens_out, estimated_cost_usd,
-		       started_at, finished_at
+		       started_at, finished_at, steering
 		FROM ai_suggestion_runs
 		ORDER BY started_at DESC LIMIT $1`
 	return scanRuns(r.db.Query(ctx, q, limit))
@@ -662,7 +687,7 @@ func scanRuns(rows pgx.Rows, err error) ([]*models.AISuggestionRun, error) {
 		if err := rows.Scan(
 			&run.ID, &run.UserID, &run.TriggeredBy, &run.ProviderType, &run.ModelID,
 			&run.Status, &run.Error, &run.TokensIn, &run.TokensOut, &run.EstimatedCostUSD,
-			&run.StartedAt, &run.FinishedAt,
+			&run.StartedAt, &run.FinishedAt, &run.Steering,
 		); err != nil {
 			return nil, err
 		}
@@ -711,6 +736,166 @@ func (r *AISuggestionsRepo) ListBlocks(ctx context.Context, userID uuid.UUID) ([
 			return nil, err
 		}
 		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// ─── Steering hydration ──────────────────────────────────────────────────────
+
+// NamedEntity is one hydrated {id, name} pair — used for author/series/genre
+// names rendered into prompts and API responses for steered runs.
+type NamedEntity struct {
+	ID   uuid.UUID
+	Name string
+}
+
+// NamedTag is a hydrated tag, including its owning library for UI grouping
+// (tags are library-scoped, so two tags can share a name across libraries).
+type NamedTag struct {
+	ID        uuid.UUID
+	Name      string
+	LibraryID uuid.UUID
+}
+
+// HydratedSteering is a SuggestionSteering with display names filled in,
+// ready to render into a prompt or return from a handler. An ID that no
+// longer resolves (e.g. the author was deleted after the ask) is simply
+// dropped — the ask survives in the JSONB column but we only surface what
+// still exists.
+type HydratedSteering struct {
+	Authors []NamedEntity
+	Series  []NamedEntity
+	Genres  []NamedEntity
+	Tags    []NamedTag
+	Notes   string
+}
+
+// IsEmpty reports whether nothing at all resolved (every ID was stale and no
+// notes were set). Callers can short-circuit rendering in that case.
+func (h *HydratedSteering) IsEmpty() bool {
+	return h == nil ||
+		(len(h.Authors) == 0 && len(h.Series) == 0 && len(h.Genres) == 0 && len(h.Tags) == 0 && h.Notes == "")
+}
+
+// HydrateSteering looks up display names for every ID in the steering payload.
+// Returns nil (no error) when the input is nil or entirely empty.
+func (r *AISuggestionsRepo) HydrateSteering(ctx context.Context, s *models.SuggestionSteering) (*HydratedSteering, error) {
+	if s == nil || s.IsEmpty() {
+		return nil, nil
+	}
+	out := &HydratedSteering{Notes: s.Notes}
+	if len(s.AuthorIDs) > 0 {
+		named, err := r.resolveNamed(ctx, `SELECT id, name FROM contributors WHERE id = ANY($1)`, s.AuthorIDs)
+		if err != nil {
+			return nil, fmt.Errorf("hydrate author names: %w", err)
+		}
+		out.Authors = named
+	}
+	if len(s.SeriesIDs) > 0 {
+		named, err := r.resolveNamed(ctx, `SELECT id, name FROM series WHERE id = ANY($1)`, s.SeriesIDs)
+		if err != nil {
+			return nil, fmt.Errorf("hydrate series names: %w", err)
+		}
+		out.Series = named
+	}
+	if len(s.GenreIDs) > 0 {
+		named, err := r.resolveNamed(ctx, `SELECT id, name FROM genres WHERE id = ANY($1)`, s.GenreIDs)
+		if err != nil {
+			return nil, fmt.Errorf("hydrate genre names: %w", err)
+		}
+		out.Genres = named
+	}
+	if len(s.TagIDs) > 0 {
+		rows, err := r.db.Query(ctx, `SELECT id, name, library_id FROM tags WHERE id = ANY($1)`, s.TagIDs)
+		if err != nil {
+			return nil, fmt.Errorf("hydrate tag names: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var t NamedTag
+			if err := rows.Scan(&t.ID, &t.Name, &t.LibraryID); err != nil {
+				return nil, err
+			}
+			out.Tags = append(out.Tags, t)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (r *AISuggestionsRepo) resolveNamed(ctx context.Context, query string, ids []uuid.UUID) ([]NamedEntity, error) {
+	rows, err := r.db.Query(ctx, query, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NamedEntity
+	for rows.Next() {
+		var n NamedEntity
+		if err := rows.Scan(&n.ID, &n.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// ResolveNames returns an id→name map for a single {id, name}-shaped table.
+// table must be one of the known taxonomy tables — we gate it in code because
+// Postgres can't parameterise identifiers. Unknown tables return an error.
+// An empty ids slice returns an empty map with no query.
+func (r *AISuggestionsRepo) ResolveNames(ctx context.Context, table string, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var query string
+	switch table {
+	case "contributors":
+		query = `SELECT id, name FROM contributors WHERE id = ANY($1)`
+	case "series":
+		query = `SELECT id, name FROM series WHERE id = ANY($1)`
+	case "genres":
+		query = `SELECT id, name FROM genres WHERE id = ANY($1)`
+	default:
+		return nil, fmt.Errorf("resolve names: unsupported table %q", table)
+	}
+	rows, err := r.db.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s names: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			return nil, err
+		}
+		out[id] = name
+	}
+	return out, rows.Err()
+}
+
+// ResolveTags returns an id→tag map; tags need their owning library alongside
+// the name because the UI groups tags per library.
+func (r *AISuggestionsRepo) ResolveTags(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]NamedTag, error) {
+	out := make(map[uuid.UUID]NamedTag, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `SELECT id, name, library_id FROM tags WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("resolve tags: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t NamedTag
+		if err := rows.Scan(&t.ID, &t.Name, &t.LibraryID); err != nil {
+			return nil, err
+		}
+		out[t.ID] = t
 	}
 	return out, rows.Err()
 }
