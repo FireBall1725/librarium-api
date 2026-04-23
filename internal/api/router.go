@@ -211,6 +211,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("DELETE /api/v1/admin/jobs/history", requireAdmin(http.HandlerFunc(unifiedJobsHandler.DeleteHistory)))
 	mux.Handle("GET /api/v1/admin/jobs/schedules", requireAdmin(http.HandlerFunc(unifiedJobsHandler.ListSchedules)))
 	mux.Handle("PUT /api/v1/admin/jobs/schedules/{kind}", requireAdmin(http.HandlerFunc(unifiedJobsHandler.UpdateSchedule)))
+	mux.Handle("POST /api/v1/admin/jobs/schedules/{kind}/run", requireAdmin(http.HandlerFunc(unifiedJobsHandler.RunNow)))
 	mux.Handle("GET /api/v1/admin/jobs/{id}", requireAdmin(http.HandlerFunc(unifiedJobsHandler.Detail)))
 	mux.Handle("DELETE /api/v1/admin/jobs/{id}", requireAdmin(http.HandlerFunc(unifiedJobsHandler.Delete)))
 	mux.Handle("GET /api/v1/admin/jobs/ai-suggestions", requireAdmin(http.HandlerFunc(jobsHandler.GetAISuggestionsJob)))

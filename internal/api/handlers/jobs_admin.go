@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
 	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/models"
@@ -300,6 +301,71 @@ func computeNextFire(s *models.JobSchedule) (time.Time, bool) {
 		next = sched.Next(time.Now())
 	}
 	return next, true
+}
+
+// RunNow godoc
+//
+//	@Summary     Run a scheduled job once, now
+//	@Description Fires the kind's Enqueue hook immediately, bypassing the
+//	@Description cron. Creates an umbrella jobs row with triggered_by=admin
+//	@Description so the run shows up in history as admin-triggered.
+//	@Tags        admin,jobs
+//	@Security    BearerAuth
+//	@Param       kind  path  string  true  "job kind"
+//	@Success     202   {object}  handlers.JobView
+//	@Failure     400   {object}  object{error=string}
+//	@Failure     404   {object}  object{error=string}
+//	@Router      /admin/jobs/schedules/{kind}/run [post]
+func (h *UnifiedJobsHandler) RunNow(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if kind == "" {
+		respond.Error(w, http.StatusBadRequest, "missing kind")
+		return
+	}
+	def := h.registry.Get(jobs.Kind(kind))
+	if def == nil {
+		respond.Error(w, http.StatusNotFound, "unknown job kind")
+		return
+	}
+	if def.Enqueue == nil {
+		respond.Error(w, http.StatusBadRequest, "this kind doesn't support manual run")
+		return
+	}
+	// Look up the schedule's config (if any) — admin-run uses whatever
+	// the kind has stored. Missing schedule = empty config.
+	var cfg json.RawMessage = json.RawMessage("{}")
+	if s, err := h.jobs.GetSchedule(r.Context(), kind); err == nil && s != nil {
+		if len(s.Config) > 0 {
+			cfg = s.Config
+		}
+	}
+
+	now := time.Now()
+	j := &models.Job{
+		Kind:        kind,
+		Status:      models.JobStatusRunning,
+		TriggeredBy: models.JobTriggeredByAdmin,
+		StartedAt:   &now,
+	}
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		uid := claims.UserID
+		j.CreatedBy = &uid
+	}
+	if err := h.jobs.CreateJob(r.Context(), j); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	if err := def.Enqueue(r.Context(), jobs.TriggerCtx{
+		JobID:       j.ID,
+		TriggeredBy: models.JobTriggeredByAdmin,
+		CreatedBy:   j.CreatedBy,
+	}, cfg); err != nil {
+		_ = h.jobs.MarkFinished(r.Context(), j.ID, models.JobStatusFailed, err.Error())
+		respond.ServerError(w, r, err)
+		return
+	}
+	_ = h.jobs.MarkFinished(r.Context(), j.ID, models.JobStatusCompleted, "")
+	respond.JSON(w, http.StatusAccepted, toJobView(j))
 }
 
 // UpdateSchedule godoc
