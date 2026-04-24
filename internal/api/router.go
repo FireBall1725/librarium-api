@@ -97,6 +97,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	shelfSvc := service.NewShelfService(shelfRepo, tagRepo)
 	importSvc := service.NewImportService(importJobRepo, riverClient)
 	enrichmentBatchRepo := repository.NewEnrichmentBatchRepo(db)
+	apiTokenRepo := repository.NewAPITokenRepo(db)
 
 	providerHandler := handlers.NewProviderHandler(providerSvc)
 	aiHandler := handlers.NewAIHandler(aiSvc)
@@ -126,7 +127,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
 	go releaseChecker.Start(ctx)
 
-	requireAuth := middleware.RequireAuth(jwtSvc, denylistRepo)
+	requireAuth := middleware.RequireAuth(jwtSvc, denylistRepo, apiTokenRepo)
 	// requireAdmin chains auth validation then instance-admin check
 	requireAdmin := func(h http.Handler) http.Handler {
 		return requireAuth(middleware.RequireInstanceAdmin(h))
@@ -168,6 +169,12 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("PUT /api/v1/auth/me/password", requireAuth(http.HandlerFunc(authHandler.UpdatePassword)))
 	mux.Handle("GET /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.GetPreferences)))
 	mux.Handle("PATCH /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.PatchPreferences)))
+
+	// Personal access tokens
+	apiTokenHandler := handlers.NewAPITokenHandler(apiTokenRepo)
+	mux.Handle("GET /api/v1/me/api-tokens", requireAuth(http.HandlerFunc(apiTokenHandler.List)))
+	mux.Handle("POST /api/v1/me/api-tokens", requireAuth(http.HandlerFunc(apiTokenHandler.Create)))
+	mux.Handle("DELETE /api/v1/me/api-tokens/{id}", requireAuth(http.HandlerFunc(apiTokenHandler.Revoke)))
 
 	// Admin — instance config (read-only view of runtime settings)
 	mux.Handle("GET /api/v1/admin/config", requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
