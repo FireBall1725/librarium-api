@@ -13,6 +13,16 @@ This project uses **`YY.MM.revision`** (e.g. `26.4.0`, `26.4.1`):
 
 Versions `0.1.0` → `0.13.0` predate this scheme. `26.4.0` is the first release cut under the new format and the first release of `librarium-api` as an independent repository.
 
+## [26.4.2] — Railway deploy support
+
+Deployment-infrastructure release: adds a first-class "run Librarium on Railway" path so self-hosters who'd rather pay $5/month than manage a VPS have an on-ramp.
+
+### Added
+
+- `railway.toml` at the repo root — Railway picks up the Dockerfile build, `/health` healthcheck, and restart policy without any extra dashboard config.
+- `deploy/railway/README.md` walkthrough covering the full three-service project (api + web + managed Postgres), custom domains, upgrades, and rollback.
+- README section under Deployment linking to the Railway guide alongside the existing Docker Compose and Kubernetes paths.
+
 ## [26.4.1] — AI-powered book suggestions
 
 End-to-end suggestions feature that recommends books to buy (not in the library) and books to read next (owned but unread). All AI access is opt-in at both the admin (data-category permissions) and user (master toggle) level — restrictive-wins.

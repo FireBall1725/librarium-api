@@ -1,0 +1,27 @@
+# Railway build/deploy config for librarium-api.
+#
+# Build: uses the repo Dockerfile (multi-stage: Go build → distroless).
+# The binary listens on :8080 and exposes /health for the platform probe.
+#
+# Required env vars on Railway:
+#   DATABASE_URL  — reference the provisioned Postgres plugin, e.g.
+#                   ${{Postgres.DATABASE_URL}}. Append ?sslmode=require
+#                   for Railway's managed Postgres.
+#   JWT_SECRET    — long random string. No default; the server won't boot
+#                   without one in production.
+#
+# Optional:
+#   LOG_LEVEL (default info)
+#   REGISTRATION_ENABLED (default true — set false to lock down new signups
+#                         after you've created the first admin via /setup)
+#   OAUTH_*, GOOGLE_BOOKS_API_KEY — see docs/deploy/railway.md
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
