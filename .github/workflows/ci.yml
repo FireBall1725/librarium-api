@@ -21,7 +21,7 @@ jobs:
       # staticcheck, ineffassign, unused, bodyclose, misspell). The
       # action handles tool install + cache.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.4
 
