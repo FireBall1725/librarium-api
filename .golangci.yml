@@ -28,6 +28,10 @@ linters:
   enable:
     - bodyclose
     - misspell
+  # Generated code is covered by its generator's own quality bar (swag for
+  # docs/, etc.) — keep it out of the linter's scope.
+  exclusions:
+    generated: lax
   settings:
     errcheck:
       # Conventional patterns where the unchecked error is intentional:
@@ -52,8 +56,3 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-
-# Generated code is covered by its generator's own quality bar (swag for
-# docs/, etc.) — keep it out of the linter's scope.
-exclusions:
-  generated: lax
