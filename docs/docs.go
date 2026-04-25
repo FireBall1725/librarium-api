@@ -6650,6 +6650,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "User UUID to attribute reading data to (admin-only when not the caller)",
+                        "name": "attribute_to_user_id",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
                         "description": "Enrich metadata after import",
                         "name": "enrich_metadata",
                         "in": "formData"
@@ -11286,6 +11292,9 @@ const docTemplate = `{
         "github_com_fireball1725_librarium-api_internal_models.ImportOptions": {
             "type": "object",
             "properties": {
+                "attribute_to_user_id": {
+                    "type": "string"
+                },
                 "default_format": {
                     "type": "string"
                 },

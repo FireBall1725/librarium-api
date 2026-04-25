@@ -99,6 +99,18 @@ func (r *MembershipRepo) UpdateRole(ctx context.Context, libraryID, userID, role
 	return nil
 }
 
+// IsMember reports whether the given user has any role in the library.
+// Cheap point lookup used by handlers that need to validate cross-user
+// references (e.g. import attribution) without loading the full member list.
+func (r *MembershipRepo) IsMember(ctx context.Context, libraryID, userID uuid.UUID) (bool, error) {
+	const q = `SELECT EXISTS(SELECT 1 FROM library_memberships WHERE library_id = $1 AND user_id = $2)`
+	var ok bool
+	if err := r.db.QueryRow(ctx, q, libraryID, userID).Scan(&ok); err != nil {
+		return false, fmt.Errorf("checking membership: %w", err)
+	}
+	return ok, nil
+}
+
 func (r *MembershipRepo) Remove(ctx context.Context, libraryID, userID uuid.UUID) error {
 	result, err := r.db.Exec(ctx,
 		`DELETE FROM library_memberships WHERE library_id = $1 AND user_id = $2`,

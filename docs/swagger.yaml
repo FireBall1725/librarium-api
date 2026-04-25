@@ -206,6 +206,8 @@ definitions:
     - ImportJobCancelled
   github_com_fireball1725_librarium-api_internal_models.ImportOptions:
     properties:
+      attribute_to_user_id:
+        type: string
       default_format:
         type: string
       duplicate_increment_count:
@@ -5507,6 +5509,11 @@ paths:
       - description: Default edition format (default paperback)
         in: formData
         name: default_format
+        type: string
+      - description: User UUID to attribute reading data to (admin-only when not
+          the caller)
+        in: formData
+        name: attribute_to_user_id
         type: string
       - description: Enrich metadata after import
         in: formData

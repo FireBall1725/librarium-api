@@ -37,6 +37,7 @@ type ImportRequest struct {
 	DefaultFormat               string
 	EnrichMetadata              bool
 	EnrichCovers                bool
+	AttributeToUserID           *uuid.UUID // nil → attribute to caller
 }
 
 // StartImport parses the CSV, stores the job + items, and enqueues a River job.
@@ -62,6 +63,7 @@ func (s *ImportService) StartImport(ctx context.Context, req ImportRequest) (*mo
 			DefaultFormat:               models.NormalizeEditionFormat(req.DefaultFormat),
 			EnrichMetadata:              req.EnrichMetadata,
 			EnrichCovers:                req.EnrichCovers,
+			AttributeToUserID:           req.AttributeToUserID,
 		},
 	}
 

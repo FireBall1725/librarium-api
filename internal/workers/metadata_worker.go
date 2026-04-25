@@ -108,7 +108,11 @@ func (w *MetadataWorker) ProcessBook(ctx context.Context, bookID, callerID uuid.
 		}
 	}
 
-	// Fetch cover if the book has none, or when force/cover_only is set.
+	// Fetch cover if the book has none, or when force is set. cover_only
+	// no longer forces a refetch — a book that already has a cover is
+	// left alone in any post-import / batch enrichment, matching the
+	// "fill missing data only" contract the import UI advertises.
+	// Only an explicit Force=true (e.g. a manual re-fetch) overrides.
 	if len(merged.Covers) == 0 {
 		if coverOnly {
 			return ErrNoUpdate // nothing to do for a cover-only job
@@ -120,7 +124,13 @@ func (w *MetadataWorker) ProcessBook(ctx context.Context, bookID, callerID uuid.
 	if _, _, err := w.bookSvc.GetBookCoverPath(ctx, bookID); err == nil {
 		hasCover = true
 	}
-	if !hasCover || force || coverOnly {
+	if hasCover && !force {
+		if coverOnly {
+			return ErrNoUpdate // already has a cover; cover-only batch is a no-op
+		}
+		return nil
+	}
+	if !hasCover || force {
 		// Try covers in priority order until one downloads successfully —
 		// the top-priority URL (e.g. Google Books thumbnail) can 403/404, and
 		// falling through to the next provider is better than giving up.

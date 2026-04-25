@@ -20,11 +20,12 @@ import (
 )
 
 type ImportHandler struct {
-	svc *service.ImportService
+	svc         *service.ImportService
+	memberships *repository.MembershipRepo
 }
 
-func NewImportHandler(svc *service.ImportService) *ImportHandler {
-	return &ImportHandler{svc: svc}
+func NewImportHandler(svc *service.ImportService, memberships *repository.MembershipRepo) *ImportHandler {
+	return &ImportHandler{svc: svc, memberships: memberships}
 }
 
 // CreateImport godoc
@@ -43,6 +44,7 @@ func NewImportHandler(svc *service.ImportService) *ImportHandler {
 // @Param       default_format             formData  string  false  "Default edition format (default paperback)"
 // @Param       enrich_metadata            formData  string  false  "Enrich metadata after import"
 // @Param       enrich_covers              formData  string  false  "Fetch covers after import"
+// @Param       attribute_to_user_id       formData  string  false  "User UUID to attribute reading data to (admin-only when not the caller)"
 // @Success     201  {object}  models.ImportJob
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -112,6 +114,35 @@ func (h *ImportHandler) CreateImport(w http.ResponseWriter, r *http.Request) {
 		enrichCovers, _ = strconv.ParseBool(ec)
 	}
 
+	// Optional attribution override — when set, the user-interaction
+	// fields land on this user instead of the caller. Only instance
+	// admins may attribute to someone else; everyone else either omits
+	// the field or sends their own user id (which is a no-op).
+	var attributeTo *uuid.UUID
+	if v := strings.TrimSpace(r.FormValue("attribute_to_user_id")); v != "" {
+		uid, err := uuid.Parse(v)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid attribute_to_user_id")
+			return
+		}
+		if uid != caller.UserID {
+			if !caller.IsInstanceAdmin {
+				respond.Error(w, http.StatusForbidden, "only instance admins can attribute imports to other users")
+				return
+			}
+			isMember, err := h.memberships.IsMember(r.Context(), libraryID, uid)
+			if err != nil {
+				respond.ServerError(w, r, err)
+				return
+			}
+			if !isMember {
+				respond.Error(w, http.StatusBadRequest, "attribute_to_user_id is not a member of this library")
+				return
+			}
+			attributeTo = &uid
+		}
+	}
+
 	req := service.ImportRequest{
 		LibraryID:                   libraryID,
 		CallerID:                    caller.UserID,
@@ -122,6 +153,7 @@ func (h *ImportHandler) CreateImport(w http.ResponseWriter, r *http.Request) {
 		DefaultFormat:               defaultFormat,
 		EnrichMetadata:              enrichMetadata,
 		EnrichCovers:                enrichCovers,
+		AttributeToUserID:           attributeTo,
 	}
 
 	job, err := h.svc.StartImport(r.Context(), req)

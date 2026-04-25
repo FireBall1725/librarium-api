@@ -45,12 +45,19 @@ const (
 // EnrichMetadata is fill-in-the-blanks only — the post-import enrichment
 // run never overwrites a populated CSV field, so there is no per-field
 // "prefer CSV" knob to keep here.
+//
+// AttributeToUserID redirects the user-interaction fields (read status,
+// rating, review, dates, favourite) to a specific library member. When
+// nil, the worker falls back to ImportJob.CreatedBy so a self-import
+// behaves the same as before. Only instance admins may set a value
+// other than the caller — the handler enforces that.
 type ImportOptions struct {
-	DuplicateIncrementCopyCount bool   `json:"duplicate_increment_count"`
-	DuplicateUpdateFromCSV      bool   `json:"duplicate_update_from_csv"`
-	DefaultFormat               string `json:"default_format"`
-	EnrichMetadata              bool   `json:"enrich_metadata"`
-	EnrichCovers                bool   `json:"enrich_covers"`
+	DuplicateIncrementCopyCount bool       `json:"duplicate_increment_count"`
+	DuplicateUpdateFromCSV      bool       `json:"duplicate_update_from_csv"`
+	DefaultFormat               string     `json:"default_format"`
+	EnrichMetadata              bool       `json:"enrich_metadata"`
+	EnrichCovers                bool       `json:"enrich_covers"`
+	AttributeToUserID           *uuid.UUID `json:"attribute_to_user_id,omitempty"`
 }
 
 // MetadataEnrichmentJobArgs is the River job payload for async metadata enrichment.
