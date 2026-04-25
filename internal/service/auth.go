@@ -232,7 +232,14 @@ func (s *AuthService) Refresh(ctx context.Context, rawToken string) (*AuthRespon
 		return nil, err
 	}
 
+	// A revoked refresh token presented for refresh is a compromise
+	// signal: the token was already rotated once, and now an attacker
+	// (or — rarer — a buggy client) is trying to reuse it. Burn every
+	// outstanding refresh token for this user so the legitimate session
+	// has to re-authenticate. The legitimate user will see one annoying
+	// re-login; the attacker loses all tokens they may have stolen.
 	if rt.RevokedAt != nil {
+		_ = s.tokens.RevokeAllForUser(ctx, rt.UserID)
 		return nil, ErrTokenRevoked
 	}
 	if time.Now().After(rt.ExpiresAt) {

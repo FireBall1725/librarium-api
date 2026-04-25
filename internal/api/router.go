@@ -157,10 +157,17 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.HandleFunc("GET /api/v1/setup/status", setupHandler.Status)
 	mux.HandleFunc("POST /api/v1/setup/admin", setupHandler.BootstrapAdmin)
 
-	// Auth — public
-	mux.HandleFunc("POST /api/v1/auth/register", authHandler.Register)
-	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
-	mux.HandleFunc("POST /api/v1/auth/refresh", authHandler.Refresh)
+	// Auth — public, rate-limited per client IP. Generous bursts keep real
+	// clients with stuttery networks happy while still blocking
+	// credential-stuffing / refresh-grinding attempts at the binary layer.
+	// (Operators running multiple replicas should lift rate limiting to the
+	// proxy; this is a single-binary safety net.)
+	loginLimiter := middleware.NewRateLimiter(10, 10, time.Minute).Middleware
+	registerLimiter := middleware.NewRateLimiter(5, 5, time.Minute).Middleware
+	refreshLimiter := middleware.NewRateLimiter(30, 30, time.Minute).Middleware
+	mux.Handle("POST /api/v1/auth/register", registerLimiter(http.HandlerFunc(authHandler.Register)))
+	mux.Handle("POST /api/v1/auth/login", loginLimiter(http.HandlerFunc(authHandler.Login)))
+	mux.Handle("POST /api/v1/auth/refresh", refreshLimiter(http.HandlerFunc(authHandler.Refresh)))
 
 	// Auth — protected
 	mux.Handle("POST /api/v1/auth/logout", requireAuth(http.HandlerFunc(authHandler.Logout)))
@@ -430,5 +437,8 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("PUT /api/v1/genres/{genre_id}", requireAdmin(http.HandlerFunc(genreHandler.UpdateGenre)))
 	mux.Handle("DELETE /api/v1/genres/{genre_id}", requireAdmin(http.HandlerFunc(genreHandler.DeleteGenre)))
 
-	return middleware.Logger(mux, metrics)
+	// Security headers wrap the entire surface so they apply to docs, the
+	// OpenAPI spec, and every API response uniformly. Logger sits inside so
+	// it still records the same per-request data.
+	return middleware.SecurityHeaders(middleware.Logger(mux, metrics))
 }

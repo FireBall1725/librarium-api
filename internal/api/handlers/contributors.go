@@ -16,6 +16,7 @@ import (
 
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
+	"github.com/fireball1725/librarium-api/internal/api/uploads"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/providers"
 	"github.com/fireball1725/librarium-api/internal/repository"
@@ -285,24 +286,29 @@ func (h *ContributorHandler) UploadContributorPhoto(w http.ResponseWriter, r *ht
 		respond.Error(w, http.StatusBadRequest, "invalid multipart form")
 		return
 	}
-	file, header, err := r.FormFile("photo")
+	file, _, err := r.FormFile("photo")
 	if err != nil {
 		respond.Error(w, http.StatusBadRequest, "photo file is required")
 		return
 	}
 	defer file.Close()
 
-	mime := header.Header.Get("Content-Type")
-	if mime == "" || !strings.HasPrefix(mime, "image/") {
-		respond.Error(w, http.StatusBadRequest, "file must be an image")
+	mime, head, err := uploads.SniffImage(file)
+	if errors.Is(err, uploads.ErrUnsupportedType) {
+		respond.Error(w, http.StatusBadRequest, "file must be a PNG, JPEG, GIF, or WebP image")
 		return
 	}
-
-	data, err := io.ReadAll(io.LimitReader(file, 10<<20))
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
 	}
+
+	rest, err := io.ReadAll(io.LimitReader(file, (10<<20)-int64(len(head))))
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	data := append(head, rest...)
 
 	if err := h.svc.StorePhotoFromUpload(r.Context(), contributorID, claims.UserID, data, mime); err != nil {
 		respond.ServerError(w, r, err)
