@@ -6632,14 +6632,26 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Skip duplicate ISBNs (default true)",
-                        "name": "skip_duplicates",
+                        "description": "On duplicate ISBN: bump copy count (default false)",
+                        "name": "duplicate_increment_count",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "On duplicate ISBN: refresh user-interaction fields from the CSV row (default false)",
+                        "name": "duplicate_update_from_csv",
                         "in": "formData"
                     },
                     {
                         "type": "string",
                         "description": "Default edition format (default paperback)",
                         "name": "default_format",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "User UUID to attribute reading data to (admin-only when not the caller)",
+                        "name": "attribute_to_user_id",
                         "in": "formData"
                     },
                     {
@@ -11280,22 +11292,22 @@ const docTemplate = `{
         "github_com_fireball1725_librarium-api_internal_models.ImportOptions": {
             "type": "object",
             "properties": {
+                "attribute_to_user_id": {
+                    "type": "string"
+                },
                 "default_format": {
                     "type": "string"
+                },
+                "duplicate_increment_count": {
+                    "type": "boolean"
+                },
+                "duplicate_update_from_csv": {
+                    "type": "boolean"
                 },
                 "enrich_covers": {
                     "type": "boolean"
                 },
                 "enrich_metadata": {
-                    "type": "boolean"
-                },
-                "prefer_csv": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "boolean"
-                    }
-                },
-                "skip_duplicates": {
                     "type": "boolean"
                 }
             }
@@ -11796,6 +11808,16 @@ const docTemplate = `{
                 "kind": {
                     "type": "string"
                 },
+                "kind_id": {
+                    "description": "KindID is the per-kind detail row's primary key when one exists\n(import_jobs.id, enrichment_batches.id). Clients use it to deep-link\nthe umbrella row back to its detail endpoint, which is keyed by the\nper-kind id rather than the umbrella job id. Empty for kinds that\nhave no detail table (cover_backfill, ai_suggestions today).",
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "library_name": {
+                    "type": "string"
+                },
                 "progress": {
                     "type": "array",
                     "items": {
@@ -11809,6 +11831,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "subtype": {
+                    "description": "Subtype is the per-kind discriminator surfaced for UI badges.\nToday only enrichment uses it (\"metadata\" or \"cover\"); other\nkinds leave it empty and the client falls back to Kind alone.",
                     "type": "string"
                 },
                 "triggered_by": {

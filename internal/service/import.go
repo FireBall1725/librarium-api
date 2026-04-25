@@ -28,15 +28,16 @@ func NewImportService(importJobs *repository.ImportJobRepo, riverClient *river.C
 
 // ImportRequest carries the parsed CSV and options sent by the frontend.
 type ImportRequest struct {
-	LibraryID     uuid.UUID
-	CallerID      uuid.UUID
-	CSVText       string
-	FieldMapping  map[string]int // field name → CSV column index
-	SkipDuplicates bool
-	DefaultFormat  string
-	PreferCSV       map[string]bool
-	EnrichMetadata  bool
-	EnrichCovers    bool
+	LibraryID                   uuid.UUID
+	CallerID                    uuid.UUID
+	CSVText                     string
+	FieldMapping                map[string]int // field name → CSV column index
+	DuplicateIncrementCopyCount bool
+	DuplicateUpdateFromCSV      bool
+	DefaultFormat               string
+	EnrichMetadata              bool
+	EnrichCovers                bool
+	AttributeToUserID           *uuid.UUID // nil → attribute to caller
 }
 
 // StartImport parses the CSV, stores the job + items, and enqueues a River job.
@@ -57,11 +58,12 @@ func (s *ImportService) StartImport(ctx context.Context, req ImportRequest) (*mo
 		Status:    models.ImportJobPending,
 		TotalRows: len(rows),
 		Options: models.ImportOptions{
-			SkipDuplicates: req.SkipDuplicates,
-			DefaultFormat:  models.NormalizeEditionFormat(req.DefaultFormat),
-			PreferCSV:      req.PreferCSV,
-			EnrichMetadata: req.EnrichMetadata,
-			EnrichCovers:   req.EnrichCovers,
+			DuplicateIncrementCopyCount: req.DuplicateIncrementCopyCount,
+			DuplicateUpdateFromCSV:      req.DuplicateUpdateFromCSV,
+			DefaultFormat:               models.NormalizeEditionFormat(req.DefaultFormat),
+			EnrichMetadata:              req.EnrichMetadata,
+			EnrichCovers:                req.EnrichCovers,
+			AttributeToUserID:           req.AttributeToUserID,
 		},
 	}
 

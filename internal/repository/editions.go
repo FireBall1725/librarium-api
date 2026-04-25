@@ -295,6 +295,60 @@ func (r *EditionRepo) UpsertInteraction(ctx context.Context, userID, editionID u
 	return i, nil
 }
 
+// MergeInteraction is the import-safe variant of UpsertInteraction:
+// every argument is a pointer (or nullable any) and a nil value
+// preserves whatever the existing row holds. The full-overwrite
+// version is correct for the manual edit flow (the client always sends
+// the complete record), but is destructive for CSV imports where a
+// blank column means "no data" rather than "set to empty".
+//
+// String columns treat empty as no-input via NULLIF; nullable columns
+// treat nil the same way. is_favorite has to be tri-state, so it
+// takes a *bool — pass nil to leave the existing flag alone.
+func (r *EditionRepo) MergeInteraction(
+	ctx context.Context,
+	userID, editionID uuid.UUID,
+	readStatus *string,
+	rating any,
+	notes, review *string,
+	dateStarted, dateFinished any,
+	isFavorite *bool,
+) (*models.UserBookInteraction, error) {
+	const q = `
+		INSERT INTO user_book_interactions
+			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite)
+		VALUES
+			($1, $2, $3, COALESCE(NULLIF($4,''),''), $5, NULLIF($6,''), NULLIF($7,''), $8, $9, COALESCE($10, false))
+		ON CONFLICT (user_id, book_edition_id) DO UPDATE
+		SET read_status   = COALESCE(NULLIF(EXCLUDED.read_status,''), user_book_interactions.read_status),
+		    rating        = COALESCE(EXCLUDED.rating, user_book_interactions.rating),
+		    notes         = COALESCE(EXCLUDED.notes, user_book_interactions.notes),
+		    review        = COALESCE(EXCLUDED.review, user_book_interactions.review),
+		    date_started  = COALESCE(EXCLUDED.date_started, user_book_interactions.date_started),
+		    date_finished = COALESCE(EXCLUDED.date_finished, user_book_interactions.date_finished),
+		    is_favorite   = COALESCE($10, user_book_interactions.is_favorite),
+		    updated_at    = NOW()
+		RETURNING ` + interactionColumns
+
+	rs := ""
+	if readStatus != nil {
+		rs = *readStatus
+	}
+	nt := ""
+	if notes != nil {
+		nt = *notes
+	}
+	rv := ""
+	if review != nil {
+		rv = *review
+	}
+	i, err := scanInteraction(r.db.QueryRow(ctx, q, uuid.New(), userID, editionID, rs, rating, nt, rv, dateStarted, dateFinished, isFavorite))
+	if err != nil {
+		return nil, fmt.Errorf("merging interaction: %w", err)
+	}
+	return i, nil
+}
+
 func (r *EditionRepo) DeleteInteraction(ctx context.Context, userID, editionID uuid.UUID) error {
 	result, err := r.db.Exec(ctx,
 		`DELETE FROM user_book_interactions WHERE user_id = $1 AND book_edition_id = $2`,

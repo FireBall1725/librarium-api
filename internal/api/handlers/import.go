@@ -20,11 +20,12 @@ import (
 )
 
 type ImportHandler struct {
-	svc *service.ImportService
+	svc         *service.ImportService
+	memberships *repository.MembershipRepo
 }
 
-func NewImportHandler(svc *service.ImportService) *ImportHandler {
-	return &ImportHandler{svc: svc}
+func NewImportHandler(svc *service.ImportService, memberships *repository.MembershipRepo) *ImportHandler {
+	return &ImportHandler{svc: svc, memberships: memberships}
 }
 
 // CreateImport godoc
@@ -38,10 +39,12 @@ func NewImportHandler(svc *service.ImportService) *ImportHandler {
 // @Param       library_id       path      string  true   "Library UUID"
 // @Param       file             formData  file    true   "CSV file to import"
 // @Param       mapping          formData  string  false  "JSON column mapping {field_name: column_index}"
-// @Param       skip_duplicates  formData  string  false  "Skip duplicate ISBNs (default true)"
-// @Param       default_format   formData  string  false  "Default edition format (default paperback)"
-// @Param       enrich_metadata  formData  string  false  "Enrich metadata after import"
-// @Param       enrich_covers    formData  string  false  "Fetch covers after import"
+// @Param       duplicate_increment_count  formData  string  false  "On duplicate ISBN: bump copy count (default false)"
+// @Param       duplicate_update_from_csv  formData  string  false  "On duplicate ISBN: refresh user-interaction fields from the CSV row (default false)"
+// @Param       default_format             formData  string  false  "Default edition format (default paperback)"
+// @Param       enrich_metadata            formData  string  false  "Enrich metadata after import"
+// @Param       enrich_covers              formData  string  false  "Fetch covers after import"
+// @Param       attribute_to_user_id       formData  string  false  "User UUID to attribute reading data to (admin-only when not the caller)"
 // @Success     201  {object}  models.ImportJob
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -86,18 +89,14 @@ func (h *ImportHandler) CreateImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse prefer_csv: JSON {"title": true, ...}
-	preferCSV := make(map[string]bool)
-	if preferStr := r.FormValue("prefer_csv"); preferStr != "" {
-		if err := json.Unmarshal([]byte(preferStr), &preferCSV); err != nil {
-			respond.Error(w, http.StatusBadRequest, "invalid prefer_csv JSON")
-			return
-		}
+	dupIncrement := false
+	if v := r.FormValue("duplicate_increment_count"); v != "" {
+		dupIncrement, _ = strconv.ParseBool(v)
 	}
 
-	skipDuplicates := true
-	if sd := r.FormValue("skip_duplicates"); sd != "" {
-		skipDuplicates, _ = strconv.ParseBool(sd)
+	dupUpdate := false
+	if v := r.FormValue("duplicate_update_from_csv"); v != "" {
+		dupUpdate, _ = strconv.ParseBool(v)
 	}
 
 	defaultFormat := r.FormValue("default_format")
@@ -115,16 +114,46 @@ func (h *ImportHandler) CreateImport(w http.ResponseWriter, r *http.Request) {
 		enrichCovers, _ = strconv.ParseBool(ec)
 	}
 
+	// Optional attribution override — when set, the user-interaction
+	// fields land on this user instead of the caller. Only instance
+	// admins may attribute to someone else; everyone else either omits
+	// the field or sends their own user id (which is a no-op).
+	var attributeTo *uuid.UUID
+	if v := strings.TrimSpace(r.FormValue("attribute_to_user_id")); v != "" {
+		uid, err := uuid.Parse(v)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid attribute_to_user_id")
+			return
+		}
+		if uid != caller.UserID {
+			if !caller.IsInstanceAdmin {
+				respond.Error(w, http.StatusForbidden, "only instance admins can attribute imports to other users")
+				return
+			}
+			isMember, err := h.memberships.IsMember(r.Context(), libraryID, uid)
+			if err != nil {
+				respond.ServerError(w, r, err)
+				return
+			}
+			if !isMember {
+				respond.Error(w, http.StatusBadRequest, "attribute_to_user_id is not a member of this library")
+				return
+			}
+			attributeTo = &uid
+		}
+	}
+
 	req := service.ImportRequest{
-		LibraryID:      libraryID,
-		CallerID:       caller.UserID,
-		CSVText:        string(csvBytes),
-		FieldMapping:   mapping,
-		SkipDuplicates: skipDuplicates,
-		DefaultFormat:  defaultFormat,
-		PreferCSV:      preferCSV,
-		EnrichMetadata: enrichMetadata,
-		EnrichCovers:   enrichCovers,
+		LibraryID:                   libraryID,
+		CallerID:                    caller.UserID,
+		CSVText:                     string(csvBytes),
+		FieldMapping:                mapping,
+		DuplicateIncrementCopyCount: dupIncrement,
+		DuplicateUpdateFromCSV:      dupUpdate,
+		DefaultFormat:               defaultFormat,
+		EnrichMetadata:              enrichMetadata,
+		EnrichCovers:                enrichCovers,
+		AttributeToUserID:           attributeTo,
 	}
 
 	job, err := h.svc.StartImport(r.Context(), req)

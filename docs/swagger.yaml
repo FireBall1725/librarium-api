@@ -206,17 +206,17 @@ definitions:
     - ImportJobCancelled
   github_com_fireball1725_librarium-api_internal_models.ImportOptions:
     properties:
+      attribute_to_user_id:
+        type: string
       default_format:
         type: string
+      duplicate_increment_count:
+        type: boolean
+      duplicate_update_from_csv:
+        type: boolean
       enrich_covers:
         type: boolean
       enrich_metadata:
-        type: boolean
-      prefer_csv:
-        additionalProperties:
-          type: boolean
-        type: object
-      skip_duplicates:
         type: boolean
     type: object
   github_com_fireball1725_librarium-api_internal_models.SuggestionSteering:
@@ -559,6 +559,18 @@ definitions:
         type: string
       kind:
         type: string
+      kind_id:
+        description: |-
+          KindID is the per-kind detail row's primary key when one exists
+          (import_jobs.id, enrichment_batches.id). Clients use it to deep-link
+          the umbrella row back to its detail endpoint, which is keyed by the
+          per-kind id rather than the umbrella job id. Empty for kinds that
+          have no detail table (cover_backfill, ai_suggestions today).
+        type: string
+      library_id:
+        type: string
+      library_name:
+        type: string
       progress:
         items:
           type: integer
@@ -568,6 +580,12 @@ definitions:
       started_at:
         type: string
       status:
+        type: string
+      subtype:
+        description: |-
+          Subtype is the per-kind discriminator surfaced for UI badges.
+          Today only enrichment uses it ("metadata" or "cover"); other
+          kinds leave it empty and the client falls back to Kind alone.
         type: string
       triggered_by:
         type: string
@@ -5485,13 +5503,23 @@ paths:
         in: formData
         name: mapping
         type: string
-      - description: Skip duplicate ISBNs (default true)
+      - description: 'On duplicate ISBN: bump copy count (default false)'
         in: formData
-        name: skip_duplicates
+        name: duplicate_increment_count
+        type: string
+      - description: 'On duplicate ISBN: refresh user-interaction fields from the
+          CSV row (default false)'
+        in: formData
+        name: duplicate_update_from_csv
         type: string
       - description: Default edition format (default paperback)
         in: formData
         name: default_format
+        type: string
+      - description: User UUID to attribute reading data to (admin-only when not
+          the caller)
+        in: formData
+        name: attribute_to_user_id
         type: string
       - description: Enrich metadata after import
         in: formData

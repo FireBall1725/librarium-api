@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fireball1725/librarium-api/internal/imports"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
@@ -113,13 +114,21 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[models.ImportJob
 			return nil
 		}
 
-		status, msg, bookID := w.processItem(ctx, importJob, &item, tagCache, allGenres)
+		status, msg, bookID, addedToLibrary := w.processItem(ctx, importJob, &item, tagCache, allGenres)
 		_ = w.importJobs.UpdateItemStatus(ctx, item.ID, status, msg, bookID)
 
 		switch status {
 		case models.ImportItemDone:
 			processed++
-			if bookID != nil && item.Title != "" {
+			// Books newly added to *this* library (fresh creates and
+			// links of an edition that lived in another library) are
+			// queued for post-import enrichment. Pure in-library
+			// duplicates that took an action (count bump or
+			// interaction refresh) are excluded — those have already
+			// been enriched on a prior run. The cover/metadata workers
+			// short-circuit when the data is already present, so a
+			// library-link with a cover already on disk is a cheap no-op.
+			if addedToLibrary && bookID != nil && item.Title != "" {
 				newBooks = append(newBooks, importedBook{id: *bookID, title: item.Title})
 			}
 		case models.ImportItemFailed:
@@ -215,19 +224,33 @@ func (w *ImportWorker) spawnEnrichmentBatch(
 	}
 }
 
+// processItem returns the per-row outcome plus an addedToLibrary flag
+// the caller uses to gate post-import enrichment fan-out. The flag is
+// true for any row that newly placed a book into the target library
+// (true creates AND links of editions from other libraries) — both
+// are "added" from the user's perspective. It's false for pure
+// in-library duplicates and skipped rows.
 func (w *ImportWorker) processItem(
 	ctx context.Context,
 	job *models.ImportJob,
 	item *models.ImportJobItem,
 	tagCache map[string]uuid.UUID,
 	allGenres []*models.Genre,
-) (models.ImportItemStatus, string, *uuid.UUID) {
+) (models.ImportItemStatus, string, *uuid.UUID, bool) {
 	opts := job.Options
 	row := item.RawData
 
+	// Reading data is normally attributed to the importer; admins can
+	// retarget the whole job to another library member via the
+	// attribute_to_user_id option.
+	interactionUserID := job.CreatedBy
+	if opts.AttributeToUserID != nil {
+		interactionUserID = *opts.AttributeToUserID
+	}
+
 	title := strings.TrimSpace(row["title"])
 	if title == "" {
-		return models.ImportItemSkipped, "no title", nil
+		return models.ImportItemSkipped, "no title", nil, false
 	}
 
 	isbn := strings.TrimSpace(row["isbn_13"])
@@ -236,20 +259,55 @@ func (w *ImportWorker) processItem(
 	}
 
 	// ── Duplicate check (ISBN deduplication at edition level) ─────────────────
-	// Under M2M, an edition with a given ISBN exists globally at most once.
-	// If we already have one, add this library to its junction and bump the
-	// copy count there — no duplicate book/edition rows created.
+	// Editions are globally unique by ISBN under M2M. If one already
+	// exists, the duplicate-handling options decide whether to bump the
+	// copy count and/or refresh user-interaction fields. A book that
+	// exists globally but isn't yet in this library is not a duplicate
+	// from the user's perspective — we always link it and let the
+	// update-from-CSV option carry the row's user-interaction data.
 	if isbn != "" {
 		existing, err := w.editions.FindByISBN(ctx, isbn)
 		if err == nil && existing != nil {
-			if addErr := w.libraryBooks.AddBookToLibrary(ctx, nil, job.LibraryID, existing.BookID, &job.CreatedBy); addErr != nil {
-				return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", addErr), nil
-			}
-			if incrErr := w.editions.IncrementCopyCount(ctx, job.LibraryID, existing.ID); incrErr != nil {
-				return models.ImportItemFailed, fmt.Sprintf("increment copy count: %v", incrErr), nil
+			inLibrary, ierr := w.libraryBooks.IsBookInLibrary(ctx, job.LibraryID, existing.BookID)
+			if ierr != nil {
+				return models.ImportItemFailed, fmt.Sprintf("checking library membership: %v", ierr), nil, false
 			}
 			bookID := existing.BookID
-			return models.ImportItemDone, fmt.Sprintf("duplicate ISBN %s — copy count incremented", isbn), &bookID
+
+			if !inLibrary {
+				// First time this library is seeing the edition — add it
+				// and seed the user-interaction fields from the CSV row.
+				if addErr := w.libraryBooks.AddBookToLibrary(ctx, nil, job.LibraryID, bookID, &job.CreatedBy); addErr != nil {
+					return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", addErr), nil, false
+				}
+				w.applyInteraction(ctx, existing.ID, interactionUserID, row)
+				// addedToLibrary=true: the book is new to *this* library
+				// even though the edition row pre-existed globally. Queue
+				// it for enrichment so missing covers/metadata get filled
+				// in if the original-library import skipped that step.
+				// The metadata and cover workers no-op when the data is
+				// already present.
+				return models.ImportItemDone, fmt.Sprintf("linked existing edition (ISBN %s) into this library", isbn), &bookID, true
+			}
+
+			// True duplicate — book is already in this library. Apply the
+			// user's duplicate-handling preferences. Default (both off) is
+			// a no-op skip so re-running an import is idempotent.
+			actions := make([]string, 0, 2)
+			if opts.DuplicateIncrementCopyCount {
+				if incrErr := w.editions.IncrementCopyCount(ctx, job.LibraryID, existing.ID); incrErr != nil {
+					return models.ImportItemFailed, fmt.Sprintf("increment copy count: %v", incrErr), nil, false
+				}
+				actions = append(actions, "copy count incremented")
+			}
+			if opts.DuplicateUpdateFromCSV {
+				w.applyInteraction(ctx, existing.ID, interactionUserID, row)
+				actions = append(actions, "user fields updated")
+			}
+			if len(actions) == 0 {
+				return models.ImportItemSkipped, fmt.Sprintf("duplicate ISBN %s — skipped", isbn), &bookID, false
+			}
+			return models.ImportItemDone, fmt.Sprintf("duplicate ISBN %s — %s", isbn, strings.Join(actions, ", ")), &bookID, false
 		}
 	}
 
@@ -276,7 +334,7 @@ func (w *ImportWorker) processItem(
 	// ── Media type ────────────────────────────────────────────────────────────
 	mediaTypes, err := w.books.ListMediaTypes(ctx)
 	if err != nil {
-		return models.ImportItemFailed, fmt.Sprintf("loading media types: %v", err), nil
+		return models.ImportItemFailed, fmt.Sprintf("loading media types: %v", err), nil, false
 	}
 	mediaTypeID := findMediaTypeID(mediaTypes, row["media_type"])
 	if mediaTypeID == uuid.Nil {
@@ -353,7 +411,7 @@ func (w *ImportWorker) processItem(
 	bookID := uuid.New()
 	tx, err := w.pool.Begin(ctx)
 	if err != nil {
-		return models.ImportItemFailed, fmt.Sprintf("begin tx: %v", err), nil
+		return models.ImportItemFailed, fmt.Sprintf("begin tx: %v", err), nil, false
 	}
 	defer tx.Rollback(ctx)
 
@@ -361,28 +419,28 @@ func (w *ImportWorker) processItem(
 		finalTitle, finalSubtitle, mediaTypeID,
 		finalDescription,
 	); err != nil {
-		return models.ImportItemFailed, fmt.Sprintf("creating book: %v", err), nil
+		return models.ImportItemFailed, fmt.Sprintf("creating book: %v", err), nil, false
 	}
 
 	if err := w.libraryBooks.AddBookToLibrary(ctx, tx, job.LibraryID, bookID, &job.CreatedBy); err != nil {
-		return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", err), nil
+		return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", err), nil, false
 	}
 
 	if len(contribs) > 0 {
 		if err := w.books.SetContributors(ctx, tx, bookID, contribs); err != nil {
-			return models.ImportItemFailed, fmt.Sprintf("setting contributors: %v", err), nil
+			return models.ImportItemFailed, fmt.Sprintf("setting contributors: %v", err), nil, false
 		}
 	}
 
 	if len(tagIDs) > 0 {
 		if err := w.tags.SetBookTags(ctx, tx, bookID, tagIDs); err != nil {
-			return models.ImportItemFailed, fmt.Sprintf("setting tags: %v", err), nil
+			return models.ImportItemFailed, fmt.Sprintf("setting tags: %v", err), nil, false
 		}
 	}
 
 	if len(genreIDs) > 0 {
 		if err := w.genres.SetBookGenres(ctx, tx, bookID, genreIDs); err != nil {
-			return models.ImportItemFailed, fmt.Sprintf("setting genres: %v", err), nil
+			return models.ImportItemFailed, fmt.Sprintf("setting genres: %v", err), nil, false
 		}
 	}
 
@@ -408,7 +466,7 @@ func (w *ImportWorker) processItem(
 		publishDate, finalISBN10, finalISBN13, finalDescription,
 		nil, pageCount, true, nil,
 	); err != nil {
-		return models.ImportItemFailed, fmt.Sprintf("creating edition: %v", err), nil
+		return models.ImportItemFailed, fmt.Sprintf("creating edition: %v", err), nil, false
 	}
 	// Record this library's copy of the new edition.
 	var acq *any
@@ -417,14 +475,100 @@ func (w *ImportWorker) processItem(
 		acq = &v
 	}
 	if err := w.libraryBooks.SetEditionCopyCount(ctx, tx, job.LibraryID, editionID, 1, acq); err != nil {
-		return models.ImportItemFailed, fmt.Sprintf("setting library copy count: %v", err), nil
+		return models.ImportItemFailed, fmt.Sprintf("setting library copy count: %v", err), nil, false
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return models.ImportItemFailed, fmt.Sprintf("commit: %v", err), nil
+		return models.ImportItemFailed, fmt.Sprintf("commit: %v", err), nil, false
 	}
 
-	return models.ImportItemDone, fmt.Sprintf("imported %q", finalTitle), &bookID
+	// User-interaction fields are applied after the book/edition is
+	// committed so that a per-user `user_book_interactions` row points
+	// at a real `book_edition_id`. Failures here are non-fatal — the
+	// book is already imported, so we log and move on rather than
+	// rolling back the whole row.
+	w.applyInteraction(ctx, editionID, interactionUserID, row)
+
+	// addedToLibrary=true: a fresh book + edition row was created in
+	// this run and added to the target library. Always queue for
+	// post-import enrichment.
+	return models.ImportItemDone, fmt.Sprintf("imported %q", finalTitle), &bookID, true
+}
+
+// applyInteraction reads the user-interaction columns out of an import
+// row and upserts a `user_book_interactions` record for the importing
+// user against the given edition. Idempotent — re-running the same
+// import on a row whose values haven't changed produces no-op writes.
+//
+// Skips the upsert entirely when none of the interaction fields are
+// present. We don't want to clobber an existing rating/review just
+// because the user re-ran an import that didn't carry user-data.
+func (w *ImportWorker) applyInteraction(ctx context.Context, editionID, userID uuid.UUID, row map[string]string) {
+	readStatus := imports.ReadStatus(row["read_status"])
+	rating, hasRating := imports.Rating(row["rating"])
+	review := strings.TrimSpace(row["review"])
+	notes := strings.TrimSpace(row["notes"])
+	startedAt, hasStarted := imports.Date(row["date_started"])
+	finishedAt, hasFinished := imports.Date(row["date_finished"])
+	isFavorite, hasFavorite := imports.Bool(row["is_favorite"])
+
+	// Bail when nothing interaction-shaped is present — most generic
+	// CSVs won't carry any of these and we don't want to touch the row.
+	if readStatus == "" && !hasRating && review == "" && notes == "" &&
+		!hasStarted && !hasFinished && !hasFavorite {
+		return
+	}
+
+	// If we have a finish date but no explicit status, infer "read".
+	// Mirrors the behaviour every external tracker assumes — if you
+	// finished a book on a date, you read it.
+	if readStatus == "" && hasFinished {
+		readStatus = "read"
+	}
+
+	// MergeInteraction preserves whatever the existing row holds for
+	// any field the CSV didn't populate. The previous Upsert variant
+	// did an unconditional overwrite, which silently wiped manually
+	// entered ratings/reviews on every re-import.
+	var readStatusArg *string
+	if readStatus != "" {
+		readStatusArg = &readStatus
+	}
+	var ratingArg any
+	if hasRating {
+		ratingArg = rating
+	}
+	var notesArg *string
+	if notes != "" {
+		notesArg = &notes
+	}
+	var reviewArg *string
+	if review != "" {
+		reviewArg = &review
+	}
+	var startedArg any
+	if hasStarted {
+		startedArg = startedAt
+	}
+	var finishedArg any
+	if hasFinished {
+		finishedArg = finishedAt
+	}
+	var favoriteArg *bool
+	if hasFavorite {
+		favoriteArg = &isFavorite
+	}
+
+	if _, err := w.editions.MergeInteraction(
+		ctx, userID, editionID,
+		readStatusArg, ratingArg,
+		notesArg, reviewArg,
+		startedArg, finishedArg,
+		favoriteArg,
+	); err != nil {
+		slog.Warn("import: merging user interaction failed",
+			"user_id", userID, "edition_id", editionID, "error", err)
+	}
 }
 
 func (w *ImportWorker) findOrCreateContributor(ctx context.Context, name string) (*models.Contributor, error) {

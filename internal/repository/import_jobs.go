@@ -378,3 +378,48 @@ func scanImportItem(s scanner) (*models.ImportJobItem, error) {
 	}
 	return &item, nil
 }
+
+// JobRef is the lightweight (id, library_id, library_name, subtype)
+// tuple the unified jobs view needs to deep-link an umbrella job_id
+// back to its per-kind detail row. LibraryName is the JOIN-loaded
+// display label — without it the unified row falls back to the raw
+// library UUID. Subtype is per-kind specific: enrichment batches use
+// "metadata" / "cover" so the unified row can render the right badge.
+type JobRef struct {
+	ID          uuid.UUID
+	LibraryID   uuid.UUID
+	LibraryName string
+	Subtype     string
+}
+
+// LookupByJobIDs maps umbrella job_id → JobRef for every input id with a
+// matching import_jobs row. Missing rows are silently absent.
+func (r *ImportJobRepo) LookupByJobIDs(ctx context.Context, jobIDs []uuid.UUID) (map[uuid.UUID]JobRef, error) {
+	out := make(map[uuid.UUID]JobRef, len(jobIDs))
+	if len(jobIDs) == 0 {
+		return out, nil
+	}
+	const q = `
+		SELECT ij.id, ij.library_id, ij.job_id, l.name
+		FROM   import_jobs ij
+		JOIN   libraries  l ON l.id = ij.library_id
+		WHERE  ij.job_id = ANY($1)`
+	rows, err := r.db.Query(ctx, q, jobIDs)
+	if err != nil {
+		return nil, fmt.Errorf("looking up import jobs by job_id: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pgID, pgLibraryID, pgJobID pgtype.UUID
+		var libName string
+		if err := rows.Scan(&pgID, &pgLibraryID, &pgJobID, &libName); err != nil {
+			return nil, fmt.Errorf("scanning job ref: %w", err)
+		}
+		out[uuid.UUID(pgJobID.Bytes)] = JobRef{
+			ID:          uuid.UUID(pgID.Bytes),
+			LibraryID:   uuid.UUID(pgLibraryID.Bytes),
+			LibraryName: libName,
+		}
+	}
+	return out, rows.Err()
+}
