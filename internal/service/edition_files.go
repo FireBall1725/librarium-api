@@ -216,7 +216,7 @@ func (s *EditionFileService) UploadEditionFile(ctx context.Context, edition *mod
 	if err != nil {
 		return nil, fmt.Errorf("creating file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	written, err := io.Copy(f, reader)
 	if err != nil {

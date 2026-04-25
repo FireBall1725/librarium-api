@@ -333,7 +333,7 @@ func (h *UnifiedJobsHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 	}
 	// Look up the schedule's config (if any) — admin-run uses whatever
 	// the kind has stored. Missing schedule = empty config.
-	var cfg json.RawMessage = json.RawMessage("{}")
+	cfg := json.RawMessage("{}")
 	if s, err := h.jobs.GetSchedule(r.Context(), kind); err == nil && s != nil {
 		if len(s.Config) > 0 {
 			cfg = s.Config

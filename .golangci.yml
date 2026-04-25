@@ -1,0 +1,59 @@
+# golangci-lint v2 configuration for librarium-api.
+#
+# First-pass baseline — establishes a quiet floor so CI stays green and
+# new code doesn't drift. Tighten later by re-enabling rules below as the
+# codebase warrants. Adding rules to a quiet tree is easy; opening a PR
+# with 50 new findings isn't.
+#
+# What's enabled:
+#
+#   standard set: errcheck, govet, ineffassign, staticcheck, unused
+#   bodyclose:    HTTP response body leaks bleed file descriptors in prod
+#   misspell:     typos in user-facing strings, doc comments, errors
+#
+# What's disabled (and why):
+#
+#   gocritic    — useful but currently flags ~6 stylistic issues across
+#                 the codebase (appendAssign on common idioms, ifElseChain
+#                 / singleCaseSwitch suggestions). Re-enable in a focused
+#                 cleanup PR.
+version: "2"
+
+run:
+  timeout: 3m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - misspell
+  settings:
+    errcheck:
+      # Conventional patterns where the unchecked error is intentional:
+      #   - `defer tx.Rollback(ctx)` after a successful `Commit` is a
+      #     documented pgx pattern; the second call returns
+      #     ErrTxClosed and we don't care.
+      #   - `defer rows.Close()` is the canonical pgx idiom.
+      #   - `w.Write(...)` on response writers — middleware downstream
+      #     of us handles the actual I/O failure path.
+      exclude-functions:
+        - (github.com/jackc/pgx/v5.Tx).Rollback
+        - (github.com/jackc/pgx/v5.Rows).Close
+        - (net/http.ResponseWriter).Write
+        # Deferred Close on file handles, response bodies, and other
+        # io.Closer implementations — convention is to ignore the close
+        # error, the read/write path already surfaced anything fatal.
+        - (io.Closer).Close
+        # JSON encoders here write directly to the ResponseWriter; an
+        # I/O failure surfaces via the writer, not the encoder return.
+        - (*encoding/json.Encoder).Encode
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+# Generated code is covered by its generator's own quality bar (swag for
+# docs/, etc.) — keep it out of the linter's scope.
+exclusions:
+  generated: lax
