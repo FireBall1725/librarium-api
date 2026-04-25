@@ -114,18 +114,21 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[models.ImportJob
 			return nil
 		}
 
-		status, msg, bookID, isNewBook := w.processItem(ctx, importJob, &item, tagCache, allGenres)
+		status, msg, bookID, addedToLibrary := w.processItem(ctx, importJob, &item, tagCache, allGenres)
 		_ = w.importJobs.UpdateItemStatus(ctx, item.ID, status, msg, bookID)
 
 		switch status {
 		case models.ImportItemDone:
 			processed++
-			// Only books freshly created by this run are queued for
-			// post-import enrichment. Skips duplicates that took an
-			// action (count bump / interaction refresh) and edition
-			// links from other libraries, both of which already have
-			// metadata + covers from their original import.
-			if isNewBook && bookID != nil && item.Title != "" {
+			// Books newly added to *this* library (fresh creates and
+			// links of an edition that lived in another library) are
+			// queued for post-import enrichment. Pure in-library
+			// duplicates that took an action (count bump or
+			// interaction refresh) are excluded — those have already
+			// been enriched on a prior run. The cover/metadata workers
+			// short-circuit when the data is already present, so a
+			// library-link with a cover already on disk is a cheap no-op.
+			if addedToLibrary && bookID != nil && item.Title != "" {
 				newBooks = append(newBooks, importedBook{id: *bookID, title: item.Title})
 			}
 		case models.ImportItemFailed:
@@ -221,11 +224,12 @@ func (w *ImportWorker) spawnEnrichmentBatch(
 	}
 }
 
-// processItem returns the per-row outcome plus an isNewBook flag the
-// caller uses to gate post-import enrichment fan-out. "New" means the
-// row created a fresh book + edition in this run — links into existing
-// global editions and duplicate-handling branches return false so we
-// don't re-enrich books whose metadata already exists.
+// processItem returns the per-row outcome plus an addedToLibrary flag
+// the caller uses to gate post-import enrichment fan-out. The flag is
+// true for any row that newly placed a book into the target library
+// (true creates AND links of editions from other libraries) — both
+// are "added" from the user's perspective. It's false for pure
+// in-library duplicates and skipped rows.
 func (w *ImportWorker) processItem(
 	ctx context.Context,
 	job *models.ImportJob,
@@ -277,9 +281,13 @@ func (w *ImportWorker) processItem(
 					return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", addErr), nil, false
 				}
 				w.applyInteraction(ctx, existing.ID, interactionUserID, row)
-				// isNewBook=false: the book + edition already had metadata
-				// from whichever library originally imported it.
-				return models.ImportItemDone, fmt.Sprintf("linked existing edition (ISBN %s) into this library", isbn), &bookID, false
+				// addedToLibrary=true: the book is new to *this* library
+				// even though the edition row pre-existed globally. Queue
+				// it for enrichment so missing covers/metadata get filled
+				// in if the original-library import skipped that step.
+				// The metadata and cover workers no-op when the data is
+				// already present.
+				return models.ImportItemDone, fmt.Sprintf("linked existing edition (ISBN %s) into this library", isbn), &bookID, true
 			}
 
 			// True duplicate — book is already in this library. Apply the
@@ -481,11 +489,9 @@ func (w *ImportWorker) processItem(
 	// rolling back the whole row.
 	w.applyInteraction(ctx, editionID, interactionUserID, row)
 
-	// isNewBook=true: this is the only path where a fresh book + edition
-	// row was created in this run. The caller uses this to scope the
-	// post-import metadata/cover enrichment fan-out to truly-new books,
-	// instead of also enriching books linked from other libraries or
-	// duplicates that just got their copy count bumped.
+	// addedToLibrary=true: a fresh book + edition row was created in
+	// this run and added to the target library. Always queue for
+	// post-import enrichment.
 	return models.ImportItemDone, fmt.Sprintf("imported %q", finalTitle), &bookID, true
 }
 
