@@ -653,6 +653,8 @@ definitions:
         type: string
       steering:
         $ref: '#/definitions/internal_api_handlers.SteeringView'
+      suggestion_count:
+        type: integer
       tokens_in:
         type: integer
       tokens_out:
@@ -681,6 +683,8 @@ definitions:
       kind:
         type: string
       last_fired_at:
+        type: string
+      next_fire_at:
         type: string
     type: object
   internal_api_handlers.SteeringView:
@@ -731,6 +735,40 @@ definitions:
       type:
         type: string
     type: object
+  internal_api_handlers.createTokenRequest:
+    properties:
+      expires_at:
+        type: string
+      name:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_api_handlers.createTokenResponse:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      revoked_at:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token:
+        type: string
+      token_suffix:
+        type: string
+    type: object
   internal_api_handlers.ollamaModelsResponse:
     properties:
       models:
@@ -744,6 +782,27 @@ definitions:
         items:
           $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_ai.OsaurusModel'
         type: array
+    type: object
+  internal_api_handlers.tokenView:
+    properties:
+      created_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      revoked_at:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      token_suffix:
+        type: string
     type: object
   responses.BookResponse:
     properties:
@@ -1176,13 +1235,14 @@ host: localhost:8080
 info:
   contact:
     name: Librarium
-    url: https://github.com/fireball1725/librarium
-  description: Self-hosted library tracking API. All protected endpoints require a
-    Bearer JWT in the Authorization header.
+    url: https://librarium.press
+  description: Backend API for Librarium — a self-hosted, privacy-focused tracker
+    for your physical book, manga, and comic collection. All protected endpoints require
+    a Bearer JWT (or `lbrm_pat_*` personal access token) in the Authorization header.
   license:
     name: AGPL-3.0
     url: https://www.gnu.org/licenses/agpl-3.0.html
-  termsOfService: http://localhost/
+  termsOfService: https://librarium.press
   title: Librarium API
   version: 26.4.0
 paths:
@@ -1815,6 +1875,43 @@ paths:
       security:
       - BearerAuth: []
       summary: Upsert a job schedule
+      tags:
+      - admin
+      - jobs
+  /admin/jobs/schedules/{kind}/run:
+    post:
+      description: |-
+        Fires the kind's Enqueue hook immediately, bypassing the
+        cron. Creates an umbrella jobs row with triggered_by=admin
+        so the run shows up in history as admin-triggered.
+      parameters:
+      - description: job kind
+        in: path
+        name: kind
+        required: true
+        type: string
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/internal_api_handlers.JobView'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Run a scheduled job once, now
       tags:
       - admin
       - jobs
@@ -7417,6 +7514,85 @@ paths:
       tags:
       - me
       - ai
+  /me/api-tokens:
+    get:
+      description: Returns every personal access token minted by the caller, including
+        revoked ones, newest first. Raw token values are never returned; only metadata
+        plus a four-character suffix.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api_handlers.tokenView'
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List the caller's API tokens
+      tags:
+      - me
+      - api-tokens
+    post:
+      consumes:
+      - application/json
+      description: Creates a personal access token for the caller. The raw token value
+        is returned in this response exactly once; the server stores only a sha256
+        hash and cannot retrieve it again. Lost tokens must be revoked and remintered.
+      parameters:
+      - description: Token metadata
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api_handlers.createTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_api_handlers.createTokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Mint a new personal access token
+      tags:
+      - me
+      - api-tokens
+  /me/api-tokens/{id}:
+    delete:
+      description: Soft-deletes the token. Revocation takes effect immediately; subsequent
+        auth attempts with the revoked token 401.
+      parameters:
+      - description: Token UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Revoke one of the caller's API tokens
+      tags:
+      - me
+      - api-tokens
   /me/series:
     get:
       description: Returns series from every library the caller can access, filtered

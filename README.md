@@ -1,8 +1,20 @@
 # librarium-api
 
-The backend service for [Librarium](https://github.com/fireball1725) — a self-hosted personal library tracker for books, manga, and other print media.
+The backend service for **[Librarium](https://librarium.press)** — a self-hosted, privacy-focused tracker for your physical book, manga, and comic collection. A self-hosted alternative to Libib and similar cloud catalog services.
 
 Go 1.25 · PostgreSQL 16 · [River](https://riverqueue.com) for background jobs · Swagger-generated OpenAPI docs.
+
+> ⚠︎ **Early beta.** Things are changing fast, some edges are rough, and self-hosters should expect to read release notes before upgrading.
+
+Part of the Librarium stack:
+
+| Repo                                                                              | Role                                                                       |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [`librarium`](https://github.com/fireball1725/librarium)                          | Marketing site at [librarium.press](https://librarium.press), planning docs |
+| [`librarium-api`](https://github.com/fireball1725/librarium-api) ← **you are here** | Backend · Go · Postgres · River jobs                                     |
+| [`librarium-web`](https://github.com/fireball1725/librarium-web)                  | Web client · React · TypeScript · Tailwind · Vite                          |
+| [`librarium-ios`](https://github.com/fireball1725/librarium-ios)                  | Native iOS client · SwiftUI · iOS 26+ (TestFlight)                         |
+| [`librarium-mcp`](https://github.com/fireball1725/librarium-mcp)                  | MCP server · Go · chat with your library from Claude / Cursor / etc.       |
 
 ## Quickstart (development)
 

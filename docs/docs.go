@@ -9,10 +9,10 @@ const docTemplate = `{
     "info": {
         "description": "{{escape .Description}}",
         "title": "{{.Title}}",
-        "termsOfService": "http://localhost/",
+        "termsOfService": "https://librarium.press",
         "contact": {
             "name": "Librarium",
-            "url": "https://github.com/fireball1725/librarium"
+            "url": "https://librarium.press"
         },
         "license": {
             "name": "AGPL-3.0",
@@ -929,6 +929,60 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_api_handlers.ScheduleView"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/jobs/schedules/{kind}/run": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Fires the kind's Enqueue hook immediately, bypassing the\ncron. Creates an umbrella jobs row with triggered_by=admin\nso the run shows up in history as admin-triggered.",
+                "tags": [
+                    "admin",
+                    "jobs"
+                ],
+                "summary": "Run a scheduled job once, now",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "job kind",
+                        "name": "kind",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.JobView"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
                         }
                     }
                 }
@@ -9736,6 +9790,124 @@ const docTemplate = `{
                 }
             }
         },
+        "/me/api-tokens": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns every personal access token minted by the caller, including revoked ones, newest first. Raw token values are never returned; only metadata plus a four-character suffix.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "api-tokens"
+                ],
+                "summary": "List the caller's API tokens",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api_handlers.tokenView"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a personal access token for the caller. The raw token value is returned in this response exactly once; the server stores only a sha256 hash and cannot retrieve it again. Lost tokens must be revoked and remintered.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "api-tokens"
+                ],
+                "summary": "Mint a new personal access token",
+                "parameters": [
+                    {
+                        "description": "Token metadata",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.createTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.createTokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/api-tokens/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Soft-deletes the token. Revocation takes effect immediately; subsequent auth attempts with the revoked token 401.",
+                "tags": [
+                    "me",
+                    "api-tokens"
+                ],
+                "summary": "Revoke one of the caller's API tokens",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Token UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/me/series": {
             "get": {
                 "security": [
@@ -11763,6 +11935,9 @@ const docTemplate = `{
                 "steering": {
                     "$ref": "#/definitions/internal_api_handlers.SteeringView"
                 },
+                "suggestion_count": {
+                    "type": "integer"
+                },
                 "tokens_in": {
                     "type": "integer"
                 },
@@ -11805,6 +11980,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "last_fired_at": {
+                    "type": "string"
+                },
+                "next_fire_at": {
                     "type": "string"
                 }
             }
@@ -11882,6 +12060,58 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api_handlers.createTokenRequest": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api_handlers.createTokenResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "revoked_at": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token": {
+                    "type": "string"
+                },
+                "token_suffix": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api_handlers.ollamaModelsResponse": {
             "type": "object",
             "properties": {
@@ -11901,6 +12131,38 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_ai.OsaurusModel"
                     }
+                }
+            }
+        },
+        "internal_api_handlers.tokenView": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "revoked_at": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_suffix": {
+                    "type": "string"
                 }
             }
         },
@@ -12568,7 +12830,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
 	Title:            "Librarium API",
-	Description:      "Self-hosted library tracking API. All protected endpoints require a Bearer JWT in the Authorization header.",
+	Description:      "Backend API for Librarium — a self-hosted, privacy-focused tracker for your physical book, manga, and comic collection. All protected endpoints require a Bearer JWT (or `lbrm_pat_*` personal access token) in the Authorization header.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

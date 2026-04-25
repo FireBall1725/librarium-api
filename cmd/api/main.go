@@ -3,11 +3,11 @@
 
 // @title           Librarium API
 // @version         26.4.0
-// @description     Self-hosted library tracking API. All protected endpoints require a Bearer JWT in the Authorization header.
-// @termsOfService  http://localhost/
+// @description     Backend API for Librarium — a self-hosted, privacy-focused tracker for your physical book, manga, and comic collection. All protected endpoints require a Bearer JWT (or `lbrm_pat_*` personal access token) in the Authorization header.
+// @termsOfService  https://librarium.press
 
 // @contact.name   Librarium
-// @contact.url    https://github.com/fireball1725/librarium
+// @contact.url    https://librarium.press
 
 // @license.name  AGPL-3.0
 // @license.url   https://www.gnu.org/licenses/agpl-3.0.html
