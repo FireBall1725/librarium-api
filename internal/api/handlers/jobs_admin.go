@@ -62,8 +62,9 @@ type JobView struct {
 	// the umbrella row back to its detail endpoint, which is keyed by the
 	// per-kind id rather than the umbrella job id. Empty for kinds that
 	// have no detail table (cover_backfill, ai_suggestions today).
-	KindID    *string `json:"kind_id,omitempty"`
-	LibraryID *string `json:"library_id,omitempty"`
+	KindID      *string `json:"kind_id,omitempty"`
+	LibraryID   *string `json:"library_id,omitempty"`
+	LibraryName *string `json:"library_name,omitempty"`
 }
 
 func toJobView(j *models.Job) JobView {
@@ -182,6 +183,10 @@ func (h *UnifiedJobsHandler) History(w http.ResponseWriter, r *http.Request) {
 			if ref.LibraryID != (uuid.UUID{}) {
 				lid := ref.LibraryID.String()
 				v.LibraryID = &lid
+			}
+			if ref.LibraryName != "" {
+				name := ref.LibraryName
+				v.LibraryName = &name
 			}
 		}
 		out = append(out, v)

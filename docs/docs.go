@@ -11803,6 +11803,9 @@ const docTemplate = `{
                 "library_id": {
                     "type": "string"
                 },
+                "library_name": {
+                    "type": "string"
+                },
                 "progress": {
                     "type": "array",
                     "items": {

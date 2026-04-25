@@ -569,6 +569,8 @@ definitions:
         type: string
       library_id:
         type: string
+      library_name:
+        type: string
       progress:
         items:
           type: integer
