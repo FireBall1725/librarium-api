@@ -6632,8 +6632,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Skip duplicate ISBNs (default true)",
-                        "name": "skip_duplicates",
+                        "description": "On duplicate ISBN: bump copy count (default false)",
+                        "name": "duplicate_increment_count",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "On duplicate ISBN: refresh user-interaction fields from the CSV row (default false)",
+                        "name": "duplicate_update_from_csv",
                         "in": "formData"
                     },
                     {
@@ -11283,19 +11289,16 @@ const docTemplate = `{
                 "default_format": {
                     "type": "string"
                 },
+                "duplicate_increment_count": {
+                    "type": "boolean"
+                },
+                "duplicate_update_from_csv": {
+                    "type": "boolean"
+                },
                 "enrich_covers": {
                     "type": "boolean"
                 },
                 "enrich_metadata": {
-                    "type": "boolean"
-                },
-                "prefer_csv": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "boolean"
-                    }
-                },
-                "skip_duplicates": {
                     "type": "boolean"
                 }
             }

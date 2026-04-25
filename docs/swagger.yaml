@@ -208,15 +208,13 @@ definitions:
     properties:
       default_format:
         type: string
+      duplicate_increment_count:
+        type: boolean
+      duplicate_update_from_csv:
+        type: boolean
       enrich_covers:
         type: boolean
       enrich_metadata:
-        type: boolean
-      prefer_csv:
-        additionalProperties:
-          type: boolean
-        type: object
-      skip_duplicates:
         type: boolean
     type: object
   github_com_fireball1725_librarium-api_internal_models.SuggestionSteering:
@@ -5497,9 +5495,14 @@ paths:
         in: formData
         name: mapping
         type: string
-      - description: Skip duplicate ISBNs (default true)
+      - description: 'On duplicate ISBN: bump copy count (default false)'
         in: formData
-        name: skip_duplicates
+        name: duplicate_increment_count
+        type: string
+      - description: 'On duplicate ISBN: refresh user-interaction fields from the
+          CSV row (default false)'
+        in: formData
+        name: duplicate_update_from_csv
         type: string
       - description: Default edition format (default paperback)
         in: formData

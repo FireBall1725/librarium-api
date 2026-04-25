@@ -38,10 +38,11 @@ func NewImportHandler(svc *service.ImportService) *ImportHandler {
 // @Param       library_id       path      string  true   "Library UUID"
 // @Param       file             formData  file    true   "CSV file to import"
 // @Param       mapping          formData  string  false  "JSON column mapping {field_name: column_index}"
-// @Param       skip_duplicates  formData  string  false  "Skip duplicate ISBNs (default true)"
-// @Param       default_format   formData  string  false  "Default edition format (default paperback)"
-// @Param       enrich_metadata  formData  string  false  "Enrich metadata after import"
-// @Param       enrich_covers    formData  string  false  "Fetch covers after import"
+// @Param       duplicate_increment_count  formData  string  false  "On duplicate ISBN: bump copy count (default false)"
+// @Param       duplicate_update_from_csv  formData  string  false  "On duplicate ISBN: refresh user-interaction fields from the CSV row (default false)"
+// @Param       default_format             formData  string  false  "Default edition format (default paperback)"
+// @Param       enrich_metadata            formData  string  false  "Enrich metadata after import"
+// @Param       enrich_covers              formData  string  false  "Fetch covers after import"
 // @Success     201  {object}  models.ImportJob
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -86,18 +87,14 @@ func (h *ImportHandler) CreateImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse prefer_csv: JSON {"title": true, ...}
-	preferCSV := make(map[string]bool)
-	if preferStr := r.FormValue("prefer_csv"); preferStr != "" {
-		if err := json.Unmarshal([]byte(preferStr), &preferCSV); err != nil {
-			respond.Error(w, http.StatusBadRequest, "invalid prefer_csv JSON")
-			return
-		}
+	dupIncrement := false
+	if v := r.FormValue("duplicate_increment_count"); v != "" {
+		dupIncrement, _ = strconv.ParseBool(v)
 	}
 
-	skipDuplicates := true
-	if sd := r.FormValue("skip_duplicates"); sd != "" {
-		skipDuplicates, _ = strconv.ParseBool(sd)
+	dupUpdate := false
+	if v := r.FormValue("duplicate_update_from_csv"); v != "" {
+		dupUpdate, _ = strconv.ParseBool(v)
 	}
 
 	defaultFormat := r.FormValue("default_format")
@@ -116,15 +113,15 @@ func (h *ImportHandler) CreateImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := service.ImportRequest{
-		LibraryID:      libraryID,
-		CallerID:       caller.UserID,
-		CSVText:        string(csvBytes),
-		FieldMapping:   mapping,
-		SkipDuplicates: skipDuplicates,
-		DefaultFormat:  defaultFormat,
-		PreferCSV:      preferCSV,
-		EnrichMetadata: enrichMetadata,
-		EnrichCovers:   enrichCovers,
+		LibraryID:                   libraryID,
+		CallerID:                    caller.UserID,
+		CSVText:                     string(csvBytes),
+		FieldMapping:                mapping,
+		DuplicateIncrementCopyCount: dupIncrement,
+		DuplicateUpdateFromCSV:      dupUpdate,
+		DefaultFormat:               defaultFormat,
+		EnrichMetadata:              enrichMetadata,
+		EnrichCovers:                enrichCovers,
 	}
 
 	job, err := h.svc.StartImport(r.Context(), req)

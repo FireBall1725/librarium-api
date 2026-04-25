@@ -237,25 +237,49 @@ func (w *ImportWorker) processItem(
 	}
 
 	// ── Duplicate check (ISBN deduplication at edition level) ─────────────────
-	// Under M2M, an edition with a given ISBN exists globally at most once.
-	// If we already have one, add this library to its junction and bump the
-	// copy count there — no duplicate book/edition rows created.
+	// Editions are globally unique by ISBN under M2M. If one already
+	// exists, the duplicate-handling options decide whether to bump the
+	// copy count and/or refresh user-interaction fields. A book that
+	// exists globally but isn't yet in this library is not a duplicate
+	// from the user's perspective — we always link it and let the
+	// update-from-CSV option carry the row's user-interaction data.
 	if isbn != "" {
 		existing, err := w.editions.FindByISBN(ctx, isbn)
 		if err == nil && existing != nil {
-			if addErr := w.libraryBooks.AddBookToLibrary(ctx, nil, job.LibraryID, existing.BookID, &job.CreatedBy); addErr != nil {
-				return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", addErr), nil
+			inLibrary, ierr := w.libraryBooks.IsBookInLibrary(ctx, job.LibraryID, existing.BookID)
+			if ierr != nil {
+				return models.ImportItemFailed, fmt.Sprintf("checking library membership: %v", ierr), nil
 			}
-			if incrErr := w.editions.IncrementCopyCount(ctx, job.LibraryID, existing.ID); incrErr != nil {
-				return models.ImportItemFailed, fmt.Sprintf("increment copy count: %v", incrErr), nil
-			}
-			// User-interaction fields (rating, review, status, dates)
-			// also need to flow through on dedup — otherwise migrating
-			// from a tracker where the same book shows up across shelves
-			// would lose the per-row metadata on every row past the first.
-			w.applyInteraction(ctx, existing.ID, job.CreatedBy, row)
 			bookID := existing.BookID
-			return models.ImportItemDone, fmt.Sprintf("duplicate ISBN %s — copy count incremented", isbn), &bookID
+
+			if !inLibrary {
+				// First time this library is seeing the edition — add it
+				// and seed the user-interaction fields from the CSV row.
+				if addErr := w.libraryBooks.AddBookToLibrary(ctx, nil, job.LibraryID, bookID, &job.CreatedBy); addErr != nil {
+					return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", addErr), nil
+				}
+				w.applyInteraction(ctx, existing.ID, job.CreatedBy, row)
+				return models.ImportItemDone, fmt.Sprintf("linked existing edition (ISBN %s) into this library", isbn), &bookID
+			}
+
+			// True duplicate — book is already in this library. Apply the
+			// user's duplicate-handling preferences. Default (both off) is
+			// a no-op skip so re-running an import is idempotent.
+			actions := make([]string, 0, 2)
+			if opts.DuplicateIncrementCopyCount {
+				if incrErr := w.editions.IncrementCopyCount(ctx, job.LibraryID, existing.ID); incrErr != nil {
+					return models.ImportItemFailed, fmt.Sprintf("increment copy count: %v", incrErr), nil
+				}
+				actions = append(actions, "copy count incremented")
+			}
+			if opts.DuplicateUpdateFromCSV {
+				w.applyInteraction(ctx, existing.ID, job.CreatedBy, row)
+				actions = append(actions, "user fields updated")
+			}
+			if len(actions) == 0 {
+				return models.ImportItemSkipped, fmt.Sprintf("duplicate ISBN %s — skipped", isbn), &bookID
+			}
+			return models.ImportItemDone, fmt.Sprintf("duplicate ISBN %s — %s", isbn, strings.Join(actions, ", ")), &bookID
 		}
 	}
 

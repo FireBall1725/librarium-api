@@ -36,13 +36,21 @@ const (
 	ImportItemFailed   ImportItemStatus = "failed"
 )
 
-// ImportOptions holds per-import configuration stored in the DB.
+// ImportOptions holds per-import configuration stored in the DB. The
+// duplicate_* flags replace the older skip_duplicates toggle: with both
+// off (the default) a duplicate ISBN is left untouched; turn either on
+// to opt into bumping the copy count or refreshing the user-interaction
+// fields from the CSV row. They compose, so both can be on at once.
+//
+// EnrichMetadata is fill-in-the-blanks only — the post-import enrichment
+// run never overwrites a populated CSV field, so there is no per-field
+// "prefer CSV" knob to keep here.
 type ImportOptions struct {
-	SkipDuplicates  bool            `json:"skip_duplicates"`
-	DefaultFormat   string          `json:"default_format"`
-	PreferCSV       map[string]bool `json:"prefer_csv"`
-	EnrichMetadata  bool            `json:"enrich_metadata"`
-	EnrichCovers    bool            `json:"enrich_covers"`
+	DuplicateIncrementCopyCount bool   `json:"duplicate_increment_count"`
+	DuplicateUpdateFromCSV      bool   `json:"duplicate_update_from_csv"`
+	DefaultFormat               string `json:"default_format"`
+	EnrichMetadata              bool   `json:"enrich_metadata"`
+	EnrichCovers                bool   `json:"enrich_covers"`
 }
 
 // MetadataEnrichmentJobArgs is the River job payload for async metadata enrichment.
