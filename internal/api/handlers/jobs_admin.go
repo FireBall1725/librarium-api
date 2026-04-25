@@ -65,6 +65,10 @@ type JobView struct {
 	KindID      *string `json:"kind_id,omitempty"`
 	LibraryID   *string `json:"library_id,omitempty"`
 	LibraryName *string `json:"library_name,omitempty"`
+	// Subtype is the per-kind discriminator surfaced for UI badges.
+	// Today only enrichment uses it ("metadata" or "cover"); other
+	// kinds leave it empty and the client falls back to Kind alone.
+	Subtype *string `json:"subtype,omitempty"`
 }
 
 func toJobView(j *models.Job) JobView {
@@ -187,6 +191,10 @@ func (h *UnifiedJobsHandler) History(w http.ResponseWriter, r *http.Request) {
 			if ref.LibraryName != "" {
 				name := ref.LibraryName
 				v.LibraryName = &name
+			}
+			if ref.Subtype != "" {
+				st := ref.Subtype
+				v.Subtype = &st
 			}
 		}
 		out = append(out, v)

@@ -263,7 +263,9 @@ func (r *EnrichmentBatchRepo) UpdateStatus(ctx context.Context, id uuid.UUID, st
 
 // IncrementProcessed atomically increments the processed/failed/skipped counters.
 // Never overwrites a 'cancelled' status. Returns the updated processed, failed, and
-// total counts so the caller can determine if the batch is complete.
+// total counts so the caller can determine if the batch is complete. Also mirrors
+// the new counters to the umbrella jobs.progress so the unified history's progress
+// bar advances per-book instead of jumping from 0 to total at the very end.
 func (r *EnrichmentBatchRepo) IncrementProcessed(ctx context.Context, id uuid.UUID, failed, skipped bool) (processed, failedCount, total int, err error) {
 	var q string
 	switch {
@@ -274,7 +276,7 @@ func (r *EnrichmentBatchRepo) IncrementProcessed(ctx context.Context, id uuid.UU
 			       processed_books = processed_books + 1,
 			       updated_at      = now()
 			WHERE  id = $1 AND status != 'cancelled'
-			RETURNING processed_books, failed_books, total_books`
+			RETURNING processed_books, failed_books, skipped_books, total_books, job_id`
 	case skipped:
 		q = `
 			UPDATE enrichment_batches
@@ -282,21 +284,37 @@ func (r *EnrichmentBatchRepo) IncrementProcessed(ctx context.Context, id uuid.UU
 			       processed_books = processed_books + 1,
 			       updated_at      = now()
 			WHERE  id = $1 AND status != 'cancelled'
-			RETURNING processed_books, failed_books, total_books`
+			RETURNING processed_books, failed_books, skipped_books, total_books, job_id`
 	default:
 		q = `
 			UPDATE enrichment_batches
 			SET    processed_books = processed_books + 1,
 			       updated_at      = now()
 			WHERE  id = $1 AND status != 'cancelled'
-			RETURNING processed_books, failed_books, total_books`
+			RETURNING processed_books, failed_books, skipped_books, total_books, job_id`
 	}
-	err = r.db.QueryRow(ctx, q, id).Scan(&processed, &failedCount, &total)
+	var (
+		skippedCount int
+		pgJobID      pgtype.UUID
+	)
+	err = r.db.QueryRow(ctx, q, id).Scan(&processed, &failedCount, &skippedCount, &total, &pgJobID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, 0, 0, ErrNotFound
 	}
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("incrementing processed count: %w", err)
+	}
+	if pgJobID.Valid {
+		const updProgress = `
+			UPDATE jobs
+			   SET progress = jsonb_build_object('processed', $2::int, 'failed', $3::int, 'skipped', $4::int, 'total', $5::int)
+			 WHERE id = $1`
+		if _, perr := r.db.Exec(ctx, updProgress, uuid.UUID(pgJobID.Bytes), processed, failedCount, skippedCount, total); perr != nil {
+			// Counters in the per-kind row are authoritative; a missed
+			// mirror just means the unified bar trails by one tick.
+			// Don't fail the worker over a UI counter.
+			return processed, failedCount, total, nil
+		}
 	}
 	return processed, failedCount, total, nil
 }
@@ -328,18 +346,37 @@ func (r *EnrichmentBatchRepo) ListByUser(ctx context.Context, userID uuid.UUID) 
 	return out, rows.Err()
 }
 
-// Cancel marks a pending or processing batch as cancelled.
+// Cancel marks a pending or processing batch as cancelled. Also mirrors
+// the cancellation to the umbrella jobs row so the unified history flips
+// out of "Processing" — without this the worker eventually picks up the
+// per-kind cancellation and stops, but the UI keeps spinning until the
+// job naturally finishes.
 func (r *EnrichmentBatchRepo) Cancel(ctx context.Context, batchID, userID uuid.UUID) error {
 	const q = `
 		UPDATE enrichment_batches
 		SET    status = 'cancelled', updated_at = now()
-		WHERE  id = $1 AND created_by = $2 AND status IN ('pending', 'processing')`
-	tag, err := r.db.Exec(ctx, q, batchID, userID)
-	if err != nil {
+		WHERE  id = $1 AND created_by = $2 AND status IN ('pending', 'processing')
+		RETURNING job_id, processed_books, failed_books, skipped_books, total_books`
+	var (
+		pgJobID                            pgtype.UUID
+		processed, failed, skipped, total  int
+	)
+	if err := r.db.QueryRow(ctx, q, batchID, userID).Scan(&pgJobID, &processed, &failed, &skipped, &total); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
 		return fmt.Errorf("cancelling enrichment batch: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if pgJobID.Valid {
+		const updJob = `
+			UPDATE jobs
+			   SET status      = 'cancelled',
+			       progress    = jsonb_build_object('processed', $2::int, 'failed', $3::int, 'skipped', $4::int, 'total', $5::int),
+			       finished_at = COALESCE(finished_at, NOW())
+			 WHERE id = $1`
+		if _, err := r.db.Exec(ctx, updJob, uuid.UUID(pgJobID.Bytes), processed, failed, skipped, total); err != nil {
+			return fmt.Errorf("mirroring cancel to umbrella job: %w", err)
+		}
 	}
 	return nil
 }
@@ -420,7 +457,7 @@ func (r *EnrichmentBatchRepo) LookupByJobIDs(ctx context.Context, jobIDs []uuid.
 		return out, nil
 	}
 	const q = `
-		SELECT eb.id, eb.library_id, eb.job_id, l.name
+		SELECT eb.id, eb.library_id, eb.job_id, l.name, eb.type
 		FROM   enrichment_batches eb
 		LEFT JOIN libraries l ON l.id = eb.library_id
 		WHERE  eb.job_id = ANY($1)`
@@ -432,10 +469,14 @@ func (r *EnrichmentBatchRepo) LookupByJobIDs(ctx context.Context, jobIDs []uuid.
 	for rows.Next() {
 		var pgID, pgLibraryID, pgJobID pgtype.UUID
 		var libName *string
-		if err := rows.Scan(&pgID, &pgLibraryID, &pgJobID, &libName); err != nil {
+		var batchType string
+		if err := rows.Scan(&pgID, &pgLibraryID, &pgJobID, &libName, &batchType); err != nil {
 			return nil, fmt.Errorf("scanning batch ref: %w", err)
 		}
-		ref := JobRef{ID: uuid.UUID(pgID.Bytes)}
+		ref := JobRef{
+			ID:      uuid.UUID(pgID.Bytes),
+			Subtype: batchType,
+		}
 		if pgLibraryID.Valid {
 			ref.LibraryID = uuid.UUID(pgLibraryID.Bytes)
 		}

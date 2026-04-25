@@ -11827,6 +11827,10 @@
                 "status": {
                     "type": "string"
                 },
+                "subtype": {
+                    "description": "Subtype is the per-kind discriminator surfaced for UI badges.\nToday only enrichment uses it (\"metadata\" or \"cover\"); other\nkinds leave it empty and the client falls back to Kind alone.",
+                    "type": "string"
+                },
                 "triggered_by": {
                     "type": "string"
                 },

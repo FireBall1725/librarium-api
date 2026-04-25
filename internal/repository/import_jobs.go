@@ -379,14 +379,17 @@ func scanImportItem(s scanner) (*models.ImportJobItem, error) {
 	return &item, nil
 }
 
-// JobRef is the lightweight (id, library_id, library_name) tuple the
-// unified jobs view needs to deep-link an umbrella job_id back to its
-// per-kind detail row. LibraryName is the JOIN-loaded display label —
-// without it the unified row falls back to the raw library UUID.
+// JobRef is the lightweight (id, library_id, library_name, subtype)
+// tuple the unified jobs view needs to deep-link an umbrella job_id
+// back to its per-kind detail row. LibraryName is the JOIN-loaded
+// display label — without it the unified row falls back to the raw
+// library UUID. Subtype is per-kind specific: enrichment batches use
+// "metadata" / "cover" so the unified row can render the right badge.
 type JobRef struct {
 	ID          uuid.UUID
 	LibraryID   uuid.UUID
 	LibraryName string
+	Subtype     string
 }
 
 // LookupByJobIDs maps umbrella job_id → JobRef for every input id with a
