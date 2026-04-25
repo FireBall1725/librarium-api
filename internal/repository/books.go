@@ -1398,6 +1398,40 @@ func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit
 	return out, rows.Err()
 }
 
+// BooksWithoutCover returns the subset of input book IDs that have no
+// primary cover image on file. Used by the import worker so a "fetch
+// covers" pass only queues books that actually need a cover lookup —
+// without this the post-import cover batch shows "0/1410" while every
+// row immediately no-ops, which reads as broken.
+func (r *BookRepo) BooksWithoutCover(ctx context.Context, bookIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if len(bookIDs) == 0 {
+		return nil, nil
+	}
+	const q = `
+		SELECT b.id
+		FROM   unnest($1::uuid[]) AS b(id)
+		WHERE  NOT EXISTS (
+			SELECT 1 FROM cover_images ci
+			WHERE  ci.entity_type = 'book'
+			   AND ci.entity_id   = b.id
+			   AND ci.is_primary  = true
+		)`
+	rows, err := r.db.Query(ctx, q, bookIDs)
+	if err != nil {
+		return nil, fmt.Errorf("filtering books without cover: %w", err)
+	}
+	defer rows.Close()
+	out := make([]uuid.UUID, 0, len(bookIDs))
+	for rows.Next() {
+		var pgID pgtype.UUID
+		if err := rows.Scan(&pgID); err != nil {
+			return nil, fmt.Errorf("scanning book id: %w", err)
+		}
+		out = append(out, uuid.UUID(pgID.Bytes))
+	}
+	return out, rows.Err()
+}
+
 // SetBookTags replaces all tags for a book within the given transaction.
 func (r *BookRepo) SetBookTags(ctx context.Context, tx pgx.Tx, bookID uuid.UUID, tagIDs []uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM book_tags WHERE book_id = $1`, bookID); err != nil {

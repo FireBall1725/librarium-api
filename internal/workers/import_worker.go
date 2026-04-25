@@ -175,17 +175,47 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[models.ImportJob
 // spawnEnrichmentBatch creates an EnrichmentBatch record + items in the database and
 // enqueues a single EnrichmentBatchJobArgs River job.  This makes the post-import
 // enrichment visible in the Jobs page and the River TUI.
+//
+// For cover batches, the candidate set is filtered to books that don't
+// already have a primary cover on disk — without this, importing into
+// a library where most edition-links already had covers from another
+// library produced a "0/1410" batch that read as broken even though
+// every per-book worker call was a correct no-op.
 func (w *ImportWorker) spawnEnrichmentBatch(
 	ctx context.Context,
 	importJob *models.ImportJob,
 	books []importedBook,
 	batchType models.EnrichmentBatchType,
 ) {
-	batchID := uuid.New()
 	bookIDs := make([]uuid.UUID, len(books))
 	for i, b := range books {
 		bookIDs[i] = b.id
 	}
+	if batchType == models.EnrichmentBatchTypeCover {
+		needCover, err := w.books.BooksWithoutCover(ctx, bookIDs)
+		if err != nil {
+			slog.Warn("filtering cover candidates failed; queueing all", "error", err)
+		} else {
+			needSet := make(map[uuid.UUID]struct{}, len(needCover))
+			for _, id := range needCover {
+				needSet[id] = struct{}{}
+			}
+			filtered := make([]importedBook, 0, len(needCover))
+			for _, b := range books {
+				if _, ok := needSet[b.id]; ok {
+					filtered = append(filtered, b)
+				}
+			}
+			books = filtered
+			bookIDs = needCover
+		}
+		if len(books) == 0 {
+			slog.Info("cover batch skipped — every imported book already has a cover",
+				"import_job_id", importJob.ID)
+			return
+		}
+	}
+	batchID := uuid.New()
 
 	libraryID := importJob.LibraryID
 	batch := &models.EnrichmentBatch{
