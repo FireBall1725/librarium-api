@@ -7,23 +7,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/fireball1725/librarium-api/internal/ai"
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
 	"github.com/fireball1725/librarium-api/internal/service"
 )
-
-// ollamaModelsResponse wraps the Ollama /api/tags models list. Named for
-// swag — inline object{models=[]ai.OllamaModel} can't resolve the package.
-type ollamaModelsResponse struct {
-	Models []ai.OllamaModel `json:"models"`
-}
-
-// osaurusModelsResponse wraps the Osaurus /v1/models list. Same rationale
-// as ollamaModelsResponse.
-type osaurusModelsResponse struct {
-	Models []ai.OsaurusModel `json:"models"`
-}
 
 // AIHandler groups admin-side AI endpoints: provider CRUD, test, active
 // selection, and permissions policy. User-scoped endpoints (opt-in, taste

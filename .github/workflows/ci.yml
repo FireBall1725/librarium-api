@@ -17,8 +17,13 @@ jobs:
           go-version: "1.25"
           cache: true
 
-      - name: go vet
-        run: go vet ./...
+      # golangci-lint subsumes `go vet` (it runs vet plus errcheck,
+      # staticcheck, ineffassign, unused, bodyclose, misspell). The
+      # action handles tool install + cache.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
 
       - name: go test
         run: go test -race -count=1 ./...

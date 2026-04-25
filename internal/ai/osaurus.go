@@ -232,7 +232,7 @@ func (p *OsaurusProvider) ListModels(ctx context.Context) ([]OsaurusModel, error
 
 	out := make([]OsaurusModel, 0, len(decoded.Data))
 	for _, m := range decoded.Data {
-		out = append(out, OsaurusModel{ID: m.ID, OwnedBy: m.OwnedBy, Created: m.Created})
+		out = append(out, OsaurusModel(m))
 	}
 	return out, nil
 }
