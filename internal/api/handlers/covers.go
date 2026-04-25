@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
+	"github.com/fireball1725/librarium-api/internal/api/uploads"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
 	"github.com/google/uuid"
@@ -125,24 +125,34 @@ func (h *BookHandler) UploadBookCover(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, "invalid multipart form")
 		return
 	}
-	file, header, err := r.FormFile("cover")
+	file, _, err := r.FormFile("cover")
 	if err != nil {
 		respond.Error(w, http.StatusBadRequest, "cover file is required")
 		return
 	}
 	defer file.Close()
 
-	mime := header.Header.Get("Content-Type")
-	if mime == "" || !strings.HasPrefix(mime, "image/") {
-		respond.Error(w, http.StatusBadRequest, "file must be an image")
+	// Detect MIME from the actual content rather than trusting the
+	// client-supplied multipart header. SniffImage rejects anything outside
+	// the cover allowlist (PNG / JPEG / GIF / WebP).
+	mime, head, err := uploads.SniffImage(file)
+	if errors.Is(err, uploads.ErrUnsupportedType) {
+		respond.Error(w, http.StatusBadRequest, "file must be a PNG, JPEG, GIF, or WebP image")
 		return
 	}
-
-	data, err := io.ReadAll(io.LimitReader(file, 10<<20))
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
 	}
+
+	// Stitch the bytes consumed during sniffing back onto the front of the
+	// stream so the persisted file is byte-identical to what was uploaded.
+	rest, err := io.ReadAll(io.LimitReader(file, (10<<20)-int64(len(head))))
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	data := append(head, rest...)
 
 	if err := h.svc.StoreCoverFromUpload(r.Context(), bookID, claims.UserID, data, mime); err != nil {
 		respond.ServerError(w, r, err)

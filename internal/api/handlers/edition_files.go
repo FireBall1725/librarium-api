@@ -4,11 +4,14 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/fireball1725/librarium-api/internal/api/respond"
+	"github.com/fireball1725/librarium-api/internal/api/uploads"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
@@ -149,7 +152,22 @@ func (h *EditionFileHandler) UploadEditionFile(w http.ResponseWriter, r *http.Re
 	}
 	defer file.Close()
 
-	ef, err := h.svc.UploadEditionFile(r.Context(), edition, file, header.Filename, header.Size)
+	// Sniff actual content vs. trusting the multipart Content-Type header.
+	// We restitch the consumed sniff bytes onto the front of the stream
+	// before handing it to the service so the persisted file is byte-
+	// identical to the upload.
+	_, head, err := uploads.SniffEditionFile(file)
+	if errors.Is(err, uploads.ErrUnsupportedType) {
+		respond.Error(w, http.StatusBadRequest, "file must be a PDF, EPUB, or supported audio format")
+		return
+	}
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	stream := io.MultiReader(bytes.NewReader(head), file)
+
+	ef, err := h.svc.UploadEditionFile(r.Context(), edition, stream, header.Filename, header.Size)
 	if err != nil {
 		var ve *service.ValidationError
 		if errors.As(err, &ve) {

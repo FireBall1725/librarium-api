@@ -6,6 +6,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
@@ -14,6 +15,41 @@ import (
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
 )
+
+// authEvent emits a structured slog record for an authentication-relevant
+// event. Centralized so login/logout/password-change/registration all
+// share the same shape — easy to grep, easy to ship into an external
+// audit log later without touching every call site.
+func authEvent(r *http.Request, event, outcome string, attrs ...slog.Attr) {
+	base := []slog.Attr{
+		slog.String("event", event),
+		slog.String("outcome", outcome),
+		slog.String("remote_addr", clientIPFromRequest(r)),
+	}
+	all := append(base, attrs...)
+	args := make([]any, 0, len(all))
+	for _, a := range all {
+		args = append(args, a)
+	}
+	slog.Info("auth", args...)
+}
+
+// clientIPFromRequest mirrors the logger's realIP behaviour without
+// re-exporting it. Returns the originating IP, X-Forwarded-For aware.
+func clientIPFromRequest(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		for i := 0; i < len(xff); i++ {
+			if xff[i] == ',' {
+				return xff[:i]
+			}
+		}
+		return xff
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+	return r.RemoteAddr
+}
 
 type AuthHandler struct {
 	auth  *service.AuthService
@@ -65,15 +101,22 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrRegistrationDisabled):
+			authEvent(r, "register", "denied", slog.String("reason", "registration_disabled"))
 			respond.Error(w, http.StatusForbidden, "registration is disabled")
 		case errors.Is(err, repository.ErrDuplicate):
-			respond.Error(w, http.StatusConflict, err.Error())
+			authEvent(r, "register", "denied", slog.String("reason", "duplicate"))
+			// Generic message so signup can't be used to enumerate which
+			// usernames/emails are taken. Service-level errors may name the
+			// specific field; we collapse them here.
+			respond.Error(w, http.StatusConflict, "username or email is already in use")
 		default:
+			authEvent(r, "register", "error")
 			respond.ServerError(w, r, err)
 		}
 		return
 	}
 
+	authEvent(r, "register", "success", slog.String("user_id", resp.User.ID.String()))
 	respond.JSON(w, http.StatusCreated, authResponseBody(resp))
 }
 
@@ -110,13 +153,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidCredentials), errors.Is(err, service.ErrAccountInactive):
+			// Don't include the identifier — could leak which usernames/
+			// emails exist if logs are exfiltrated.
+			authEvent(r, "login", "failure", slog.String("reason", "invalid_credentials"))
 			respond.Error(w, http.StatusUnauthorized, "invalid credentials")
 		default:
+			authEvent(r, "login", "error")
 			respond.ServerError(w, r, err)
 		}
 		return
 	}
 
+	authEvent(r, "login", "success", slog.String("user_id", resp.User.ID.String()))
 	respond.JSON(w, http.StatusOK, authResponseBody(resp))
 }
 
@@ -179,10 +227,12 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.auth.Logout(r.Context(), claims.UserID, claims.JTI, claims.ExpiresAt); err != nil {
+		authEvent(r, "logout", "error", slog.String("user_id", claims.UserID.String()))
 		respond.ServerError(w, r, err)
 		return
 	}
 
+	authEvent(r, "logout", "success", slog.String("user_id", claims.UserID.String()))
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }
 
@@ -224,7 +274,9 @@ func (h *AuthHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, repository.ErrDuplicate):
-			respond.Error(w, http.StatusConflict, err.Error())
+			// Don't echo whether it was username/email — same anti-enumeration
+			// rationale as Register.
+			respond.Error(w, http.StatusConflict, "email is already in use")
 		default:
 			respond.ServerError(w, r, err)
 		}
@@ -270,13 +322,16 @@ func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	if err := h.auth.UpdatePassword(r.Context(), claims.UserID, req.CurrentPassword, req.NewPassword); err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidCredentials):
+			authEvent(r, "password_change", "failure", slog.String("user_id", claims.UserID.String()), slog.String("reason", "wrong_current_password"))
 			respond.Error(w, http.StatusUnauthorized, "current password is incorrect")
 		default:
+			authEvent(r, "password_change", "error", slog.String("user_id", claims.UserID.String()))
 			respond.ServerError(w, r, err)
 		}
 		return
 	}
 
+	authEvent(r, "password_change", "success", slog.String("user_id", claims.UserID.String()))
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "password updated"})
 }
 

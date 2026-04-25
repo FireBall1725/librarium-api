@@ -6,6 +6,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -147,6 +148,10 @@ func (h *APITokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	authEvent(r, "pat_create", "success",
+		slog.String("user_id", claims.UserID.String()),
+		slog.String("token_id", minted.Token.ID.String()),
+		slog.Int("scope_count", len(scopes)))
 	respond.JSON(w, http.StatusCreated, createTokenResponse{
 		tokenView: toTokenView(minted.Token),
 		Token:     minted.Raw,
@@ -182,6 +187,9 @@ func (h *APITokenHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		respond.ServerError(w, r, err)
 		return
 	}
+	authEvent(r, "pat_revoke", "success",
+		slog.String("user_id", claims.UserID.String()),
+		slog.String("token_id", id.String()))
 	w.WriteHeader(http.StatusNoContent)
 }
 

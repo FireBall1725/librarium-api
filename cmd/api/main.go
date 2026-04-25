@@ -62,6 +62,15 @@ import (
 func main() {
 	cfg := config.Load()
 
+	// Refuse to start without a JWT signing secret. An empty secret would
+	// cause every token to be signed with `[]byte("")`, which is trivially
+	// forgeable — catastrophic auth bypass. Caller must set JWT_SECRET to a
+	// cryptographically random value (≥32 bytes recommended).
+	if cfg.JWTSecret == "" {
+		fmt.Fprintln(os.Stderr, "FATAL: JWT_SECRET is required and must not be empty")
+		os.Exit(1)
+	}
+
 	baseCtx, cancelBaseCtx := context.WithCancel(context.Background())
 	defer cancelBaseCtx()
 
@@ -430,11 +439,15 @@ func main() {
 		ProviderSvc: providerSvc,
 	})
 	srv := &http.Server{
-		Addr:         addr,
-		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:           addr,
+		Handler:        handler,
+		ReadTimeout:    15 * time.Second,
+		WriteTimeout:   15 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		// Cap request headers at 1 MiB so a malformed client can't pin a
+		// goroutine on an unbounded header read. Per-handler limits cover
+		// bodies (multipart, JSON); this catches everything else.
+		MaxHeaderBytes: 1 << 20,
 	}
 	if collector != nil {
 		srv.ConnState = func(_ net.Conn, state http.ConnState) {
