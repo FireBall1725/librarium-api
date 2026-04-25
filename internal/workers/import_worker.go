@@ -513,8 +513,7 @@ func (w *ImportWorker) applyInteraction(ctx context.Context, editionID, userID u
 	isFavorite, hasFavorite := imports.Bool(row["is_favorite"])
 
 	// Bail when nothing interaction-shaped is present — most generic
-	// CSVs won't carry any of these and we don't want to overwrite
-	// established interactions with a no-op upsert.
+	// CSVs won't carry any of these and we don't want to touch the row.
 	if readStatus == "" && !hasRating && review == "" && notes == "" &&
 		!hasStarted && !hasFinished && !hasFavorite {
 		return
@@ -527,12 +526,25 @@ func (w *ImportWorker) applyInteraction(ctx context.Context, editionID, userID u
 		readStatus = "read"
 	}
 
-	// UpsertInteraction's signature accepts `any` for the optional
-	// numeric/date fields so the repo can pass nil for SQL NULL when
-	// the import didn't supply them.
+	// MergeInteraction preserves whatever the existing row holds for
+	// any field the CSV didn't populate. The previous Upsert variant
+	// did an unconditional overwrite, which silently wiped manually
+	// entered ratings/reviews on every re-import.
+	var readStatusArg *string
+	if readStatus != "" {
+		readStatusArg = &readStatus
+	}
 	var ratingArg any
 	if hasRating {
 		ratingArg = rating
+	}
+	var notesArg *string
+	if notes != "" {
+		notesArg = &notes
+	}
+	var reviewArg *string
+	if review != "" {
+		reviewArg = &review
 	}
 	var startedArg any
 	if hasStarted {
@@ -542,19 +554,19 @@ func (w *ImportWorker) applyInteraction(ctx context.Context, editionID, userID u
 	if hasFinished {
 		finishedArg = finishedAt
 	}
-	favorite := false
+	var favoriteArg *bool
 	if hasFavorite {
-		favorite = isFavorite
+		favoriteArg = &isFavorite
 	}
 
-	if _, err := w.editions.UpsertInteraction(
+	if _, err := w.editions.MergeInteraction(
 		ctx, userID, editionID,
-		readStatus, ratingArg,
-		notes, review,
+		readStatusArg, ratingArg,
+		notesArg, reviewArg,
 		startedArg, finishedArg,
-		favorite,
+		favoriteArg,
 	); err != nil {
-		slog.Warn("import: applying user interaction failed",
+		slog.Warn("import: merging user interaction failed",
 			"user_id", userID, "edition_id", editionID, "error", err)
 	}
 }
