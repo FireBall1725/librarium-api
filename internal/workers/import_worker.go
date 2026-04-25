@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fireball1725/librarium-api/internal/imports"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
@@ -248,6 +249,11 @@ func (w *ImportWorker) processItem(
 			if incrErr := w.editions.IncrementCopyCount(ctx, job.LibraryID, existing.ID); incrErr != nil {
 				return models.ImportItemFailed, fmt.Sprintf("increment copy count: %v", incrErr), nil
 			}
+			// User-interaction fields (rating, review, status, dates)
+			// also need to flow through on dedup — otherwise migrating
+			// from a tracker where the same book shows up across shelves
+			// would lose the per-row metadata on every row past the first.
+			w.applyInteraction(ctx, existing.ID, job.CreatedBy, row)
 			bookID := existing.BookID
 			return models.ImportItemDone, fmt.Sprintf("duplicate ISBN %s — copy count incremented", isbn), &bookID
 		}
@@ -424,7 +430,78 @@ func (w *ImportWorker) processItem(
 		return models.ImportItemFailed, fmt.Sprintf("commit: %v", err), nil
 	}
 
+	// User-interaction fields are applied after the book/edition is
+	// committed so that a per-user `user_book_interactions` row points
+	// at a real `book_edition_id`. Failures here are non-fatal — the
+	// book is already imported, so we log and move on rather than
+	// rolling back the whole row.
+	w.applyInteraction(ctx, editionID, job.CreatedBy, row)
+
 	return models.ImportItemDone, fmt.Sprintf("imported %q", finalTitle), &bookID
+}
+
+// applyInteraction reads the user-interaction columns out of an import
+// row and upserts a `user_book_interactions` record for the importing
+// user against the given edition. Idempotent — re-running the same
+// import on a row whose values haven't changed produces no-op writes.
+//
+// Skips the upsert entirely when none of the interaction fields are
+// present. We don't want to clobber an existing rating/review just
+// because the user re-ran an import that didn't carry user-data.
+func (w *ImportWorker) applyInteraction(ctx context.Context, editionID, userID uuid.UUID, row map[string]string) {
+	readStatus := imports.ReadStatus(row["read_status"])
+	rating, hasRating := imports.Rating(row["rating"])
+	review := strings.TrimSpace(row["review"])
+	notes := strings.TrimSpace(row["notes"])
+	startedAt, hasStarted := imports.Date(row["date_started"])
+	finishedAt, hasFinished := imports.Date(row["date_finished"])
+	isFavorite, hasFavorite := imports.Bool(row["is_favorite"])
+
+	// Bail when nothing interaction-shaped is present — most generic
+	// CSVs won't carry any of these and we don't want to overwrite
+	// established interactions with a no-op upsert.
+	if readStatus == "" && !hasRating && review == "" && notes == "" &&
+		!hasStarted && !hasFinished && !hasFavorite {
+		return
+	}
+
+	// If we have a finish date but no explicit status, infer "read".
+	// Mirrors the behaviour every external tracker assumes — if you
+	// finished a book on a date, you read it.
+	if readStatus == "" && hasFinished {
+		readStatus = "read"
+	}
+
+	// UpsertInteraction's signature accepts `any` for the optional
+	// numeric/date fields so the repo can pass nil for SQL NULL when
+	// the import didn't supply them.
+	var ratingArg any
+	if hasRating {
+		ratingArg = rating
+	}
+	var startedArg any
+	if hasStarted {
+		startedArg = startedAt
+	}
+	var finishedArg any
+	if hasFinished {
+		finishedArg = finishedAt
+	}
+	favorite := false
+	if hasFavorite {
+		favorite = isFavorite
+	}
+
+	if _, err := w.editions.UpsertInteraction(
+		ctx, userID, editionID,
+		readStatus, ratingArg,
+		notes, review,
+		startedArg, finishedArg,
+		favorite,
+	); err != nil {
+		slog.Warn("import: applying user interaction failed",
+			"user_id", userID, "edition_id", editionID, "error", err)
+	}
 }
 
 func (w *ImportWorker) findOrCreateContributor(ctx context.Context, name string) (*models.Contributor, error) {
