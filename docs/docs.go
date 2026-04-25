@@ -11796,6 +11796,13 @@ const docTemplate = `{
                 "kind": {
                     "type": "string"
                 },
+                "kind_id": {
+                    "description": "KindID is the per-kind detail row's primary key when one exists\n(import_jobs.id, enrichment_batches.id). Clients use it to deep-link\nthe umbrella row back to its detail endpoint, which is keyed by the\nper-kind id rather than the umbrella job id. Empty for kinds that\nhave no detail table (cover_backfill, ai_suggestions today).",
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
                 "progress": {
                     "type": "array",
                     "items": {

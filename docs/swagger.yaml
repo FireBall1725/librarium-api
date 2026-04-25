@@ -559,6 +559,16 @@ definitions:
         type: string
       kind:
         type: string
+      kind_id:
+        description: |-
+          KindID is the per-kind detail row's primary key when one exists
+          (import_jobs.id, enrichment_batches.id). Clients use it to deep-link
+          the umbrella row back to its detail endpoint, which is keyed by the
+          per-kind id rather than the umbrella job id. Empty for kinds that
+          have no detail table (cover_backfill, ai_suggestions today).
+        type: string
+      library_id:
+        type: string
       progress:
         items:
           type: integer

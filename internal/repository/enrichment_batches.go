@@ -410,6 +410,38 @@ func scanBatch(s batchScanner) (*models.EnrichmentBatch, error) {
 	return &b, nil
 }
 
+// LookupByJobIDs maps umbrella job_id → (enrichment_batches.id, library_id)
+// for every input id with a matching row. library_id is nullable for
+// enrichment batches (post-000009 migration); a missing/null value yields
+// the zero UUID. Missing rows are silently absent from the returned map.
+func (r *EnrichmentBatchRepo) LookupByJobIDs(ctx context.Context, jobIDs []uuid.UUID) (map[uuid.UUID]JobRef, error) {
+	out := make(map[uuid.UUID]JobRef, len(jobIDs))
+	if len(jobIDs) == 0 {
+		return out, nil
+	}
+	const q = `
+		SELECT id, library_id, job_id
+		FROM   enrichment_batches
+		WHERE  job_id = ANY($1)`
+	rows, err := r.db.Query(ctx, q, jobIDs)
+	if err != nil {
+		return nil, fmt.Errorf("looking up enrichment batches by job_id: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pgID, pgLibraryID, pgJobID pgtype.UUID
+		if err := rows.Scan(&pgID, &pgLibraryID, &pgJobID); err != nil {
+			return nil, fmt.Errorf("scanning batch ref: %w", err)
+		}
+		ref := JobRef{ID: uuid.UUID(pgID.Bytes)}
+		if pgLibraryID.Valid {
+			ref.LibraryID = uuid.UUID(pgLibraryID.Bytes)
+		}
+		out[uuid.UUID(pgJobID.Bytes)] = ref
+	}
+	return out, rows.Err()
+}
+
 func scanBatchWithLibraryName(s batchScanner) (*models.EnrichmentBatch, error) {
 	var (
 		pgID        pgtype.UUID

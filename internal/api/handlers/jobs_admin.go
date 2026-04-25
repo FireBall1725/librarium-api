@@ -31,12 +31,14 @@ var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month 
 // Jobs page keeps working until the web PR lands on these unified
 // endpoints.
 type UnifiedJobsHandler struct {
-	jobs     *repository.JobRepo
-	registry *jobs.Registry
+	jobs        *repository.JobRepo
+	registry    *jobs.Registry
+	importJobs  *repository.ImportJobRepo
+	enrichments *repository.EnrichmentBatchRepo
 }
 
-func NewUnifiedJobsHandler(jr *repository.JobRepo, registry *jobs.Registry) *UnifiedJobsHandler {
-	return &UnifiedJobsHandler{jobs: jr, registry: registry}
+func NewUnifiedJobsHandler(jr *repository.JobRepo, registry *jobs.Registry, importJobs *repository.ImportJobRepo, enrichments *repository.EnrichmentBatchRepo) *UnifiedJobsHandler {
+	return &UnifiedJobsHandler{jobs: jr, registry: registry, importJobs: importJobs, enrichments: enrichments}
 }
 
 // JobView is the wire-shape for one unified job row. Progress is a
@@ -55,6 +57,13 @@ type JobView struct {
 	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
+	// KindID is the per-kind detail row's primary key when one exists
+	// (import_jobs.id, enrichment_batches.id). Clients use it to deep-link
+	// the umbrella row back to its detail endpoint, which is keyed by the
+	// per-kind id rather than the umbrella job id. Empty for kinds that
+	// have no detail table (cover_backfill, ai_suggestions today).
+	KindID    *string `json:"kind_id,omitempty"`
+	LibraryID *string `json:"library_id,omitempty"`
 }
 
 func toJobView(j *models.Job) JobView {
@@ -130,9 +139,52 @@ func (h *UnifiedJobsHandler) History(w http.ResponseWriter, r *http.Request) {
 		respond.ServerError(w, r, err)
 		return
 	}
+
+	// Collect umbrella ids per kind so the per-kind detail tables can be
+	// resolved in a single query each. The unified row carries no detail
+	// pointer of its own — the web needs (kind_id, library_id) to call
+	// the existing per-kind GET endpoints, and without these the items
+	// list silently renders as "No items".
+	var importIDs, enrichIDs []uuid.UUID
+	for _, j := range items {
+		switch j.Kind {
+		case "import":
+			importIDs = append(importIDs, j.ID)
+		case "enrichment":
+			enrichIDs = append(enrichIDs, j.ID)
+		}
+	}
+	importRefs, err := h.importJobs.LookupByJobIDs(r.Context(), importIDs)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	enrichRefs, err := h.enrichments.LookupByJobIDs(r.Context(), enrichIDs)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
 	out := make([]JobView, 0, len(items))
 	for _, j := range items {
-		out = append(out, toJobView(j))
+		v := toJobView(j)
+		var ref repository.JobRef
+		var ok bool
+		switch j.Kind {
+		case "import":
+			ref, ok = importRefs[j.ID]
+		case "enrichment":
+			ref, ok = enrichRefs[j.ID]
+		}
+		if ok {
+			id := ref.ID.String()
+			v.KindID = &id
+			if ref.LibraryID != (uuid.UUID{}) {
+				lid := ref.LibraryID.String()
+				v.LibraryID = &lid
+			}
+		}
+		out = append(out, v)
 	}
 	respond.JSON(w, http.StatusOK, map[string]any{"items": out, "total": total})
 }

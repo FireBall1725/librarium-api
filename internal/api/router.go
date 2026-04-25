@@ -103,7 +103,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	aiHandler := handlers.NewAIHandler(aiSvc)
 	aiUserHandler := handlers.NewAIUserHandler(aiUserSvc)
 	jobsHandler := handlers.NewJobsHandler(jobSvc)
-	unifiedJobsHandler := handlers.NewUnifiedJobsHandler(repository.NewJobRepo(db), deps.JobRegistry)
+	unifiedJobsHandler := handlers.NewUnifiedJobsHandler(repository.NewJobRepo(db), deps.JobRegistry, importJobRepo, enrichmentBatchRepo)
 	aiSuggestionsHandler := handlers.NewAISuggestionsHandler(aiSuggestionsRepo, riverClient, jobSvc, aiSvc)
 
 	authHandler := handlers.NewAuthHandler(authSvc, preferencesRepo)

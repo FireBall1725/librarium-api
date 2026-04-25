@@ -378,3 +378,40 @@ func scanImportItem(s scanner) (*models.ImportJobItem, error) {
 	}
 	return &item, nil
 }
+
+// JobRef is the lightweight (id, library_id) pair the unified jobs view
+// needs to deep-link an umbrella job_id back to the per-kind detail row.
+type JobRef struct {
+	ID        uuid.UUID
+	LibraryID uuid.UUID
+}
+
+// LookupByJobIDs maps umbrella job_id → (import_jobs.id, library_id) for
+// every input id that has a matching import_jobs row. Missing rows are
+// silently absent from the returned map.
+func (r *ImportJobRepo) LookupByJobIDs(ctx context.Context, jobIDs []uuid.UUID) (map[uuid.UUID]JobRef, error) {
+	out := make(map[uuid.UUID]JobRef, len(jobIDs))
+	if len(jobIDs) == 0 {
+		return out, nil
+	}
+	const q = `
+		SELECT id, library_id, job_id
+		FROM   import_jobs
+		WHERE  job_id = ANY($1)`
+	rows, err := r.db.Query(ctx, q, jobIDs)
+	if err != nil {
+		return nil, fmt.Errorf("looking up import jobs by job_id: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pgID, pgLibraryID, pgJobID pgtype.UUID
+		if err := rows.Scan(&pgID, &pgLibraryID, &pgJobID); err != nil {
+			return nil, fmt.Errorf("scanning job ref: %w", err)
+		}
+		out[uuid.UUID(pgJobID.Bytes)] = JobRef{
+			ID:        uuid.UUID(pgID.Bytes),
+			LibraryID: uuid.UUID(pgLibraryID.Bytes),
+		}
+	}
+	return out, rows.Err()
+}
