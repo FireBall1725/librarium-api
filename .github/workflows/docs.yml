@@ -31,7 +31,14 @@ jobs:
           set -euo pipefail
           mkdir -p site
           cp docs/swagger.json site/openapi.json
-          npx --yes @redocly/cli@latest build-docs site/openapi.json -o site/index.html
+          # The Redoc community renderer auto-applies dark mode to the
+          # main content + right code-samples panel via prefers-color-scheme,
+          # but the sidebar still ships hardcoded light colors. Override
+          # only the sidebar so the whole page is consistent.
+          npx --yes @redocly/cli@latest build-docs site/openapi.json -o site/index.html \
+            --theme.openapi.theme.sidebar.backgroundColor='#0f1115' \
+            --theme.openapi.theme.sidebar.textColor='#e6e6e6' \
+            --theme.openapi.theme.sidebar.activeTextColor='#ffffff'
           # Copy swagger.yaml as well so consumers can fetch either format.
           cp docs/swagger.yaml site/openapi.yaml
 
