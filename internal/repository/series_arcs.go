@@ -26,7 +26,7 @@ func NewSeriesArcRepo(db *pgxpool.Pool) *SeriesArcRepo {
 func (r *SeriesArcRepo) List(ctx context.Context, seriesID uuid.UUID) ([]*models.SeriesArc, error) {
 	const q = `
 		SELECT a.id, a.series_id, a.name, COALESCE(a.description, ''),
-		       a.position, a.created_at, a.updated_at,
+		       a.position, a.vol_start, a.vol_end, a.created_at, a.updated_at,
 		       (SELECT COUNT(*) FROM book_series bs WHERE bs.arc_id = a.id) AS book_count
 		FROM series_arcs a
 		WHERE a.series_id = $1
@@ -51,7 +51,7 @@ func (r *SeriesArcRepo) List(ctx context.Context, seriesID uuid.UUID) ([]*models
 func (r *SeriesArcRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.SeriesArc, error) {
 	const q = `
 		SELECT a.id, a.series_id, a.name, COALESCE(a.description, ''),
-		       a.position, a.created_at, a.updated_at,
+		       a.position, a.vol_start, a.vol_end, a.created_at, a.updated_at,
 		       (SELECT COUNT(*) FROM book_series bs WHERE bs.arc_id = a.id) AS book_count
 		FROM series_arcs a
 		WHERE a.id = $1`
@@ -65,25 +65,27 @@ func (r *SeriesArcRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Ser
 	return arc, nil
 }
 
-func (r *SeriesArcRepo) Create(ctx context.Context, id, seriesID uuid.UUID, name, description string, position float64) (*models.SeriesArc, error) {
+func (r *SeriesArcRepo) Create(ctx context.Context, id, seriesID uuid.UUID, name, description string, position float64, volStart, volEnd *float64) (*models.SeriesArc, error) {
 	const q = `
-		INSERT INTO series_arcs (id, series_id, name, description, position)
-		VALUES ($1, $2, $3, NULLIF($4,''), $5)`
-	if _, err := r.db.Exec(ctx, q, id, seriesID, name, description, position); err != nil {
+		INSERT INTO series_arcs (id, series_id, name, description, position, vol_start, vol_end)
+		VALUES ($1, $2, $3, NULLIF($4,''), $5, $6, $7)`
+	if _, err := r.db.Exec(ctx, q, id, seriesID, name, description, position, volStart, volEnd); err != nil {
 		return nil, fmt.Errorf("inserting series arc: %w", err)
 	}
 	return r.FindByID(ctx, id)
 }
 
-func (r *SeriesArcRepo) Update(ctx context.Context, id uuid.UUID, name, description string, position float64) (*models.SeriesArc, error) {
+func (r *SeriesArcRepo) Update(ctx context.Context, id uuid.UUID, name, description string, position float64, volStart, volEnd *float64) (*models.SeriesArc, error) {
 	const q = `
 		UPDATE series_arcs
 		SET name        = $2,
 		    description = NULLIF($3, ''),
 		    position    = $4,
+		    vol_start   = $5,
+		    vol_end     = $6,
 		    updated_at  = NOW()
 		WHERE id = $1`
-	result, err := r.db.Exec(ctx, q, id, name, description, position)
+	result, err := r.db.Exec(ctx, q, id, name, description, position, volStart, volEnd)
 	if err != nil {
 		return nil, fmt.Errorf("updating series arc: %w", err)
 	}
@@ -125,11 +127,13 @@ func scanSeriesArc(s scanner) (*models.SeriesArc, error) {
 	var (
 		pgID       pgtype.UUID
 		pgSeriesID pgtype.UUID
+		pgVolStart pgtype.Numeric
+		pgVolEnd   pgtype.Numeric
 		arc        models.SeriesArc
 	)
 	err := s.Scan(
 		&pgID, &pgSeriesID, &arc.Name, &arc.Description,
-		&arc.Position, &arc.CreatedAt, &arc.UpdatedAt,
+		&arc.Position, &pgVolStart, &pgVolEnd, &arc.CreatedAt, &arc.UpdatedAt,
 		&arc.BookCount,
 	)
 	if err != nil {
@@ -137,5 +141,15 @@ func scanSeriesArc(s scanner) (*models.SeriesArc, error) {
 	}
 	arc.ID = uuid.UUID(pgID.Bytes)
 	arc.SeriesID = uuid.UUID(pgSeriesID.Bytes)
+	if pgVolStart.Valid {
+		f, _ := pgVolStart.Float64Value()
+		v := f.Float64
+		arc.VolStart = &v
+	}
+	if pgVolEnd.Valid {
+		f, _ := pgVolEnd.Float64Value()
+		v := f.Float64
+		arc.VolEnd = &v
+	}
 	return &arc, nil
 }

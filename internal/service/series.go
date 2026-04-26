@@ -129,6 +129,8 @@ type SeriesArcRequest struct {
 	Name        string
 	Description string
 	Position    float64
+	VolStart    *float64
+	VolEnd      *float64
 }
 
 func (s *SeriesService) ListSeriesArcs(ctx context.Context, seriesID uuid.UUID) ([]*models.SeriesArc, error) {
@@ -139,14 +141,14 @@ func (s *SeriesService) CreateSeriesArc(ctx context.Context, seriesID uuid.UUID,
 	if req.Name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
-	return s.arcs.Create(ctx, uuid.New(), seriesID, req.Name, req.Description, req.Position)
+	return s.arcs.Create(ctx, uuid.New(), seriesID, req.Name, req.Description, req.Position, req.VolStart, req.VolEnd)
 }
 
 func (s *SeriesService) UpdateSeriesArc(ctx context.Context, arcID uuid.UUID, req SeriesArcRequest) (*models.SeriesArc, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
-	return s.arcs.Update(ctx, arcID, req.Name, req.Description, req.Position)
+	return s.arcs.Update(ctx, arcID, req.Name, req.Description, req.Position, req.VolStart, req.VolEnd)
 }
 
 func (s *SeriesService) DeleteSeriesArc(ctx context.Context, arcID uuid.UUID) error {

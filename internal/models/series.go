@@ -52,12 +52,18 @@ type SeriesPreviewBook struct {
 // SeriesArc is an optional named grouping of books inside a series. Manga
 // story arcs, multi-trilogy fiction sub-series, etc. A series can have zero
 // or more arcs; books opt in by setting their book_series.arc_id.
+//
+// VolStart / VolEnd are optional bounds the UI uses to place ghost rows
+// (missing volumes the user doesn't own) into the right arc even when no
+// owned book in the arc gives a neighbour signal.
 type SeriesArc struct {
 	ID          uuid.UUID `json:"id"`
 	SeriesID    uuid.UUID `json:"series_id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Position    float64   `json:"position"`
+	VolStart    *float64  `json:"vol_start"`
+	VolEnd      *float64  `json:"vol_end"`
 	BookCount   int       `json:"book_count"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`

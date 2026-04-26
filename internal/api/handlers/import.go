@@ -114,6 +114,11 @@ func (h *ImportHandler) CreateImport(w http.ResponseWriter, r *http.Request) {
 		enrichCovers, _ = strconv.ParseBool(ec)
 	}
 
+	useAICleanup := false
+	if v := r.FormValue("use_ai_cleanup"); v != "" {
+		useAICleanup, _ = strconv.ParseBool(v)
+	}
+
 	// Optional attribution override — when set, the user-interaction
 	// fields land on this user instead of the caller. Only instance
 	// admins may attribute to someone else; everyone else either omits
@@ -153,6 +158,7 @@ func (h *ImportHandler) CreateImport(w http.ResponseWriter, r *http.Request) {
 		DefaultFormat:               defaultFormat,
 		EnrichMetadata:              enrichMetadata,
 		EnrichCovers:                enrichCovers,
+		UseAICleanup:                useAICleanup,
 		AttributeToUserID:           attributeTo,
 	}
 

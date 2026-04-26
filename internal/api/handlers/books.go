@@ -746,8 +746,9 @@ var (
 // ─── Bulk operations ──────────────────────────────────────────────────────────
 
 type bulkEnrichRequest struct {
-	BookIDs []uuid.UUID `json:"book_ids"`
-	Force   bool        `json:"force"`
+	BookIDs      []uuid.UUID `json:"book_ids"`
+	Force        bool        `json:"force"`
+	UseAICleanup bool        `json:"use_ai_cleanup"`
 }
 
 // BulkEnrich godoc
@@ -794,14 +795,15 @@ func (h *BookHandler) BulkEnrich(w http.ResponseWriter, r *http.Request) {
 	}
 
 	batch := &models.EnrichmentBatch{
-		ID:         uuid.New(),
-		LibraryID:  &libraryID,
-		CreatedBy:  caller.UserID,
-		Type:       models.EnrichmentBatchTypeMetadata,
-		Force:      req.Force,
-		Status:     models.EnrichmentBatchPending,
-		BookIDs:    req.BookIDs,
-		TotalBooks: len(req.BookIDs),
+		ID:           uuid.New(),
+		LibraryID:    &libraryID,
+		CreatedBy:    caller.UserID,
+		Type:         models.EnrichmentBatchTypeMetadata,
+		Force:        req.Force,
+		UseAICleanup: req.UseAICleanup,
+		Status:       models.EnrichmentBatchPending,
+		BookIDs:      req.BookIDs,
+		TotalBooks:   len(req.BookIDs),
 	}
 	if err := h.enrichmentBatches.Create(r.Context(), batch); err != nil {
 		respond.ServerError(w, r, err)
@@ -853,15 +855,23 @@ func (h *BookHandler) EnrichBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Body is optional; absent body means "no AI cleanup" — preserves the
+	// existing zero-body POST contract.
+	var body struct {
+		UseAICleanup bool `json:"use_ai_cleanup"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
 	batch := &models.EnrichmentBatch{
-		ID:         uuid.New(),
-		LibraryID:  nil, // library-agnostic — works for floating books
-		CreatedBy:  caller.UserID,
-		Type:       models.EnrichmentBatchTypeMetadata,
-		Force:      true, // one-off re-enrich always overwrites
-		Status:     models.EnrichmentBatchPending,
-		BookIDs:    []uuid.UUID{bookID},
-		TotalBooks: 1,
+		ID:           uuid.New(),
+		LibraryID:    nil, // library-agnostic — works for floating books
+		CreatedBy:    caller.UserID,
+		Type:         models.EnrichmentBatchTypeMetadata,
+		Force:        true, // one-off re-enrich always overwrites
+		UseAICleanup: body.UseAICleanup,
+		Status:       models.EnrichmentBatchPending,
+		BookIDs:      []uuid.UUID{bookID},
+		TotalBooks:   1,
 	}
 	if err := h.enrichmentBatches.Create(r.Context(), batch); err != nil {
 		respond.ServerError(w, r, err)

@@ -131,6 +131,10 @@ func (r *JobRepo) GetJob(ctx context.Context, id uuid.UUID) (*models.Job, error)
 // ListJobsOpts filters ListJobs. Zero-value = no filter for that field.
 type ListJobsOpts struct {
 	Kind      string      // empty = any kind
+	// Subtype only applies when Kind=='enrichment' — filters
+	// enrichment_batches.type so the UI can split Metadata vs Covers without
+	// exposing kind=enrichment&subtype=foo as a polluted filter combo.
+	Subtype   string
 	Status    string      // empty = any status
 	CreatedBy *uuid.UUID  // nil = any caller
 	Since     *time.Time  // nil = no time floor
@@ -147,6 +151,16 @@ func (r *JobRepo) ListJobs(ctx context.Context, opts ListJobsOpts) ([]*models.Jo
 	if opts.Kind != "" {
 		where = append(where, fmt.Sprintf("kind = $%d", argIdx))
 		args = append(args, opts.Kind)
+		argIdx++
+	}
+	// Subtype filter is enrichment-only; expressed as an EXISTS join so we
+	// don't accidentally drop rows for other kinds when the option is set.
+	if opts.Subtype != "" {
+		where = append(where, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM enrichment_batches eb
+			WHERE eb.job_id = jobs.id AND eb.type = $%d
+		)`, argIdx))
+		args = append(args, opts.Subtype)
 		argIdx++
 	}
 	if opts.Status != "" {

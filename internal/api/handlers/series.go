@@ -889,9 +889,11 @@ func decodeSeriesRequest(r *http.Request) (*service.SeriesRequest, error) {
 
 func decodeSeriesArcRequest(r *http.Request) (*service.SeriesArcRequest, error) {
 	var body struct {
-		Name        string  `json:"name"`
-		Description string  `json:"description"`
-		Position    float64 `json:"position"`
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Position    float64  `json:"position"`
+		VolStart    *float64 `json:"vol_start"`
+		VolEnd      *float64 `json:"vol_end"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return nil, errors.New("invalid request body")
@@ -903,20 +905,31 @@ func decodeSeriesArcRequest(r *http.Request) (*service.SeriesArcRequest, error) 
 		Name:        body.Name,
 		Description: body.Description,
 		Position:    body.Position,
+		VolStart:    body.VolStart,
+		VolEnd:      body.VolEnd,
 	}, nil
 }
 
 func seriesArcBody(a *models.SeriesArc) map[string]any {
-	return map[string]any{
+	body := map[string]any{
 		"id":          a.ID,
 		"series_id":   a.SeriesID,
 		"name":        a.Name,
 		"description": a.Description,
 		"position":    a.Position,
+		"vol_start":   nil,
+		"vol_end":     nil,
 		"book_count":  a.BookCount,
 		"created_at":  a.CreatedAt,
 		"updated_at":  a.UpdatedAt,
 	}
+	if a.VolStart != nil {
+		body["vol_start"] = *a.VolStart
+	}
+	if a.VolEnd != nil {
+		body["vol_end"] = *a.VolEnd
+	}
+	return body
 }
 
 func tagsToBody(tags []*models.Tag) []map[string]any {

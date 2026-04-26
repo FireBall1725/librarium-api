@@ -219,14 +219,17 @@ func (w *ImportWorker) spawnEnrichmentBatch(
 
 	libraryID := importJob.LibraryID
 	batch := &models.EnrichmentBatch{
-		ID:         batchID,
-		LibraryID:  &libraryID,
-		CreatedBy:  importJob.CreatedBy,
-		Type:       batchType,
-		Force:      false,
-		Status:     models.EnrichmentBatchPending,
-		BookIDs:    bookIDs,
-		TotalBooks: len(books),
+		ID:           batchID,
+		LibraryID:    &libraryID,
+		CreatedBy:    importJob.CreatedBy,
+		Type:         batchType,
+		Force:        false,
+		// AI cleanup applies to metadata batches only; cover-only batches don't
+		// touch description text.
+		UseAICleanup: batchType == models.EnrichmentBatchTypeMetadata && importJob.Options.UseAICleanup,
+		Status:       models.EnrichmentBatchPending,
+		BookIDs:      bookIDs,
+		TotalBooks:   len(books),
 	}
 	if err := w.batches.Create(ctx, batch); err != nil {
 		slog.Warn("creating enrichment batch after import", "type", batchType, "error", err)

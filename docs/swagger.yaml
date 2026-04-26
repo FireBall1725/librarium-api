@@ -1,5 +1,32 @@
 basePath: /api/v1
 definitions:
+  github_com_fireball1725_librarium-api_internal_models.AIMetadataProposal:
+    properties:
+      applied_at:
+        type: string
+      applied_by:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      kind:
+        type: string
+      library_id:
+        type: string
+      payload:
+        items:
+          type: integer
+        type: array
+      run_id:
+        type: string
+      status:
+        type: string
+      target_id:
+        type: string
+      target_type:
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch:
     properties:
       book_ids:
@@ -40,6 +67,8 @@ definitions:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchType'
       updated_at:
         type: string
+      use_ai_cleanup:
+        type: boolean
     type: object
   github_com_fireball1725_librarium-api_internal_models.EnrichmentBatchItem:
     properties:
@@ -191,6 +220,8 @@ definitions:
       enrich_covers:
         type: boolean
       enrich_metadata:
+        type: boolean
+      use_ai_cleanup:
         type: boolean
     type: object
   github_com_fireball1725_librarium-api_internal_models.SuggestionSteering:
@@ -726,6 +757,29 @@ definitions:
         type: string
       type:
         type: string
+    type: object
+  internal_api_handlers.acceptRequest:
+    properties:
+      arc_indices:
+        description: |-
+          For series_arcs proposals — zero-based indices into the proposed arcs
+          array. Empty slice means "accept every proposed arc".
+        items:
+          type: integer
+        type: array
+      assign_books:
+        description: |-
+          AssignBooks: when accepting arcs, also assign existing series books
+          whose position falls within each arc's vol_start / vol_end range.
+          Defaults to true when omitted (server-side via *bool).
+        type: boolean
+      fields:
+        description: |-
+          For series_metadata proposals — names of fields to apply. Empty slice
+          means "apply every populated field".
+        items:
+          type: string
+        type: array
     type: object
   internal_api_handlers.createTokenRequest:
     properties:
@@ -1580,6 +1634,51 @@ paths:
       tags:
       - admin
       - jobs
+  /admin/jobs/ai-metadata/runs/{job_id}:
+    get:
+      description: |-
+        Same shape as the AI suggestions run-detail endpoint so the
+        shared `RunDetailPanel` component can render either kind.
+        Synthesises a 2-event timeline (prompt + ai_response) from the
+        prompt + response_text columns on `ai_metadata_runs`.
+      parameters:
+      - description: Job UUID
+        in: path
+        name: job_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              events:
+                type: array
+              run:
+                type: object
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get an AI metadata run as a {run, events} timeline
+      tags:
+      - jobs
+      - ai
   /admin/jobs/ai-suggestions:
     get:
       produces:
@@ -6054,6 +6153,107 @@ paths:
       summary: Update a member's role
       tags:
       - libraries
+  /libraries/{library_id}/proposals/{proposal_id}/accept:
+    post:
+      consumes:
+      - application/json
+      description: Writes accepted fields / arcs onto the target series. Body lets
+        the user partially accept (`fields` / `arc_indices`); empty body accepts everything.
+        Arc proposals are destructive — accepting deletes every existing arc on the
+        series and replaces it with the proposed arcs (book→arc assignments are cleared
+        via ON DELETE SET NULL and re-derived from each new arc's volume range, unless
+        `assign_books=false`).
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Proposal UUID
+        in: path
+        name: proposal_id
+        required: true
+        type: string
+      - description: Selective acceptance
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_api_handlers.acceptRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Apply an AI suggestion proposal
+      tags:
+      - series
+      - ai
+  /libraries/{library_id}/proposals/{proposal_id}/reject:
+    post:
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Proposal UUID
+        in: path
+        name: proposal_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Reject an AI suggestion proposal
+      tags:
+      - series
+      - ai
   /libraries/{library_id}/series:
     get:
       description: Returns all series defined in the library.
@@ -6860,6 +7060,161 @@ paths:
       summary: Auto-match library books to this series
       tags:
       - series
+  /libraries/{library_id}/series/{series_id}/proposals:
+    get:
+      description: Returns proposals (pending, accepted, rejected) for the target
+        series, newest first.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      - description: Filter by status (pending|accepted|rejected|partially_accepted)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.AIMetadataProposal'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List AI suggestion proposals for a series
+      tags:
+      - series
+      - ai
+  /libraries/{library_id}/series/{series_id}/suggest-arcs:
+    post:
+      description: Synchronously calls the active AI provider with the series name
+        + volume count and writes a pending proposal that the user can review on the
+        series detail page. Records the prompt + response in `ai_metadata_runs` for
+        inspection.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              proposal_id:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Generate an AI suggestion for a series's arc list
+      tags:
+      - series
+      - ai
+  /libraries/{library_id}/series/{series_id}/suggest-metadata:
+    post:
+      description: Synchronously calls the active AI provider to propose status, total_count,
+        demographic, genres, and a cleaned description for a series. Writes a pending
+        proposal that the user reviews per-field on the series detail page.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              proposal_id:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Generate an AI suggestion for series metadata fields
+      tags:
+      - series
+      - ai
   /libraries/{library_id}/series/{series_id}/volumes:
     get:
       description: Returns known release volumes for a series from provider data.

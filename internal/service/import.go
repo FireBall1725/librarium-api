@@ -37,6 +37,7 @@ type ImportRequest struct {
 	DefaultFormat               string
 	EnrichMetadata              bool
 	EnrichCovers                bool
+	UseAICleanup                bool       // pass-through to enrichment batch
 	AttributeToUserID           *uuid.UUID // nil → attribute to caller
 }
 
@@ -63,6 +64,7 @@ func (s *ImportService) StartImport(ctx context.Context, req ImportRequest) (*mo
 			DefaultFormat:               models.NormalizeEditionFormat(req.DefaultFormat),
 			EnrichMetadata:              req.EnrichMetadata,
 			EnrichCovers:                req.EnrichCovers,
+			UseAICleanup:                req.UseAICleanup,
 			AttributeToUserID:           req.AttributeToUserID,
 		},
 	}

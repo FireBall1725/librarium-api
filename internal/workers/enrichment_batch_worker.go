@@ -12,6 +12,8 @@ import (
 
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/repository"
+	"github.com/fireball1725/librarium-api/internal/service"
+	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 )
 
@@ -22,16 +24,22 @@ type EnrichmentBatchWorker struct {
 	river.WorkerDefaults[models.EnrichmentBatchJobArgs]
 
 	batches        *repository.EnrichmentBatchRepo
+	books          *repository.BookRepo
 	metadataWorker *MetadataWorker
+	aiMeta         *service.AIMetadataService // optional; nil when AI not wired
 }
 
 func NewEnrichmentBatchWorker(
 	batches *repository.EnrichmentBatchRepo,
+	books *repository.BookRepo,
 	metadataWorker *MetadataWorker,
+	aiMeta *service.AIMetadataService,
 ) *EnrichmentBatchWorker {
 	return &EnrichmentBatchWorker{
 		batches:        batches,
+		books:          books,
 		metadataWorker: metadataWorker,
+		aiMeta:         aiMeta,
 	}
 }
 
@@ -122,6 +130,17 @@ func (w *EnrichmentBatchWorker) Work(ctx context.Context, job *river.Job[models.
 			itemStatus = models.EnrichmentItemDone
 		}
 
+		// Optional AI cleanup pass — runs only on books that updated cleanly
+		// (skipped/failed books don't get retouched). Failures here are soft;
+		// the metadata is already in place, AI is best-effort post-processing.
+		if !failed && !skipped && batch.UseAICleanup && w.aiMeta != nil && !coverOnly {
+			if cleanErr := w.runAIDescriptionCleanup(ctx, batch, bookID); cleanErr != nil {
+				slog.Warn("ai description cleanup failed",
+					"batch_id", batchID, "book_id", bookID, "error", cleanErr)
+				// Soft failure: the run is recorded; metadata stands.
+			}
+		}
+
 		if itemErr == nil && item != nil {
 			_ = w.batches.UpdateItemStatus(ctx, item.ID, itemStatus, itemMsg)
 		}
@@ -149,4 +168,30 @@ func (w *EnrichmentBatchWorker) Work(ctx context.Context, job *river.Job[models.
 		"any_failed", anyFailed,
 	)
 	return nil
+}
+
+// runAIDescriptionCleanup fetches the book's freshly-enriched description and
+// asks the active AI provider to clean it. The cleaned text is written back
+// to the book if it actually changed. The AI run is recorded by the service —
+// the caller's only job is to feed the prompt and persist the result.
+func (w *EnrichmentBatchWorker) runAIDescriptionCleanup(ctx context.Context, batch *models.EnrichmentBatch, bookID uuid.UUID) error {
+	desc, err := w.books.GetDescription(ctx, bookID)
+	if err != nil {
+		return fmt.Errorf("get description: %w", err)
+	}
+	if desc == "" {
+		return nil
+	}
+	created := batch.CreatedBy
+	cleaned, _, err := w.aiMeta.CleanDescription(ctx, service.AICallContext{
+		LibraryID:   batch.LibraryID,
+		TriggeredBy: &created,
+	}, models.AIMetaTargetBook, bookID, desc)
+	if err != nil {
+		return err
+	}
+	if cleaned == desc || cleaned == "" {
+		return nil
+	}
+	return w.books.UpdateDescription(ctx, bookID, cleaned)
 }

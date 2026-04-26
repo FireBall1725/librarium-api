@@ -58,11 +58,11 @@ func (r *EnrichmentBatchRepo) Create(ctx context.Context, batch *models.Enrichme
 
 	const q = `
 		INSERT INTO enrichment_batches
-		            (id, job_id, library_id, created_by, type, force, status, book_ids, total_books)
-		VALUES      ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+		            (id, job_id, library_id, created_by, type, force, use_ai_cleanup, status, book_ids, total_books)
+		VALUES      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	if _, err := tx.Exec(ctx, q,
 		batch.ID, jobID, batch.LibraryID, batch.CreatedBy,
-		string(batch.Type), batch.Force, string(batch.Status),
+		string(batch.Type), batch.Force, batch.UseAICleanup, string(batch.Status),
 		bookIDsJSON, batch.TotalBooks,
 	); err != nil {
 		return fmt.Errorf("inserting enrichment batch: %w", err)
@@ -76,7 +76,7 @@ func (r *EnrichmentBatchRepo) Create(ctx context.Context, batch *models.Enrichme
 // accepting both lets the web expand a row without an extra lookup.
 func (r *EnrichmentBatchRepo) Get(ctx context.Context, id uuid.UUID) (*models.EnrichmentBatch, error) {
 	const q = `
-		SELECT id, library_id, created_by, type, force, status, book_ids,
+		SELECT id, library_id, created_by, type, force, use_ai_cleanup, status, book_ids,
 		       total_books, processed_books, failed_books, skipped_books, created_at, updated_at
 		FROM   enrichment_batches
 		WHERE  id = $1 OR job_id = $1
@@ -322,7 +322,7 @@ func (r *EnrichmentBatchRepo) IncrementProcessed(ctx context.Context, id uuid.UU
 // ListByUser returns all enrichment batches created by a user, newest first.
 func (r *EnrichmentBatchRepo) ListByUser(ctx context.Context, userID uuid.UUID) ([]models.EnrichmentBatch, error) {
 	const q = `
-		SELECT eb.id, eb.library_id, eb.created_by, eb.type, eb.force, eb.status,
+		SELECT eb.id, eb.library_id, eb.created_by, eb.type, eb.force, eb.use_ai_cleanup, eb.status,
 		       eb.book_ids, eb.total_books, eb.processed_books, eb.failed_books, eb.skipped_books,
 		       eb.created_at, eb.updated_at, l.name
 		FROM   enrichment_batches eb
@@ -425,7 +425,7 @@ func scanBatch(s batchScanner) (*models.EnrichmentBatch, error) {
 	)
 	if err := s.Scan(
 		&pgID, &pgLibraryID, &pgCreatedBy,
-		&batchType, &b.Force, &status, &bookIDsJSON,
+		&batchType, &b.Force, &b.UseAICleanup, &status, &bookIDsJSON,
 		&b.TotalBooks, &b.ProcessedBooks, &b.FailedBooks, &b.SkippedBooks,
 		&b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
@@ -500,7 +500,7 @@ func scanBatchWithLibraryName(s batchScanner) (*models.EnrichmentBatch, error) {
 	)
 	if err := s.Scan(
 		&pgID, &pgLibraryID, &pgCreatedBy,
-		&batchType, &b.Force, &status, &bookIDsJSON,
+		&batchType, &b.Force, &b.UseAICleanup, &status, &bookIDsJSON,
 		&b.TotalBooks, &b.ProcessedBooks, &b.FailedBooks, &b.SkippedBooks,
 		&b.CreatedAt, &b.UpdatedAt, &b.LibraryName,
 	); err != nil {
