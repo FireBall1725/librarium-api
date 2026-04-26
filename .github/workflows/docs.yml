@@ -26,6 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Need full history + tags so we can derive the released version
+          # for stamping into the spec below.
+          fetch-depth: 0
 
       - name: Assemble Scalar static site
         # Mirrors the runtime Scalar UI in internal/api/handlers/docs.go
@@ -36,6 +40,25 @@ jobs:
           cp docs/swagger.json site/openapi.json
           cp docs/swagger.yaml site/openapi.yaml
           cp docs/scalar.html site/index.html
+
+          # The committed swagger spec carries whatever @version annotation
+          # was in cmd/api/main.go at generation time and rarely matches the
+          # latest tag (per workspace convention, the version string is owned
+          # by release CI, not edited in source). Patch info.version on the
+          # served copies so the published docs always track the latest tag.
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+          fi
+          if [ -n "${VERSION}" ]; then
+            echo "Stamping spec version: ${VERSION}"
+            jq --arg v "${VERSION}" '.info.version = $v' site/openapi.json > site/openapi.json.tmp
+            mv site/openapi.json.tmp site/openapi.json
+            yq -i ".info.version = \"${VERSION}\"" site/openapi.yaml
+          else
+            echo "No tag found; leaving spec version untouched."
+          fi
 
       - uses: actions/upload-pages-artifact@v3
         with:
