@@ -178,7 +178,7 @@ func (h *AIHandler) SetPermissions(w http.ResponseWriter, r *http.Request) {
 //	@Tags        admin,ai
 //	@Produce     json
 //	@Security    BearerAuth
-//	@Success     200  {object}  ollamaModelsResponse
+//	@Success     200  {object}  object{models=[]object}
 //	@Failure     503  {object}  object{error=string,reachable=boolean}
 //	@Router      /admin/connections/ai/ollama/models [get]
 func (h *AIHandler) ListOllamaModels(w http.ResponseWriter, r *http.Request) {
@@ -200,7 +200,7 @@ func (h *AIHandler) ListOllamaModels(w http.ResponseWriter, r *http.Request) {
 //	@Tags        admin,ai
 //	@Produce     json
 //	@Security    BearerAuth
-//	@Success     200  {object}  osaurusModelsResponse
+//	@Success     200  {object}  object{models=[]object}
 //	@Failure     503  {object}  object{error=string,reachable=boolean}
 //	@Router      /admin/connections/ai/osaurus/models [get]
 func (h *AIHandler) ListOsaurusModels(w http.ResponseWriter, r *http.Request) {

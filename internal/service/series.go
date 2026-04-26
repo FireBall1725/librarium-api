@@ -16,12 +16,13 @@ import (
 
 type SeriesService struct {
 	series  *repository.SeriesRepo
+	arcs    *repository.SeriesArcRepo
 	volumes *repository.SeriesVolumesRepo
 	tags    *repository.TagRepo
 }
 
-func NewSeriesService(series *repository.SeriesRepo, volumes *repository.SeriesVolumesRepo, tags *repository.TagRepo) *SeriesService {
-	return &SeriesService{series: series, volumes: volumes, tags: tags}
+func NewSeriesService(series *repository.SeriesRepo, arcs *repository.SeriesArcRepo, volumes *repository.SeriesVolumesRepo, tags *repository.TagRepo) *SeriesService {
+	return &SeriesService{series: series, arcs: arcs, volumes: volumes, tags: tags}
 }
 
 type SeriesRequest struct {
@@ -39,12 +40,12 @@ type SeriesRequest struct {
 	TagIDs           []uuid.UUID
 }
 
-func (s *SeriesService) ListSeries(ctx context.Context, libraryID uuid.UUID, search, tagFilter string) ([]*models.Series, error) {
-	return s.series.List(ctx, libraryID, search, tagFilter)
+func (s *SeriesService) ListSeries(ctx context.Context, libraryID, callerID uuid.UUID, search, tagFilter string) ([]*models.Series, error) {
+	return s.series.List(ctx, libraryID, callerID, search, tagFilter)
 }
 
-func (s *SeriesService) GetSeries(ctx context.Context, id uuid.UUID) (*models.Series, error) {
-	return s.series.FindByID(ctx, id)
+func (s *SeriesService) GetSeries(ctx context.Context, id, callerID uuid.UUID) (*models.Series, error) {
+	return s.series.FindByID(ctx, id, callerID)
 }
 
 func (s *SeriesService) CreateSeries(ctx context.Context, libraryID, callerID uuid.UUID, req SeriesRequest) (*models.Series, error) {
@@ -60,7 +61,7 @@ func (s *SeriesService) CreateSeries(ctx context.Context, libraryID, callerID uu
 			return nil, fmt.Errorf("setting series tags: %w", err)
 		}
 		// Reload to get tags populated
-		ser, err = s.series.FindByID(ctx, ser.ID)
+		ser, err = s.series.FindByID(ctx, ser.ID, uuid.Nil)
 		if err != nil {
 			return nil, err
 		}
@@ -81,7 +82,7 @@ func (s *SeriesService) UpdateSeries(ctx context.Context, id uuid.UUID, req Seri
 			return nil, fmt.Errorf("setting series tags: %w", err)
 		}
 		// Reload to get tags populated
-		ser, err = s.series.FindByID(ctx, ser.ID)
+		ser, err = s.series.FindByID(ctx, ser.ID, uuid.Nil)
 		if err != nil {
 			return nil, err
 		}
@@ -93,16 +94,63 @@ func (s *SeriesService) DeleteSeries(ctx context.Context, id uuid.UUID) error {
 	return s.series.Delete(ctx, id)
 }
 
-func (s *SeriesService) ListSeriesBooks(ctx context.Context, seriesID uuid.UUID) ([]*models.SeriesEntry, error) {
-	return s.series.ListBooks(ctx, seriesID)
+func (s *SeriesService) ListSeriesBooks(ctx context.Context, seriesID, callerID uuid.UUID) ([]*models.SeriesEntry, error) {
+	return s.series.ListBooks(ctx, seriesID, callerID)
 }
 
-func (s *SeriesService) UpsertSeriesBook(ctx context.Context, seriesID, bookID uuid.UUID, position float64) error {
-	return s.series.UpsertBook(ctx, seriesID, bookID, position)
+// UpsertSeriesBook places a book at a given position within the series. If
+// arcID is non-nil it also assigns the book to that arc (or unassigns when
+// arcID points at a zero UUID — see handler decoding).
+func (s *SeriesService) UpsertSeriesBook(ctx context.Context, seriesID, bookID uuid.UUID, position float64, arcID *uuid.UUID) error {
+	if err := s.series.UpsertBook(ctx, seriesID, bookID, position); err != nil {
+		return err
+	}
+	if arcID != nil {
+		// Caller wants to set or clear the arc explicitly. A zero UUID means
+		// "clear"; otherwise it's the target arc.
+		var target *uuid.UUID
+		if *arcID != uuid.Nil {
+			target = arcID
+		}
+		if err := s.arcs.SetBookArc(ctx, seriesID, bookID, target); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SeriesService) RemoveSeriesBook(ctx context.Context, seriesID, bookID uuid.UUID) error {
 	return s.series.RemoveBook(ctx, seriesID, bookID)
+}
+
+// ─── Arcs ──────────────────────────────────────────────────────────────────────
+
+type SeriesArcRequest struct {
+	Name        string
+	Description string
+	Position    float64
+}
+
+func (s *SeriesService) ListSeriesArcs(ctx context.Context, seriesID uuid.UUID) ([]*models.SeriesArc, error) {
+	return s.arcs.List(ctx, seriesID)
+}
+
+func (s *SeriesService) CreateSeriesArc(ctx context.Context, seriesID uuid.UUID, req SeriesArcRequest) (*models.SeriesArc, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	return s.arcs.Create(ctx, uuid.New(), seriesID, req.Name, req.Description, req.Position)
+}
+
+func (s *SeriesService) UpdateSeriesArc(ctx context.Context, arcID uuid.UUID, req SeriesArcRequest) (*models.SeriesArc, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	return s.arcs.Update(ctx, arcID, req.Name, req.Description, req.Position)
+}
+
+func (s *SeriesService) DeleteSeriesArc(ctx context.Context, arcID uuid.UUID) error {
+	return s.arcs.Delete(ctx, arcID)
 }
 
 func (s *SeriesService) GetSeriesForBook(ctx context.Context, libraryID, bookID uuid.UUID) ([]*models.BookSeriesRef, error) {
@@ -129,7 +177,7 @@ type MatchCandidate struct {
 // returns the books with a proposed volume position. Results are sorted by
 // position ascending.
 func (s *SeriesService) MatchCandidates(ctx context.Context, seriesID uuid.UUID) ([]*MatchCandidate, error) {
-	ser, err := s.series.FindByID(ctx, seriesID)
+	ser, err := s.series.FindByID(ctx, seriesID, uuid.Nil)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +335,7 @@ func (s *SeriesService) BulkCreateSeries(ctx context.Context, libraryID, callerI
 				return out, fmt.Errorf("adding book %s to series %q: %w", b.BookID, item.Name, err)
 			}
 		}
-		reloaded, err := s.series.FindByID(ctx, ser.ID)
+		reloaded, err := s.series.FindByID(ctx, ser.ID, uuid.Nil)
 		if err == nil && reloaded != nil {
 			ser = reloaded
 		}

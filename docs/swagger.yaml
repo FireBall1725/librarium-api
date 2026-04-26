@@ -1,31 +1,5 @@
 basePath: /api/v1
 definitions:
-  github_com_fireball1725_librarium-api_internal_ai.OllamaModel:
-    properties:
-      digest:
-        type: string
-      family:
-        type: string
-      modified:
-        type: string
-      name:
-        type: string
-      parameter_size:
-        type: string
-      quantization:
-        type: string
-      size:
-        type: integer
-    type: object
-  github_com_fireball1725_librarium-api_internal_ai.OsaurusModel:
-    properties:
-      created:
-        type: integer
-      id:
-        type: string
-      owned_by:
-        type: string
-    type: object
   github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch:
     properties:
       book_ids:
@@ -787,20 +761,6 @@ definitions:
       token_suffix:
         type: string
     type: object
-  internal_api_handlers.ollamaModelsResponse:
-    properties:
-      models:
-        items:
-          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_ai.OllamaModel'
-        type: array
-    type: object
-  internal_api_handlers.osaurusModelsResponse:
-    properties:
-      models:
-        items:
-          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_ai.OsaurusModel'
-        type: array
-    type: object
   internal_api_handlers.tokenView:
     properties:
       created_at:
@@ -1459,7 +1419,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_api_handlers.ollamaModelsResponse'
+            properties:
+              models:
+                items:
+                  type: object
+                type: array
+            type: object
         "503":
           description: Service Unavailable
           schema:
@@ -1487,7 +1452,12 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_api_handlers.osaurusModelsResponse'
+            properties:
+              models:
+                items:
+                  type: object
+                type: array
+            type: object
         "503":
           description: Service Unavailable
           schema:
@@ -2277,72 +2247,6 @@ paths:
       summary: Create a user (admin)
       tags:
       - admin
-  /admin/users/{id}/password:
-    put:
-      consumes:
-      - application/json
-      description: Overwrites the target user's local password without the current-password
-        challenge. Instance admin only. Used for admin-driven resets when the user
-        has lost access. Fails with 404 if the target has no local identity (e.g.
-        an external SSO-only account).
-      parameters:
-      - description: User UUID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: New password
-        in: body
-        name: body
-        required: true
-        schema:
-          properties:
-            password:
-              type: string
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              message:
-                type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Set a user's password (admin)
-      tags:
-      - admin
   /admin/users/{id}:
     delete:
       description: Permanently deletes a user account. Instance admin only. Cannot
@@ -2476,6 +2380,74 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a user (admin)
+      tags:
+      - admin
+  /admin/users/{id}/password:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Overwrites the target user's local password without the
+        current-password challenge. Instance admin only. Used for
+        admin-driven resets when the user has lost access. Fails
+        with 404 if the target has no local identity (e.g. an
+        external SSO-only account).
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New password
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            password:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              message:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set a user's password (admin)
       tags:
       - admin
   /auth/login:
@@ -5582,11 +5554,6 @@ paths:
         in: formData
         name: default_format
         type: string
-      - description: User UUID to attribute reading data to (admin-only when not
-          the caller)
-        in: formData
-        name: attribute_to_user_id
-        type: string
       - description: Enrich metadata after import
         in: formData
         name: enrich_metadata
@@ -5594,6 +5561,11 @@ paths:
       - description: Fetch covers after import
         in: formData
         name: enrich_covers
+        type: string
+      - description: User UUID to attribute reading data to (admin-only when not the
+          caller)
+        in: formData
+        name: attribute_to_user_id
         type: string
       produces:
       - application/json
@@ -6370,6 +6342,268 @@ paths:
       summary: Update a series
       tags:
       - series
+  /libraries/{library_id}/series/{series_id}/arcs:
+    get:
+      description: Returns the named arcs defined for a series, ordered by position.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              properties:
+                book_count:
+                  type: integer
+                created_at:
+                  type: string
+                description:
+                  type: string
+                id:
+                  type: string
+                name:
+                  type: string
+                position:
+                  type: number
+                series_id:
+                  type: string
+                updated_at:
+                  type: string
+              type: object
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List arcs for a series
+      tags:
+      - series
+    post:
+      consumes:
+      - application/json
+      description: Adds a new named arc to the series.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      - description: Arc details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            description:
+              type: string
+            name:
+              type: string
+            position:
+              type: number
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              book_count:
+                type: integer
+              created_at:
+                type: string
+              description:
+                type: string
+              id:
+                type: string
+              name:
+                type: string
+              position:
+                type: number
+              series_id:
+                type: string
+              updated_at:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create an arc within a series
+      tags:
+      - series
+  /libraries/{library_id}/series/{series_id}/arcs/{arc_id}:
+    delete:
+      description: Deletes an arc. Books that were in the arc remain in the series;
+        their arc assignment is cleared.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      - description: Arc UUID
+        in: path
+        name: arc_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete an arc
+      tags:
+      - series
+    put:
+      consumes:
+      - application/json
+      description: Renames or repositions an arc.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Series UUID
+        in: path
+        name: series_id
+        required: true
+        type: string
+      - description: Arc UUID
+        in: path
+        name: arc_id
+        required: true
+        type: string
+      - description: Arc details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            description:
+              type: string
+            name:
+              type: string
+            position:
+              type: number
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              book_count:
+                type: integer
+              created_at:
+                type: string
+              description:
+                type: string
+              id:
+                type: string
+              name:
+                type: string
+              position:
+                type: number
+              series_id:
+                type: string
+              updated_at:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update an arc
+      tags:
+      - series
   /libraries/{library_id}/series/{series_id}/books:
     get:
       description: Returns all books in a series with their position.
@@ -6416,6 +6650,9 @@ paths:
       consumes:
       - application/json
       description: Sets the position of a book within a series (insert or update).
+        When `arc_id` is present in the body the book is also assigned to that arc;
+        pass an empty string to clear an existing arc assignment without changing
+        it implicitly.
       parameters:
       - description: Library UUID
         in: path
@@ -6427,12 +6664,14 @@ paths:
         name: series_id
         required: true
         type: string
-      - description: Book position
+      - description: Book position and optional arc
         in: body
         name: body
         required: true
         schema:
           properties:
+            arc_id:
+              type: string
             book_id:
               type: string
             position:

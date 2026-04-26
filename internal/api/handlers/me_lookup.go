@@ -77,7 +77,8 @@ func (h *MeLookupHandler) SearchSeries(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]MeSeriesResult, 0, 32)
 	for _, lib := range libs {
-		ss, err := h.seriesRepo.List(r.Context(), lib.ID, q, "")
+		// Caller-relative read counts not needed by the cross-library search.
+		ss, err := h.seriesRepo.List(r.Context(), lib.ID, uuid.Nil, q, "")
 		if err != nil {
 			respond.ServerError(w, r, err)
 			return

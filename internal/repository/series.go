@@ -31,9 +31,50 @@ const seriesTagsSubquery = `
         '[]'::json
     )`
 
+// readStateSubqueries returns the SELECT-list expressions for `read_count`
+// and `reading_count` against the caller's effective read status. The
+// effective status uses the same priority ordering as booksSelect — read >
+// reading > did_not_finish — so series indicators match book-cover badges.
+// When callerArg is 0, both counts are emitted as 0 so the column count
+// stays stable.
+func readStateSubqueries(callerArg int) string {
+	if callerArg == 0 {
+		return `0 AS read_count, 0 AS reading_count`
+	}
+	return fmt.Sprintf(`
+       (SELECT COUNT(*)::int FROM book_series bs2
+          JOIN books b ON b.id = bs2.book_id
+          WHERE bs2.series_id = s.id AND (
+              SELECT ubi.read_status FROM book_editions be
+              JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
+              WHERE be.book_id = b.id AND ubi.user_id = $%d
+              ORDER BY CASE ubi.read_status
+                  WHEN 'read' THEN 1
+                  WHEN 'reading' THEN 2
+                  WHEN 'did_not_finish' THEN 3
+                  ELSE 4
+              END
+              LIMIT 1
+          ) = 'read') AS read_count,
+       (SELECT COUNT(*)::int FROM book_series bs2
+          JOIN books b ON b.id = bs2.book_id
+          WHERE bs2.series_id = s.id AND (
+              SELECT ubi.read_status FROM book_editions be
+              JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
+              WHERE be.book_id = b.id AND ubi.user_id = $%d
+              ORDER BY CASE ubi.read_status
+                  WHEN 'read' THEN 1
+                  WHEN 'reading' THEN 2
+                  WHEN 'did_not_finish' THEN 3
+                  ELSE 4
+              END
+              LIMIT 1
+          ) = 'reading') AS reading_count`, callerArg, callerArg)
+}
+
 // ─── Series CRUD ──────────────────────────────────────────────────────────────
 
-func (r *SeriesRepo) List(ctx context.Context, libraryID uuid.UUID, search, tagFilter string) ([]*models.Series, error) {
+func (r *SeriesRepo) List(ctx context.Context, libraryID, callerID uuid.UUID, search, tagFilter string) ([]*models.Series, error) {
 	args := []any{libraryID}
 	where := `WHERE s.library_id = $1`
 	if search != "" {
@@ -44,6 +85,11 @@ func (r *SeriesRepo) List(ctx context.Context, libraryID uuid.UUID, search, tagF
 		args = append(args, tagFilter)
 		where += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM series_tags st JOIN tags t ON t.id = st.tag_id WHERE st.series_id = s.id AND lower(t.name) = lower($%d))`, len(args))
 	}
+	callerArg := 0
+	if callerID != uuid.Nil {
+		args = append(args, callerID)
+		callerArg = len(args)
+	}
 
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
@@ -53,6 +99,25 @@ func (r *SeriesRepo) List(ctx context.Context, libraryID uuid.UUID, search, tagF
 		       (SELECT MAX(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date <= CURRENT_DATE) AS last_release_date,
 		       (SELECT MIN(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date > CURRENT_DATE) AS next_release_date,
 		       COUNT(bs.book_id) AS book_count,
+		       (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
+		       ` + readStateSubqueries(callerArg) + `,
+		       (
+		           SELECT COALESCE(json_agg(jsonb_build_object(
+		               'book_id', t.id,
+		               'title', t.title,
+		               'updated_at', t.updated_at,
+		               'has_cover', t.has_cover
+		           ) ORDER BY t.position), '[]'::json)
+		           FROM (
+		               SELECT b.id, b.title, b.updated_at, bs2.position,
+		                      EXISTS(SELECT 1 FROM cover_images ci
+		                             WHERE ci.entity_type='book' AND ci.entity_id=b.id AND ci.is_primary=true) AS has_cover
+		               FROM book_series bs2 JOIN books b ON b.id = bs2.book_id
+		               WHERE bs2.series_id = s.id
+		               ORDER BY bs2.position
+		               LIMIT 4
+		           ) t
+		       ) AS preview_books,
 		       s.created_at, s.updated_at,
 		       ` + seriesTagsSubquery + ` AS tags
 		FROM series s
@@ -78,7 +143,13 @@ func (r *SeriesRepo) List(ctx context.Context, libraryID uuid.UUID, search, tagF
 	return out, rows.Err()
 }
 
-func (r *SeriesRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Series, error) {
+func (r *SeriesRepo) FindByID(ctx context.Context, id, callerID uuid.UUID) (*models.Series, error) {
+	args := []any{id}
+	callerArg := 0
+	if callerID != uuid.Nil {
+		args = append(args, callerID)
+		callerArg = len(args)
+	}
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
 		       s.total_count, s.status, s.original_language, s.publication_year,
@@ -87,13 +158,32 @@ func (r *SeriesRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Series
 		       (SELECT MAX(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date <= CURRENT_DATE) AS last_release_date,
 		       (SELECT MIN(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date > CURRENT_DATE) AS next_release_date,
 		       COUNT(bs.book_id) AS book_count,
+		       (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
+		       ` + readStateSubqueries(callerArg) + `,
+		       (
+		           SELECT COALESCE(json_agg(jsonb_build_object(
+		               'book_id', t.id,
+		               'title', t.title,
+		               'updated_at', t.updated_at,
+		               'has_cover', t.has_cover
+		           ) ORDER BY t.position), '[]'::json)
+		           FROM (
+		               SELECT b.id, b.title, b.updated_at, bs2.position,
+		                      EXISTS(SELECT 1 FROM cover_images ci
+		                             WHERE ci.entity_type='book' AND ci.entity_id=b.id AND ci.is_primary=true) AS has_cover
+		               FROM book_series bs2 JOIN books b ON b.id = bs2.book_id
+		               WHERE bs2.series_id = s.id
+		               ORDER BY bs2.position
+		               LIMIT 4
+		           ) t
+		       ) AS preview_books,
 		       s.created_at, s.updated_at,
 		       ` + seriesTagsSubquery + ` AS tags
 		FROM series s
 		LEFT JOIN book_series bs ON bs.series_id = s.id
 		WHERE s.id = $1
 		GROUP BY s.id`
-	s, err := scanSeries(r.db.QueryRow(ctx, q, id))
+	s, err := scanSeries(r.db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -116,7 +206,7 @@ func (r *SeriesRepo) Create(ctx context.Context, id, libraryID uuid.UUID, name, 
 	if _, err := r.db.Exec(ctx, q, id, libraryID, name, description, totalCount, status, originalLanguage, publicationYear, demographic, genres, url, externalID, externalSource, createdBy); err != nil {
 		return nil, fmt.Errorf("inserting series: %w", err)
 	}
-	return r.FindByID(ctx, id)
+	return r.FindByID(ctx, id, uuid.Nil)
 }
 
 func (r *SeriesRepo) Update(ctx context.Context, id uuid.UUID, name, description string, totalCount *int, status, originalLanguage string, publicationYear *int, demographic string, genres []string, url string, externalID, externalSource string) (*models.Series, error) {
@@ -148,7 +238,7 @@ func (r *SeriesRepo) Update(ctx context.Context, id uuid.UUID, name, description
 	if result.RowsAffected() == 0 {
 		return nil, ErrNotFound
 	}
-	return r.FindByID(ctx, id)
+	return r.FindByID(ctx, id, uuid.Nil)
 }
 
 func (r *SeriesRepo) Delete(ctx context.Context, id uuid.UUID) error {
@@ -164,11 +254,34 @@ func (r *SeriesRepo) Delete(ctx context.Context, id uuid.UUID) error {
 
 // ─── Series entries ───────────────────────────────────────────────────────────
 
-func (r *SeriesRepo) ListBooks(ctx context.Context, seriesID uuid.UUID) ([]*models.SeriesEntry, error) {
-	const q = `
+func (r *SeriesRepo) ListBooks(ctx context.Context, seriesID, callerID uuid.UUID) ([]*models.SeriesEntry, error) {
+	args := []any{seriesID}
+	userStatusExpr := `'' AS user_read_status`
+	if callerID != uuid.Nil {
+		args = append(args, callerID)
+		userStatusExpr = fmt.Sprintf(`COALESCE((
+			SELECT ubi.read_status
+			FROM book_editions be
+			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
+			WHERE be.book_id = b.id AND ubi.user_id = $%d
+			ORDER BY CASE ubi.read_status
+				WHEN 'read' THEN 1
+				WHEN 'reading' THEN 2
+				WHEN 'did_not_finish' THEN 3
+				ELSE 4
+			END
+			LIMIT 1
+		), '') AS user_read_status`, len(args))
+	}
+	q := `
 		SELECT
 			bs.position,
 			b.id, b.title, COALESCE(b.subtitle,''), mt.display_name,
+			bs.arc_id,
+			b.updated_at,
+			EXISTS(SELECT 1 FROM cover_images ci
+			       WHERE ci.entity_type='book' AND ci.entity_id=b.id AND ci.is_primary=true) AS has_cover,
+			` + userStatusExpr + `,
 			(
 				SELECT COALESCE(
 					json_agg(
@@ -190,7 +303,7 @@ func (r *SeriesRepo) ListBooks(ctx context.Context, seriesID uuid.UUID) ([]*mode
 		JOIN media_types mt ON mt.id = b.media_type_id
 		WHERE bs.series_id = $1
 		ORDER BY bs.position`
-	rows, err := r.db.Query(ctx, q, seriesID)
+	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing series books: %w", err)
 	}
@@ -384,17 +497,18 @@ func (r *SeriesRepo) RemoveBook(ctx context.Context, seriesID, bookID uuid.UUID)
 
 func scanSeries(s scanner) (*models.Series, error) {
 	var (
-		pgID          pgtype.UUID
-		pgLibraryID   pgtype.UUID
-		pgTotal       pgtype.Int4
-		pgOrigLang    pgtype.Text
-		pgPubYear     pgtype.Int4
-		pgDemographic pgtype.Text
-		genres        []string
-		pgLastDate    pgtype.Date
-		pgNextDate    pgtype.Date
-		tagsJSON      []byte
-		ser           models.Series
+		pgID            pgtype.UUID
+		pgLibraryID     pgtype.UUID
+		pgTotal         pgtype.Int4
+		pgOrigLang      pgtype.Text
+		pgPubYear       pgtype.Int4
+		pgDemographic   pgtype.Text
+		genres          []string
+		pgLastDate      pgtype.Date
+		pgNextDate      pgtype.Date
+		previewJSON     []byte
+		tagsJSON        []byte
+		ser             models.Series
 	)
 	err := s.Scan(
 		&pgID, &pgLibraryID, &ser.Name, &ser.Description,
@@ -403,6 +517,9 @@ func scanSeries(s scanner) (*models.Series, error) {
 		&ser.ExternalID, &ser.ExternalSource,
 		&pgLastDate, &pgNextDate,
 		&ser.BookCount,
+		&ser.ArcCount,
+		&ser.ReadCount, &ser.ReadingCount,
+		&previewJSON,
 		&ser.CreatedAt, &ser.UpdatedAt,
 		&tagsJSON,
 	)
@@ -441,23 +558,35 @@ func scanSeries(s scanner) (*models.Series, error) {
 	if err := json.Unmarshal(tagsJSON, &ser.Tags); err != nil || ser.Tags == nil {
 		ser.Tags = []*models.Tag{}
 	}
+	if err := json.Unmarshal(previewJSON, &ser.PreviewBooks); err != nil || ser.PreviewBooks == nil {
+		ser.PreviewBooks = []models.SeriesPreviewBook{}
+	}
 	return &ser, nil
 }
 
 func scanSeriesEntry(s scanner) (*models.SeriesEntry, error) {
 	var (
 		pgBookID     pgtype.UUID
+		pgArcID      pgtype.UUID
 		contribsJSON []byte
 		entry        models.SeriesEntry
 	)
 	if err := s.Scan(
 		&entry.Position,
 		&pgBookID, &entry.Title, &entry.Subtitle, &entry.MediaType,
+		&pgArcID,
+		&entry.UpdatedAt,
+		&entry.HasCover,
+		&entry.UserReadStatus,
 		&contribsJSON,
 	); err != nil {
 		return nil, err
 	}
 	entry.BookID = uuid.UUID(pgBookID.Bytes)
+	if pgArcID.Valid {
+		id := uuid.UUID(pgArcID.Bytes)
+		entry.ArcID = &id
+	}
 	if err := json.Unmarshal(contribsJSON, &entry.Contributors); err != nil {
 		entry.Contributors = nil
 	}
