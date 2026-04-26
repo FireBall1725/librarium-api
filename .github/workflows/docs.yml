@@ -6,6 +6,7 @@ on:
     paths:
       - "docs/swagger.json"
       - "docs/swagger.yaml"
+      - "docs/scalar.html"
       - ".github/workflows/docs.yml"
   release:
     types: [published]
@@ -26,30 +27,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Redoc static site
+      - name: Assemble Scalar static site
+        # Mirrors the runtime Scalar UI in internal/api/handlers/docs.go
+        # so the published docs and the in-app reference share one identity.
         run: |
           set -euo pipefail
           mkdir -p site
           cp docs/swagger.json site/openapi.json
-          # The Redoc community renderer auto-applies dark mode to the
-          # main content + right code-samples panel via prefers-color-scheme,
-          # but the sidebar and the per-status response rows still ship
-          # hardcoded light colors. Override them so the whole page is
-          # uniformly dark.
-          npx --yes @redocly/cli@latest build-docs site/openapi.json -o site/index.html \
-            --theme.openapi.theme.sidebar.backgroundColor='#0f1115' \
-            --theme.openapi.theme.sidebar.textColor='#e6e6e6' \
-            --theme.openapi.theme.sidebar.activeTextColor='#ffffff' \
-            --theme.openapi.theme.colors.responses.success.backgroundColor='rgba(46, 160, 67, 0.15)' \
-            --theme.openapi.theme.colors.responses.success.color='#7ee787' \
-            --theme.openapi.theme.colors.responses.error.backgroundColor='rgba(248, 81, 73, 0.15)' \
-            --theme.openapi.theme.colors.responses.error.color='#ff7b72' \
-            --theme.openapi.theme.colors.responses.redirect.backgroundColor='rgba(187, 128, 9, 0.15)' \
-            --theme.openapi.theme.colors.responses.redirect.color='#d29922' \
-            --theme.openapi.theme.colors.responses.info.backgroundColor='rgba(56, 139, 253, 0.15)' \
-            --theme.openapi.theme.colors.responses.info.color='#58a6ff'
-          # Copy swagger.yaml as well so consumers can fetch either format.
           cp docs/swagger.yaml site/openapi.yaml
+          cp docs/scalar.html site/index.html
 
       - uses: actions/upload-pages-artifact@v3
         with:
