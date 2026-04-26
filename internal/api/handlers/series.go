@@ -51,7 +51,8 @@ func (h *SeriesHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	search := r.URL.Query().Get("search")
 	tagFilter := r.URL.Query().Get("tag")
-	list, err := h.svc.ListSeries(r.Context(), libraryID, search, tagFilter)
+	claims := middleware.ClaimsFromContext(r.Context())
+	list, err := h.svc.ListSeries(r.Context(), libraryID, claims.UserID, search, tagFilter)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -117,7 +118,8 @@ func (h *SeriesHandler) GetSeries(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, "invalid series id")
 		return
 	}
-	s, err := h.svc.GetSeries(r.Context(), seriesID)
+	claims := middleware.ClaimsFromContext(r.Context())
+	s, err := h.svc.GetSeries(r.Context(), seriesID, claims.UserID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "series not found")
 		return
@@ -216,7 +218,8 @@ func (h *SeriesHandler) ListSeriesBooks(w http.ResponseWriter, r *http.Request) 
 		respond.Error(w, http.StatusBadRequest, "invalid series id")
 		return
 	}
-	entries, err := h.svc.ListSeriesBooks(r.Context(), seriesID)
+	claims := middleware.ClaimsFromContext(r.Context())
+	entries, err := h.svc.ListSeriesBooks(r.Context(), seriesID, claims.UserID)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -231,13 +234,13 @@ func (h *SeriesHandler) ListSeriesBooks(w http.ResponseWriter, r *http.Request) 
 // UpsertSeriesBook godoc
 //
 // @Summary     Add or update a book in a series
-// @Description Sets the position of a book within a series (insert or update).
+// @Description Sets the position of a book within a series (insert or update). When `arc_id` is present in the body the book is also assigned to that arc; pass an empty string to clear an existing arc assignment without changing it implicitly.
 // @Tags        series
 // @Accept      json
 // @Security    BearerAuth
 // @Param       library_id  path  string  true  "Library UUID"
 // @Param       series_id   path  string  true  "Series UUID"
-// @Param       body        body  object{book_id=string,position=number}  true  "Book position"
+// @Param       body        body  object{book_id=string,position=number,arc_id=string}  true  "Book position and optional arc"
 // @Success     204
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -248,9 +251,14 @@ func (h *SeriesHandler) UpsertSeriesBook(w http.ResponseWriter, r *http.Request)
 		respond.Error(w, http.StatusBadRequest, "invalid series id")
 		return
 	}
+	// arc_id semantics:
+	//   field absent       → leave existing arc assignment untouched
+	//   "" (empty string)  → clear the arc assignment
+	//   "<uuid>"           → assign to that arc
 	var body struct {
 		BookID   string  `json:"book_id"`
 		Position float64 `json:"position"`
+		ArcID    *string `json:"arc_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.Error(w, http.StatusBadRequest, "invalid request body")
@@ -261,7 +269,159 @@ func (h *SeriesHandler) UpsertSeriesBook(w http.ResponseWriter, r *http.Request)
 		respond.Error(w, http.StatusBadRequest, "invalid book_id")
 		return
 	}
-	if err := h.svc.UpsertSeriesBook(r.Context(), seriesID, bookID, body.Position); err != nil {
+	var arcID *uuid.UUID
+	if body.ArcID != nil {
+		if *body.ArcID == "" {
+			zero := uuid.Nil
+			arcID = &zero
+		} else {
+			parsed, err := uuid.Parse(*body.ArcID)
+			if err != nil {
+				respond.Error(w, http.StatusBadRequest, "invalid arc_id")
+				return
+			}
+			arcID = &parsed
+		}
+	}
+	if err := h.svc.UpsertSeriesBook(r.Context(), seriesID, bookID, body.Position, arcID); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── Arcs ──────────────────────────────────────────────────────────────────────
+
+// ListSeriesArcs godoc
+//
+// @Summary     List arcs for a series
+// @Description Returns the named arcs defined for a series, ordered by position.
+// @Tags        series
+// @Produce     json
+// @Security    BearerAuth
+// @Param       library_id  path      string  true  "Library UUID"
+// @Param       series_id   path      string  true  "Series UUID"
+// @Success     200  {array}   object{id=string,series_id=string,name=string,description=string,position=number,book_count=integer,created_at=string,updated_at=string}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /libraries/{library_id}/series/{series_id}/arcs [get]
+func (h *SeriesHandler) ListSeriesArcs(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := uuid.Parse(r.PathValue("series_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid series id")
+		return
+	}
+	arcs, err := h.svc.ListSeriesArcs(r.Context(), seriesID)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(arcs))
+	for _, a := range arcs {
+		out = append(out, seriesArcBody(a))
+	}
+	respond.JSON(w, http.StatusOK, out)
+}
+
+// CreateSeriesArc godoc
+//
+// @Summary     Create an arc within a series
+// @Description Adds a new named arc to the series.
+// @Tags        series
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       library_id  path      string  true  "Library UUID"
+// @Param       series_id   path      string  true  "Series UUID"
+// @Param       body        body      object{name=string,description=string,position=number}  true  "Arc details"
+// @Success     201  {object}  object{id=string,series_id=string,name=string,description=string,position=number,book_count=integer,created_at=string,updated_at=string}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /libraries/{library_id}/series/{series_id}/arcs [post]
+func (h *SeriesHandler) CreateSeriesArc(w http.ResponseWriter, r *http.Request) {
+	seriesID, err := uuid.Parse(r.PathValue("series_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid series id")
+		return
+	}
+	req, err := decodeSeriesArcRequest(r)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	arc, err := h.svc.CreateSeriesArc(r.Context(), seriesID, *req)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusCreated, seriesArcBody(arc))
+}
+
+// UpdateSeriesArc godoc
+//
+// @Summary     Update an arc
+// @Description Renames or repositions an arc.
+// @Tags        series
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       library_id  path      string  true  "Library UUID"
+// @Param       series_id   path      string  true  "Series UUID"
+// @Param       arc_id      path      string  true  "Arc UUID"
+// @Param       body        body      object{name=string,description=string,position=number}  true  "Arc details"
+// @Success     200  {object}  object{id=string,series_id=string,name=string,description=string,position=number,book_count=integer,created_at=string,updated_at=string}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /libraries/{library_id}/series/{series_id}/arcs/{arc_id} [put]
+func (h *SeriesHandler) UpdateSeriesArc(w http.ResponseWriter, r *http.Request) {
+	arcID, err := uuid.Parse(r.PathValue("arc_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid arc id")
+		return
+	}
+	req, err := decodeSeriesArcRequest(r)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	arc, err := h.svc.UpdateSeriesArc(r.Context(), arcID, *req)
+	if errors.Is(err, repository.ErrNotFound) {
+		respond.Error(w, http.StatusNotFound, "arc not found")
+		return
+	}
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, seriesArcBody(arc))
+}
+
+// DeleteSeriesArc godoc
+//
+// @Summary     Delete an arc
+// @Description Deletes an arc. Books that were in the arc remain in the series; their arc assignment is cleared.
+// @Tags        series
+// @Security    BearerAuth
+// @Param       library_id  path  string  true  "Library UUID"
+// @Param       series_id   path  string  true  "Series UUID"
+// @Param       arc_id      path  string  true  "Arc UUID"
+// @Success     204
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /libraries/{library_id}/series/{series_id}/arcs/{arc_id} [delete]
+func (h *SeriesHandler) DeleteSeriesArc(w http.ResponseWriter, r *http.Request) {
+	arcID, err := uuid.Parse(r.PathValue("arc_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid arc id")
+		return
+	}
+	if err := h.svc.DeleteSeriesArc(r.Context(), arcID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respond.Error(w, http.StatusNotFound, "arc not found")
+			return
+		}
 		respond.ServerError(w, r, err)
 		return
 	}
@@ -727,10 +887,61 @@ func decodeSeriesRequest(r *http.Request) (*service.SeriesRequest, error) {
 	}, nil
 }
 
+func decodeSeriesArcRequest(r *http.Request) (*service.SeriesArcRequest, error) {
+	var body struct {
+		Name        string  `json:"name"`
+		Description string  `json:"description"`
+		Position    float64 `json:"position"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return nil, errors.New("invalid request body")
+	}
+	if body.Name == "" {
+		return nil, errors.New("name is required")
+	}
+	return &service.SeriesArcRequest{
+		Name:        body.Name,
+		Description: body.Description,
+		Position:    body.Position,
+	}, nil
+}
+
+func seriesArcBody(a *models.SeriesArc) map[string]any {
+	return map[string]any{
+		"id":          a.ID,
+		"series_id":   a.SeriesID,
+		"name":        a.Name,
+		"description": a.Description,
+		"position":    a.Position,
+		"book_count":  a.BookCount,
+		"created_at":  a.CreatedAt,
+		"updated_at":  a.UpdatedAt,
+	}
+}
+
 func tagsToBody(tags []*models.Tag) []map[string]any {
 	out := make([]map[string]any, 0, len(tags))
 	for _, t := range tags {
 		out = append(out, map[string]any{"id": t.ID, "name": t.Name, "color": t.Color})
+	}
+	return out
+}
+
+// previewBooksToBody emits the trimmed shape used to render a series cover
+// mosaic: book_id, title, and a pre-built cover_url (null when the book has
+// no primary cover yet, so the client can render a gradient placeholder).
+func previewBooksToBody(preview []models.SeriesPreviewBook) []map[string]any {
+	out := make([]map[string]any, 0, len(preview))
+	for _, p := range preview {
+		var coverURL any
+		if p.HasCover {
+			coverURL = "/api/v1/books/" + p.BookID.String() + "/cover?v=" + itoa(p.UpdatedAt.Unix())
+		}
+		out = append(out, map[string]any{
+			"book_id":   p.BookID,
+			"title":     p.Title,
+			"cover_url": coverURL,
+		})
 	}
 	return out
 }
@@ -758,6 +969,10 @@ func seriesBody(s *models.Series) map[string]any {
 		"external_id":       s.ExternalID,
 		"external_source":   s.ExternalSource,
 		"book_count":        s.BookCount,
+		"arc_count":         s.ArcCount,
+		"read_count":        s.ReadCount,
+		"reading_count":     s.ReadingCount,
+		"preview_books":     previewBooksToBody(s.PreviewBooks),
 		"tags":              tagsToBody(tags),
 		"created_at":        s.CreatedAt,
 		"updated_at":        s.UpdatedAt,
@@ -790,12 +1005,24 @@ func seriesEntryBody(e *models.SeriesEntry) map[string]any {
 	if contribs == nil {
 		contribs = []models.BookContributor{}
 	}
-	return map[string]any{
-		"position":     e.Position,
-		"book_id":      e.BookID,
-		"title":        e.Title,
-		"subtitle":     e.Subtitle,
-		"media_type":   e.MediaType,
-		"contributors": contribs,
+	var coverURL any
+	if e.HasCover {
+		coverURL = "/api/v1/books/" + e.BookID.String() + "/cover?v=" + itoa(e.UpdatedAt.Unix())
 	}
+	body := map[string]any{
+		"position":         e.Position,
+		"book_id":          e.BookID,
+		"title":            e.Title,
+		"subtitle":         e.Subtitle,
+		"media_type":       e.MediaType,
+		"cover_url":        coverURL,
+		"user_read_status": e.UserReadStatus,
+		"contributors":     contribs,
+	}
+	if e.ArcID != nil {
+		body["arc_id"] = *e.ArcID
+	} else {
+		body["arc_id"] = nil
+	}
+	return body
 }

@@ -57,6 +57,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	shelfRepo := repository.NewShelfRepo(db)
 	loanRepo := repository.NewLoanRepo(db)
 	seriesRepo := repository.NewSeriesRepo(db)
+	seriesArcRepo := repository.NewSeriesArcRepo(db)
 	coverRepo := repository.NewCoverRepo(db)
 	storageLocationRepo := repository.NewStorageLocationRepo(db)
 	editionFileRepo := repository.NewEditionFileRepo(db)
@@ -83,7 +84,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	contributorSvc := service.NewContributorService(contributorRepo, bookRepo, coverRepo, providerSvc.Registry(), cfg.CoverStoragePath)
 
 	loanSvc := service.NewLoanService(loanRepo, tagRepo)
-	seriesSvc := service.NewSeriesService(seriesRepo, seriesVolumesRepo, tagRepo)
+	seriesSvc := service.NewSeriesService(seriesRepo, seriesArcRepo, seriesVolumesRepo, tagRepo)
 	releaseSyncSvc := service.NewReleaseSyncService(seriesRepo, seriesVolumesRepo, providerSvc)
 
 	authSvc := service.NewAuthService(db, userRepo, identityRepo, tokenRepo, denylistRepo, jwtSvc, service.AuthConfig{
@@ -379,6 +380,12 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("POST /api/v1/libraries/{library_id}/series/{series_id}/volumes/sync", requireLibraryPerm("series:update", http.HandlerFunc(seriesHandler.SyncSeriesVolumes)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/series/{series_id}/match-candidates", requireLibraryPerm("series:read", http.HandlerFunc(seriesHandler.MatchCandidates)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/series/{series_id}/match-apply", requireLibraryPerm("series:update", http.HandlerFunc(seriesHandler.ApplyMatches)))
+
+	// Series arcs (optional named groupings within a series)
+	mux.Handle("GET /api/v1/libraries/{library_id}/series/{series_id}/arcs", requireLibraryPerm("series:read", http.HandlerFunc(seriesHandler.ListSeriesArcs)))
+	mux.Handle("POST /api/v1/libraries/{library_id}/series/{series_id}/arcs", requireLibraryPerm("series:update", http.HandlerFunc(seriesHandler.CreateSeriesArc)))
+	mux.Handle("PUT /api/v1/libraries/{library_id}/series/{series_id}/arcs/{arc_id}", requireLibraryPerm("series:update", http.HandlerFunc(seriesHandler.UpdateSeriesArc)))
+	mux.Handle("DELETE /api/v1/libraries/{library_id}/series/{series_id}/arcs/{arc_id}", requireLibraryPerm("series:update", http.HandlerFunc(seriesHandler.DeleteSeriesArc)))
 
 	// Shelves for a book
 	mux.Handle("GET /api/v1/libraries/{library_id}/books/{book_id}/shelves", requireLibraryPerm("shelves:read", http.HandlerFunc(shelfHandler.ListBookShelves)))

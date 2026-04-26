@@ -25,7 +25,7 @@ func NewReleaseSyncService(seriesRepo *repository.SeriesRepo, volumesRepo *repos
 
 // SyncSeries fetches volume data for a single series from its linked provider.
 func (s *ReleaseSyncService) SyncSeries(ctx context.Context, seriesID uuid.UUID) error {
-	series, err := s.seriesRepo.FindByID(ctx, seriesID)
+	series, err := s.seriesRepo.FindByID(ctx, seriesID, uuid.Nil)
 	if err != nil {
 		return fmt.Errorf("finding series: %w", err)
 	}
