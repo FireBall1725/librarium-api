@@ -60,10 +60,15 @@ func (r *BookRepo) ListMediaTypes(ctx context.Context) ([]*models.MediaType, err
 // booksSelect returns the reusable base SELECT for books. It uses correlated
 // subqueries for contributors and tags to avoid cross-product row inflation
 // when joining both at once. Append WHERE/ORDER BY/LIMIT as needed.
+//
 // When userStatusArg > 0, the query includes a user_read_status column using
 // that positional argument index ($N) for the user ID. When 0, a constant
-// empty string is selected so the column count is always 20.
-func booksSelect(userStatusArg int) string {
+// empty string is selected. Column count is always the same regardless.
+//
+// When loanLibraryArg > 0, active_loan_count is scoped to that library_id
+// arg (used by ListBooks). When 0, it counts active loans across every
+// library the book belongs to (used by FindByID).
+func booksSelect(userStatusArg, loanLibraryArg int) string {
 	var userReadStatusExpr string
 	if userStatusArg > 0 {
 		userReadStatusExpr = fmt.Sprintf(`COALESCE((
@@ -81,6 +86,19 @@ func booksSelect(userStatusArg int) string {
 	), '') AS user_read_status`, userStatusArg)
 	} else {
 		userReadStatusExpr = `'' AS user_read_status`
+	}
+
+	var activeLoanExpr string
+	if loanLibraryArg > 0 {
+		activeLoanExpr = fmt.Sprintf(`(
+		SELECT COUNT(*) FROM loans
+		WHERE book_id = b.id AND library_id = $%d AND returned_at IS NULL
+	) AS active_loan_count`, loanLibraryArg)
+	} else {
+		activeLoanExpr = `(
+		SELECT COUNT(*) FROM loans
+		WHERE book_id = b.id AND returned_at IS NULL
+	) AS active_loan_count`
 	}
 
 	return `
@@ -174,7 +192,8 @@ func booksSelect(userStatusArg int) string {
 			WHERE be.book_id = b.id AND be.is_primary = true
 			LIMIT 1
 		), '') AS language,
-		` + userReadStatusExpr + `
+		` + userReadStatusExpr + `,
+		` + activeLoanExpr + `
 	FROM books b
 	JOIN media_types mt ON mt.id = b.media_type_id`
 }
@@ -249,7 +268,7 @@ func (r *BookRepo) EnsureBookContributor(ctx context.Context, tx pgx.Tx, bookID,
 }
 
 func (r *BookRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Book, error) {
-	q := booksSelect(0) + ` WHERE b.id = $1`
+	q := booksSelect(0, 0) + ` WHERE b.id = $1`
 
 	book, err := scanBook(r.db.QueryRow(ctx, q, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -276,10 +295,10 @@ func (r *BookRepo) ListByContributor(ctx context.Context, libraryID, contributor
 		  )
 		ORDER BY natural_sort_key(b.title)`
 	if callerID != uuid.Nil {
-		q = booksSelect(3) + scope
+		q = booksSelect(3, 1) + scope
 		args = []any{libraryID, contributorID, callerID}
 	} else {
-		q = booksSelect(0) + scope
+		q = booksSelect(0, 1) + scope
 		args = []any{libraryID, contributorID}
 	}
 
@@ -669,9 +688,9 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 		args = append(args, opts.CallerID)
 		userArgIdx := argIdx
 		argIdx++
-		selectQuery = booksSelect(userArgIdx)
+		selectQuery = booksSelect(userArgIdx, 1)
 	} else {
-		selectQuery = booksSelect(0)
+		selectQuery = booksSelect(0, 1)
 	}
 
 	// List
@@ -781,6 +800,7 @@ func scanBook(s scanner) (*models.Book, error) {
 		publishYear    pgtype.Int4
 		language       pgtype.Text
 		userReadStatus string
+		activeLoans    int
 		b              models.Book
 	)
 
@@ -790,7 +810,7 @@ func scanBook(s scanner) (*models.Book, error) {
 		&pgDesc, &b.CreatedAt, &b.UpdatedAt,
 		&contribJSON, &tagsJSON, &genresJSON, &b.HasCover,
 		&seriesJSON, &shelvesJSON, &publisher, &publishYear, &language,
-		&userReadStatus,
+		&userReadStatus, &activeLoans,
 	)
 	if err != nil {
 		return nil, err
@@ -804,6 +824,7 @@ func scanBook(s scanner) (*models.Book, error) {
 	b.Publisher = publisher.String
 	b.Language = language.String
 	b.UserReadStatus = userReadStatus
+	b.ActiveLoanCount = activeLoans
 	if publishYear.Valid {
 		y := int(publishYear.Int32)
 		b.PublishYear = &y

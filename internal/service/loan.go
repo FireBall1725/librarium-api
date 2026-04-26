@@ -39,8 +39,8 @@ type LoanUpdateRequest struct {
 	TagIDs     []uuid.UUID
 }
 
-func (s *LoanService) ListLoans(ctx context.Context, libraryID uuid.UUID, includeReturned bool, search, tagFilter string) ([]*models.Loan, error) {
-	return s.loans.List(ctx, libraryID, includeReturned, search, tagFilter)
+func (s *LoanService) ListLoans(ctx context.Context, libraryID uuid.UUID, includeReturned bool, search, tagFilter string, bookID uuid.UUID) ([]*models.Loan, error) {
+	return s.loans.List(ctx, libraryID, includeReturned, search, tagFilter, bookID)
 }
 
 func (s *LoanService) CreateLoan(ctx context.Context, libraryID, callerID uuid.UUID, req LoanRequest) (*models.Loan, error) {

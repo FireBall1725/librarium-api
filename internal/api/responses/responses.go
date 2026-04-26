@@ -149,8 +149,16 @@ type BookResponse struct {
 	Series       []SeriesRef      `json:"series"`
 	Shelves      []ShelfRef       `json:"shelves"`
 	AddedBy      *uuid.UUID       `json:"added_by,omitempty"`
-	CreatedAt    time.Time        `json:"created_at"`
-	UpdatedAt    time.Time        `json:"updated_at"`
+	// ActiveLoanCount is the number of active (not yet returned) loans for
+	// this book — scoped to the library when the read is library-scoped,
+	// global otherwise. Always populated.
+	ActiveLoanCount int `json:"active_loan_count"`
+	// ActiveLoans is the full list of active loans for this book. Only
+	// populated by single-book reads (GetBook); list endpoints omit it to
+	// keep payloads lean — use active_loan_count there for the badge.
+	ActiveLoans []LoanResponse `json:"active_loans,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 }
 
 // PagedBooksResponse is the paginated response from book list endpoints.

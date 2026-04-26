@@ -838,6 +838,20 @@ definitions:
     type: object
   responses.BookResponse:
     properties:
+      active_loan_count:
+        description: |-
+          ActiveLoanCount is the number of active (not yet returned) loans for
+          this book — scoped to the library when the read is library-scoped,
+          global otherwise. Always populated.
+        type: integer
+      active_loans:
+        description: |-
+          ActiveLoans is the full list of active loans for this book. Only
+          populated by single-book reads (GetBook); list endpoints omit it to
+          keep payloads lean — use active_loan_count there for the badge.
+        items:
+          $ref: '#/definitions/responses.LoanResponse'
+        type: array
       added_by:
         type: string
       contributors:
@@ -5759,6 +5773,10 @@ paths:
       - description: Filter by tag
         in: query
         name: tag
+        type: string
+      - description: Filter to loans of a specific book
+        in: query
+        name: book_id
         type: string
       produces:
       - application/json

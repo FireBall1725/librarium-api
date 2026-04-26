@@ -54,6 +54,12 @@ type Book struct {
 	PublishYear    *int
 	Language       string
 	UserReadStatus string
+	// ActiveLoanCount is the number of active (not yet returned) loans for
+	// this book. Scoped to a single library when the read is library-scoped
+	// (ListBooks via library), or counted across every library otherwise.
+	// Drives the "loaned out" badge on book rows without forcing the client
+	// to fetch loans separately.
+	ActiveLoanCount int
 	// Libraries is the set of libraries holding this book (populated by the
 	// service layer on reads that need it; empty when the book is floating).
 	Libraries []BookLibraryRef

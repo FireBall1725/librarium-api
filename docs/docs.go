@@ -6994,6 +6994,12 @@ const docTemplate = `{
                         "description": "Filter by tag",
                         "name": "tag",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter to loans of a specific book",
+                        "name": "book_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -13176,6 +13182,17 @@ const docTemplate = `{
         "responses.BookResponse": {
             "type": "object",
             "properties": {
+                "active_loan_count": {
+                    "description": "ActiveLoanCount is the number of active (not yet returned) loans for\nthis book — scoped to the library when the read is library-scoped,\nglobal otherwise. Always populated.",
+                    "type": "integer"
+                },
+                "active_loans": {
+                    "description": "ActiveLoans is the full list of active loans for this book. Only\npopulated by single-book reads (GetBook); list endpoints omit it to\nkeep payloads lean — use active_loan_count there for the badge.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/responses.LoanResponse"
+                    }
+                },
                 "added_by": {
                     "type": "string"
                 },
