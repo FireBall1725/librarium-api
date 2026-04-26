@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Cross-cutting / roadmap discussion
+    url: https://github.com/fireball1725/librarium/issues
+    about: For ideas that span api/web/ios/mcp, file on the umbrella librarium repo.
+  - name: API docs (Swagger / Scalar)
+    url: https://librarium.press/api-docs
+    about: Reference the live API spec before filing endpoint-shape issues.

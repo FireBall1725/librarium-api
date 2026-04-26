@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest an API improvement or new endpoint
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests are welcome. Check existing issues + [PLAN.md](https://github.com/fireball1725/librarium/blob/main/PLAN.md) before submitting to avoid duplicates.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or pain point.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: New endpoint shape, behaviour change, or design sketch.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to OpenAPI shape, similar APIs, screenshots from clients, etc.
+    validations:
+      required: false
