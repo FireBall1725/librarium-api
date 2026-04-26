@@ -63,6 +63,7 @@ type EnrichmentBatch struct {
 	CreatedBy      uuid.UUID              `json:"created_by"`
 	Type           EnrichmentBatchType    `json:"type"`
 	Force          bool                   `json:"force"`
+	UseAICleanup   bool                   `json:"use_ai_cleanup"`
 	Status         EnrichmentBatchStatus  `json:"status"`
 	BookIDs        []uuid.UUID            `json:"book_ids,omitempty"`
 	TotalBooks     int                    `json:"total_books"`

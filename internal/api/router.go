@@ -115,6 +115,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	shelfHandler := handlers.NewShelfHandler(shelfSvc)
 	loanHandler := handlers.NewLoanHandler(loanSvc)
 	seriesHandler := handlers.NewSeriesHandler(seriesSvc, releaseSyncSvc)
+	aiMetadataRepo := repository.NewAIMetadataRepo(db)
+	aiMetadataSvc := service.NewAIMetadataService(aiSvc.Registry(), aiMetadataRepo)
+	aiMetadataHandler := handlers.NewAIMetadataHandler(aiMetadataSvc, seriesRepo, seriesArcRepo, aiMetadataRepo)
 	importHandler := handlers.NewImportHandler(importSvc, membershipRepo)
 	genreHandler := handlers.NewGenreHandler(genreRepo)
 	mediaTypeHandler := handlers.NewMediaTypeHandler(mediaTypeRepo)
@@ -386,6 +389,16 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("POST /api/v1/libraries/{library_id}/series/{series_id}/arcs", requireLibraryPerm("series:update", http.HandlerFunc(seriesHandler.CreateSeriesArc)))
 	mux.Handle("PUT /api/v1/libraries/{library_id}/series/{series_id}/arcs/{arc_id}", requireLibraryPerm("series:update", http.HandlerFunc(seriesHandler.UpdateSeriesArc)))
 	mux.Handle("DELETE /api/v1/libraries/{library_id}/series/{series_id}/arcs/{arc_id}", requireLibraryPerm("series:update", http.HandlerFunc(seriesHandler.DeleteSeriesArc)))
+
+	// AI metadata enrichment — propose / list / accept / reject series suggestions
+	mux.Handle("POST /api/v1/libraries/{library_id}/series/{series_id}/suggest-arcs", requireLibraryPerm("series:update", http.HandlerFunc(aiMetadataHandler.SuggestSeriesArcs)))
+	mux.Handle("POST /api/v1/libraries/{library_id}/series/{series_id}/suggest-metadata", requireLibraryPerm("series:update", http.HandlerFunc(aiMetadataHandler.SuggestSeriesMetadata)))
+	mux.Handle("GET /api/v1/libraries/{library_id}/series/{series_id}/proposals", requireLibraryPerm("series:read", http.HandlerFunc(aiMetadataHandler.ListSeriesProposals)))
+	mux.Handle("POST /api/v1/libraries/{library_id}/proposals/{proposal_id}/accept", requireLibraryPerm("series:update", http.HandlerFunc(aiMetadataHandler.AcceptProposal)))
+	mux.Handle("POST /api/v1/libraries/{library_id}/proposals/{proposal_id}/reject", requireLibraryPerm("series:update", http.HandlerFunc(aiMetadataHandler.RejectProposal)))
+	// Jobs UI consumes this same shape as the AI suggestions run-detail endpoint
+	// so the shared RunDetailPanel renders either kind without forking.
+	mux.Handle("GET /api/v1/admin/jobs/ai-metadata/runs/{job_id}", requireAuth(http.HandlerFunc(aiMetadataHandler.JobRunDetail)))
 
 	// Shelves for a book
 	mux.Handle("GET /api/v1/libraries/{library_id}/books/{book_id}/shelves", requireLibraryPerm("shelves:read", http.HandlerFunc(shelfHandler.ListBookShelves)))

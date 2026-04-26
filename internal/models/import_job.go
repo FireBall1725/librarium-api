@@ -57,6 +57,7 @@ type ImportOptions struct {
 	DefaultFormat               string     `json:"default_format"`
 	EnrichMetadata              bool       `json:"enrich_metadata"`
 	EnrichCovers                bool       `json:"enrich_covers"`
+	UseAICleanup                bool       `json:"use_ai_cleanup"`
 	AttributeToUserID           *uuid.UUID `json:"attribute_to_user_id,omitempty"`
 }
 

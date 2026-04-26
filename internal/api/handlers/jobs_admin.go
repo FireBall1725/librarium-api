@@ -114,8 +114,9 @@ func toJobView(j *models.Job) JobView {
 //	@Router      /admin/jobs/history [get]
 func (h *UnifiedJobsHandler) History(w http.ResponseWriter, r *http.Request) {
 	opts := repository.ListJobsOpts{
-		Kind:   r.URL.Query().Get("kind"),
-		Status: r.URL.Query().Get("status"),
+		Kind:    r.URL.Query().Get("kind"),
+		Subtype: r.URL.Query().Get("subtype"),
+		Status:  r.URL.Query().Get("status"),
 	}
 	if s := r.URL.Query().Get("since"); s != "" {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {

@@ -500,6 +500,71 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/jobs/ai-metadata/runs/{job_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Same shape as the AI suggestions run-detail endpoint so the\nshared ` + "`" + `RunDetailPanel` + "`" + ` component can render either kind.\nSynthesises a 2-event timeline (prompt + ai_response) from the\nprompt + response_text columns on ` + "`" + `ai_metadata_runs` + "`" + `.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "jobs",
+                    "ai"
+                ],
+                "summary": "Get an AI metadata run as a {run, events} timeline",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Job UUID",
+                        "name": "job_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "events": {
+                                    "type": "array"
+                                },
+                                "run": {
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/jobs/ai-suggestions": {
             "get": {
                 "security": [
@@ -7539,6 +7604,157 @@ const docTemplate = `{
                 }
             }
         },
+        "/libraries/{library_id}/proposals/{proposal_id}/accept": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Writes accepted fields / arcs onto the target series. Body lets the user partially accept (` + "`" + `fields` + "`" + ` / ` + "`" + `arc_indices` + "`" + `); empty body accepts everything. Arc proposals are destructive — accepting deletes every existing arc on the series and replaces it with the proposed arcs (book→arc assignments are cleared via ON DELETE SET NULL and re-derived from each new arc's volume range, unless ` + "`" + `assign_books=false` + "`" + `).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "series",
+                    "ai"
+                ],
+                "summary": "Apply an AI suggestion proposal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Proposal UUID",
+                        "name": "proposal_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Selective acceptance",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_handlers.acceptRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/libraries/{library_id}/proposals/{proposal_id}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "series",
+                    "ai"
+                ],
+                "summary": "Reject an AI suggestion proposal",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Proposal UUID",
+                        "name": "proposal_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/libraries/{library_id}/series": {
             "get": {
                 "security": [
@@ -8922,6 +9138,239 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/libraries/{library_id}/series/{series_id}/proposals": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns proposals (pending, accepted, rejected) for the target series, newest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "series",
+                    "ai"
+                ],
+                "summary": "List AI suggestion proposals for a series",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Series UUID",
+                        "name": "series_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (pending|accepted|rejected|partially_accepted)",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_models.AIMetadataProposal"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/libraries/{library_id}/series/{series_id}/suggest-arcs": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Synchronously calls the active AI provider with the series name + volume count and writes a pending proposal that the user can review on the series detail page. Records the prompt + response in ` + "`" + `ai_metadata_runs` + "`" + ` for inspection.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "series",
+                    "ai"
+                ],
+                "summary": "Generate an AI suggestion for a series's arc list",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Series UUID",
+                        "name": "series_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "proposal_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/libraries/{library_id}/series/{series_id}/suggest-metadata": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Synchronously calls the active AI provider to propose status, total_count, demographic, genres, and a cleaned description for a series. Writes a pending proposal that the user reviews per-field on the series detail page.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "series",
+                    "ai"
+                ],
+                "summary": "Generate an AI suggestion for series metadata fields",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Series UUID",
+                        "name": "series_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "proposal_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "properties": {
@@ -11524,6 +11973,47 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_fireball1725_librarium-api_internal_models.AIMetadataProposal": {
+            "type": "object",
+            "properties": {
+                "applied_at": {
+                    "type": "string"
+                },
+                "applied_by": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "run_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "target_id": {
+                    "type": "string"
+                },
+                "target_type": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_fireball1725_librarium-api_internal_models.EnrichmentBatch": {
             "type": "object",
             "properties": {
@@ -11578,6 +12068,9 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "use_ai_cleanup": {
+                    "type": "boolean"
                 }
             }
         },
@@ -11792,6 +12285,9 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "enrich_metadata": {
+                    "type": "boolean"
+                },
+                "use_ai_cleanup": {
                     "type": "boolean"
                 }
             }
@@ -12567,6 +13063,29 @@ const docTemplate = `{
                 },
                 "type": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api_handlers.acceptRequest": {
+            "type": "object",
+            "properties": {
+                "arc_indices": {
+                    "description": "For series_arcs proposals — zero-based indices into the proposed arcs\narray. Empty slice means \"accept every proposed arc\".",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "assign_books": {
+                    "description": "AssignBooks: when accepting arcs, also assign existing series books\nwhose position falls within each arc's vol_start / vol_end range.\nDefaults to true when omitted (server-side via *bool).",
+                    "type": "boolean"
+                },
+                "fields": {
+                    "description": "For series_metadata proposals — names of fields to apply. Empty slice\nmeans \"apply every populated field\".",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

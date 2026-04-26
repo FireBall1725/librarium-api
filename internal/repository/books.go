@@ -719,6 +719,32 @@ func (r *BookRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, title, s
 	return nil
 }
 
+// GetDescription returns the current description text for a book; empty
+// string when null or missing. Used by the AI metadata enrichment worker
+// to feed the cleanup prompt without pulling the whole book.
+func (r *BookRepo) GetDescription(ctx context.Context, id uuid.UUID) (string, error) {
+	var desc *string
+	if err := r.db.QueryRow(ctx, `SELECT description FROM books WHERE id = $1`, id).Scan(&desc); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("get description: %w", err)
+	}
+	if desc == nil {
+		return "", nil
+	}
+	return *desc, nil
+}
+
+// UpdateDescription writes a new description value (empty string clears it).
+// Bumps updated_at via the row-level trigger so cache busters see the change.
+func (r *BookRepo) UpdateDescription(ctx context.Context, id uuid.UUID, description string) error {
+	if _, err := r.db.Exec(ctx, `UPDATE books SET description = NULLIF($2, '') WHERE id = $1`, id, description); err != nil {
+		return fmt.Errorf("update description: %w", err)
+	}
+	return nil
+}
+
 // Touch bumps updated_at on the book row (the DB trigger sets it to NOW()).
 // Used to ensure cover changes are visible to change-detection fingerprinting.
 func (r *BookRepo) Touch(ctx context.Context, id uuid.UUID) error {
