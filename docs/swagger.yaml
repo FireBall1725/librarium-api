@@ -2277,6 +2277,72 @@ paths:
       summary: Create a user (admin)
       tags:
       - admin
+  /admin/users/{id}/password:
+    put:
+      consumes:
+      - application/json
+      description: Overwrites the target user's local password without the current-password
+        challenge. Instance admin only. Used for admin-driven resets when the user
+        has lost access. Fails with 404 if the target has no local identity (e.g.
+        an external SSO-only account).
+      parameters:
+      - description: User UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New password
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            password:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              message:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set a user's password (admin)
+      tags:
+      - admin
   /admin/users/{id}:
     delete:
       description: Permanently deletes a user account. Instance admin only. Cannot
