@@ -11,13 +11,15 @@ Thanks for your interest in contributing. This document covers how to submit cha
 
 ## Development setup
 
+The everyday dev stack lives in the umbrella [`librarium`](https://github.com/fireball1725/librarium) workspace under `local/docker-compose.yml` (api + web + db + mcp). After any code change to `api/`, rebuild and restart:
+
 ```bash
-git clone https://github.com/fireball1725/librarium-api.git
-cd librarium-api
-docker compose up -d --build
+cd local && docker compose up -d --build api
 ```
 
-You'll need Docker. For running Go tooling directly (`go test`, `go vet`), install Go 1.25.
+The standalone `api/docker-compose.yml` exists for api-only deployment scenarios but conflicts on host ports when the `local/` stack is running, so prefer `local/` for everyday development.
+
+For running Go tooling directly (`go test`, `go vet`), install Go 1.25.
 
 ## Making changes
 
@@ -36,7 +38,7 @@ Short, imperative, reference the scope: `feat(covers): accept HEIC uploads`, `fi
 - Rebase on `main` before opening the PR.
 - The PR description should explain the *why*, not just the *what* — link to the issue if there is one.
 - CI must pass before review.
-- For user-facing changes, add a line to `CHANGELOG.md` under `## [Unreleased]` (the release workflow moves it into a versioned section when cutting a release).
+- Don't hand-edit a `CHANGELOG.md` — release notes are auto-generated from PR titles by the release workflow. Write a clear, descriptive title.
 
 ## License
 
