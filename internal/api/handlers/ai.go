@@ -301,13 +301,15 @@ func (h *AIUserHandler) GetTasteProfile(w http.ResponseWriter, r *http.Request) 
 		respond.ServerError(w, r, err)
 		return
 	}
-	// Write raw JSON bytes straight through so we don't double-encode.
-	w.Header().Set("Content-Type", "application/json")
+	// Route through respond.JSON so the response is wrapped in the standard
+	// {"data": ...} envelope every other endpoint uses — without it the web's
+	// callApi reads body.data and gets undefined, leaving the form blank.
+	// json.RawMessage is encoded inline by encoding/json, so passing the raw
+	// bytes through respond.JSON does not double-encode.
 	if len(taste) == 0 {
-		_, _ = w.Write([]byte("{}"))
-		return
+		taste = json.RawMessage("{}")
 	}
-	_, _ = w.Write(taste)
+	respond.JSON(w, http.StatusOK, taste)
 }
 
 // UpdateTasteProfile godoc
@@ -337,6 +339,5 @@ func (h *AIUserHandler) UpdateTasteProfile(w http.ResponseWriter, r *http.Reques
 		respond.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(raw)
+	respond.JSON(w, http.StatusOK, raw)
 }
