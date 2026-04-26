@@ -270,6 +270,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("POST /api/v1/admin/users", requireAdmin(http.HandlerFunc(adminHandler.CreateUser)))
 	mux.Handle("PATCH /api/v1/admin/users/{id}", requireAdmin(http.HandlerFunc(adminHandler.UpdateUser)))
 	mux.Handle("DELETE /api/v1/admin/users/{id}", requireAdmin(http.HandlerFunc(adminHandler.DeleteUser)))
+	mux.Handle("PUT /api/v1/admin/users/{id}/password", requireAdmin(http.HandlerFunc(adminHandler.SetUserPassword)))
 
 	// Users — search (any authenticated user)
 	mux.Handle("GET /api/v1/users", requireAuth(http.HandlerFunc(authHandler.SearchUsers)))

@@ -307,12 +307,37 @@ func (s *AuthService) UpdatePassword(ctx context.Context, userID uuid.UUID, curr
 	return s.identities.UpdateLocalPassword(ctx, userID, newHash)
 }
 
+// AdminSetPassword overwrites a target user's local password without
+// the current-password challenge that UpdatePassword enforces. Intended
+// for admin-driven password resets where the user has lost access. The
+// caller must already be an instance admin — that's gated at the route
+// layer. Self-targeting is rejected with ErrSelfPasswordReset: the
+// admin should use the self-serve UpdatePassword flow (with the
+// current-password challenge) for their own account, not the bypass
+// endpoint. Returns repository.ErrNotFound when the target has no
+// local identity (e.g. an OIDC-only user) so the handler can surface
+// a useful error.
+func (s *AuthService) AdminSetPassword(ctx context.Context, callerID, targetUserID uuid.UUID, newPassword string) error {
+	if callerID == targetUserID {
+		return ErrSelfPasswordReset
+	}
+	if _, err := s.identities.GetLocalPasswordHash(ctx, targetUserID); err != nil {
+		return err
+	}
+	newHash, err := auth.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	return s.identities.UpdateLocalPassword(ctx, targetUserID, newHash)
+}
+
 // ─── Admin user management ────────────────────────────────────────────────────
 
 var (
-	ErrSelfDelete     = errors.New("cannot delete your own account")
-	ErrSelfDeactivate = errors.New("cannot deactivate your own account")
-	ErrSelfDemote     = errors.New("cannot remove your own admin privileges")
+	ErrSelfDelete        = errors.New("cannot delete your own account")
+	ErrSelfDeactivate    = errors.New("cannot deactivate your own account")
+	ErrSelfDemote        = errors.New("cannot remove your own admin privileges")
+	ErrSelfPasswordReset = errors.New("cannot reset your own password from the admin panel; use the change-password flow")
 )
 
 // UserPatch holds optional fields for an admin PATCH operation.

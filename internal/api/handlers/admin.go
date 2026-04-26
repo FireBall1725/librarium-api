@@ -225,6 +225,69 @@ func (h *AdminHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "user deleted"})
 }
 
+// SetUserPassword godoc
+//
+// @Summary     Set a user's password (admin)
+// @Description Overwrites the target user's local password without the
+// @Description current-password challenge. Instance admin only. Used for
+// @Description admin-driven resets when the user has lost access. Fails
+// @Description with 404 if the target has no local identity (e.g. an
+// @Description external SSO-only account).
+// @Tags        admin
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      string                          true  "User UUID"
+// @Param       body  body      object{password=string}         true  "New password"
+// @Success     200   {object}  object{message=string}
+// @Failure     400   {object}  object{error=string}
+// @Failure     401   {object}  object{error=string}
+// @Failure     403   {object}  object{error=string}
+// @Failure     404   {object}  object{error=string}
+// @Router      /admin/users/{id}/password [put]
+func (h *AdminHandler) SetUserPassword(w http.ResponseWriter, r *http.Request) {
+	targetID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	// Match the policy used by setup + create-user: non-empty only.
+	// Length/complexity rules belong in a separate, opt-in policy and
+	// would need to be retroactively applied to existing accounts to
+	// avoid surprise lockouts.
+	if req.Password == "" {
+		respond.Error(w, http.StatusBadRequest, "password is required")
+		return
+	}
+
+	callerID := uuid.Nil
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		callerID = claims.UserID
+	}
+
+	if err := h.svc.AdminSetPassword(r.Context(), callerID, targetID, req.Password); err != nil {
+		switch {
+		case errors.Is(err, service.ErrSelfPasswordReset):
+			respond.Error(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, repository.ErrNotFound):
+			respond.Error(w, http.StatusNotFound, "user not found or has no local password to reset")
+		default:
+			respond.ServerError(w, r, err)
+		}
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]string{"message": "password updated"})
+}
+
 func adminUserBody(u *models.User) map[string]any {
 	return map[string]any{
 		"id":                u.ID,
