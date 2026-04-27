@@ -129,7 +129,7 @@ func (s *LibraryService) GetLibrary(ctx context.Context, id uuid.UUID) (*models.
 
 func (s *LibraryService) ListLibraries(ctx context.Context, callerID uuid.UUID, isAdmin bool) ([]*models.Library, error) {
 	if isAdmin {
-		return s.libraries.ListAll(ctx)
+		return s.libraries.ListAll(ctx, callerID)
 	}
 	return s.libraries.ListForUser(ctx, callerID)
 }

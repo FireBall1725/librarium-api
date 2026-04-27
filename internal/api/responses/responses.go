@@ -113,6 +113,13 @@ type LibraryResponse struct {
 	IsPublic    bool      `json:"is_public"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// BookCount is the total number of books in the library. ReadingCount
+	// and ReadCount are caller-scoped — the calling user's reading + read
+	// books in this library. Always populated on list endpoints; on single-
+	// library endpoints they fall back to 0 unless the path was scoped.
+	BookCount    int `json:"book_count"`
+	ReadingCount int `json:"reading_count"`
+	ReadCount    int `json:"read_count"`
 }
 
 // MemberResponse is returned by library member endpoints.
