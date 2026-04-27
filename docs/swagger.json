@@ -6985,12 +6985,6 @@
                     },
                     {
                         "type": "string",
-                        "description": "Filter by tag",
-                        "name": "tag",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
                         "description": "Filter to loans of a specific book",
                         "name": "book_id",
                         "in": "query"
@@ -7077,12 +7071,6 @@
                                 },
                                 "notes": {
                                     "type": "string"
-                                },
-                                "tag_ids": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string"
-                                    }
                                 }
                             }
                         }
@@ -7238,12 +7226,6 @@
                                 },
                                 "returned_at": {
                                     "type": "string"
-                                },
-                                "tag_ids": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string"
-                                    }
                                 }
                             }
                         }

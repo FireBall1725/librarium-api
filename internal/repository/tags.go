@@ -135,18 +135,6 @@ func (r *TagRepo) SetShelfTags(ctx context.Context, shelfID uuid.UUID, tagIDs []
 	return nil
 }
 
-func (r *TagRepo) SetLoanTags(ctx context.Context, loanID uuid.UUID, tagIDs []uuid.UUID) error {
-	if _, err := r.db.Exec(ctx, `DELETE FROM loan_tags WHERE loan_id = $1`, loanID); err != nil {
-		return fmt.Errorf("clearing loan tags: %w", err)
-	}
-	for _, tid := range tagIDs {
-		if _, err := r.db.Exec(ctx, `INSERT INTO loan_tags (loan_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, loanID, tid); err != nil {
-			return fmt.Errorf("inserting loan tag: %w", err)
-		}
-	}
-	return nil
-}
-
 func (r *TagRepo) SetMemberTags(ctx context.Context, libraryID, userID uuid.UUID, tagIDs []uuid.UUID) error {
 	if _, err := r.db.Exec(ctx, `DELETE FROM member_tags WHERE library_id = $1 AND user_id = $2`, libraryID, userID); err != nil {
 		return fmt.Errorf("clearing member tags: %w", err)

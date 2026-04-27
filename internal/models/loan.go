@@ -19,7 +19,6 @@ type Loan struct {
 	DueDate    *time.Time `json:"due_date"`
 	ReturnedAt *time.Time `json:"returned_at"`
 	Notes      string     `json:"notes"`
-	Tags       []*Tag     `json:"tags"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
 }
