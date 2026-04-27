@@ -28,13 +28,14 @@ import (
 type BookHandler struct {
 	svc               *service.BookService
 	books             *repository.BookRepo             // used for TitlesByIDs at batch creation
+	loans             *repository.LoanRepo             // active loans on GetBook responses
 	riverClient       *river.Client[pgx.Tx]            // may be nil; used for enrichment batch jobs
 	enrichmentBatches *repository.EnrichmentBatchRepo  // may be nil; required for bulk enrich/cover
 	editionFiles      *service.EditionFileService
 }
 
-func NewBookHandler(svc *service.BookService, books *repository.BookRepo, riverClient *river.Client[pgx.Tx], enrichmentBatches *repository.EnrichmentBatchRepo, editionFiles *service.EditionFileService) *BookHandler {
-	return &BookHandler{svc: svc, books: books, riverClient: riverClient, enrichmentBatches: enrichmentBatches, editionFiles: editionFiles}
+func NewBookHandler(svc *service.BookService, books *repository.BookRepo, loans *repository.LoanRepo, riverClient *river.Client[pgx.Tx], enrichmentBatches *repository.EnrichmentBatchRepo, editionFiles *service.EditionFileService) *BookHandler {
+	return &BookHandler{svc: svc, books: books, loans: loans, riverClient: riverClient, enrichmentBatches: enrichmentBatches, editionFiles: editionFiles}
 }
 
 // ─── Media types ──────────────────────────────────────────────────────────────
@@ -368,7 +369,13 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		respond.ServerError(w, r, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, bookBody(book))
+	// Active loans surface only on the single-book read so the badge on
+	// list views stays cheap (just the count). Errors here aren't fatal —
+	// the book row is still useful without the loan list.
+	loans, _ := h.loans.ListActiveByBook(r.Context(), bookID)
+	body := bookBody(book)
+	body["active_loans"] = loanBodies(loans)
+	respond.JSON(w, http.StatusOK, body)
 }
 
 // UpdateBook godoc
@@ -667,7 +674,8 @@ func bookBody(b *models.Book) map[string]any {
 		"publisher":        b.Publisher,
 		"publish_year":     b.PublishYear,
 		"language":         b.Language,
-		"user_read_status": b.UserReadStatus,
+		"user_read_status":  b.UserReadStatus,
+		"active_loan_count": b.ActiveLoanCount,
 	}
 }
 

@@ -111,7 +111,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	setupHandler := handlers.NewSetupHandler(authSvc, userRepo)
 	adminHandler := handlers.NewAdminHandler(authSvc)
 	libraryHandler := handlers.NewLibraryHandler(libSvc)
-	bookHandler := handlers.NewBookHandler(bookSvc, bookRepo, riverClient, enrichmentBatchRepo, editionFileSvc)
+	bookHandler := handlers.NewBookHandler(bookSvc, bookRepo, loanRepo, riverClient, enrichmentBatchRepo, editionFileSvc)
 	shelfHandler := handlers.NewShelfHandler(shelfSvc)
 	loanHandler := handlers.NewLoanHandler(loanSvc)
 	seriesHandler := handlers.NewSeriesHandler(seriesSvc, releaseSyncSvc)

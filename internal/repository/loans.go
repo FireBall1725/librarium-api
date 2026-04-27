@@ -42,7 +42,7 @@ const loanTagsSubquery = `
         '[]'::json
     )`
 
-func (r *LoanRepo) List(ctx context.Context, libraryID uuid.UUID, includeReturned bool, search, tagFilter string) ([]*models.Loan, error) {
+func (r *LoanRepo) List(ctx context.Context, libraryID uuid.UUID, includeReturned bool, search, tagFilter string, bookID uuid.UUID) ([]*models.Loan, error) {
 	args := []any{libraryID, includeReturned}
 	where := `WHERE l.library_id = $1 AND ($2 OR l.returned_at IS NULL)`
 	if search != "" {
@@ -52,6 +52,10 @@ func (r *LoanRepo) List(ctx context.Context, libraryID uuid.UUID, includeReturne
 	if tagFilter != "" {
 		args = append(args, tagFilter)
 		where += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM loan_tags lt JOIN tags t ON t.id = lt.tag_id WHERE lt.loan_id = l.id AND lower(t.name) = lower($%d))`, len(args))
+	}
+	if bookID != uuid.Nil {
+		args = append(args, bookID)
+		where += fmt.Sprintf(` AND l.book_id = $%d`, len(args))
 	}
 
 	q := `
@@ -71,6 +75,36 @@ func (r *LoanRepo) List(ctx context.Context, libraryID uuid.UUID, includeReturne
 	}
 	defer rows.Close()
 
+	var out []*models.Loan
+	for rows.Next() {
+		l, err := scanLoan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// ListActiveByBook returns every active (not yet returned) loan for the
+// given book across every library. Powers the active-loan panel on the
+// library-agnostic GetBook response.
+func (r *LoanRepo) ListActiveByBook(ctx context.Context, bookID uuid.UUID) ([]*models.Loan, error) {
+	q := `
+		SELECT l.id, l.library_id, l.book_id, b.title,
+		       l.loaned_to, l.loaned_at, l.due_date, l.returned_at,
+		       COALESCE(l.notes, ''),
+		       l.created_at, l.updated_at,
+		       ` + loanTagsSubquery + ` AS tags
+		FROM loans l
+		JOIN books b ON b.id = l.book_id
+		WHERE l.book_id = $1 AND l.returned_at IS NULL
+		ORDER BY l.loaned_at DESC, l.created_at DESC`
+	rows, err := r.db.Query(ctx, q, bookID)
+	if err != nil {
+		return nil, fmt.Errorf("listing active loans by book: %w", err)
+	}
+	defer rows.Close()
 	var out []*models.Loan
 	for rows.Next() {
 		l, err := scanLoan(rows)

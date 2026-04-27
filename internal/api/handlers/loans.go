@@ -36,6 +36,7 @@ func NewLoanHandler(svc *service.LoanService) *LoanHandler {
 // @Param       include_returned  query     boolean  false  "Include returned loans"
 // @Param       search            query     string   false  "Filter by borrower name"
 // @Param       tag               query     string   false  "Filter by tag"
+// @Param       book_id           query     string   false  "Filter to loans of a specific book"
 // @Success     200  {array}   responses.LoanResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -49,7 +50,15 @@ func (h *LoanHandler) ListLoans(w http.ResponseWriter, r *http.Request) {
 	includeReturned := r.URL.Query().Get("include_returned") == "true"
 	search := r.URL.Query().Get("search")
 	tagFilter := r.URL.Query().Get("tag")
-	loans, err := h.svc.ListLoans(r.Context(), libraryID, includeReturned, search, tagFilter)
+	var bookID uuid.UUID
+	if raw := r.URL.Query().Get("book_id"); raw != "" {
+		bookID, err = uuid.Parse(raw)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid book_id")
+			return
+		}
+	}
+	loans, err := h.svc.ListLoans(r.Context(), libraryID, includeReturned, search, tagFilter, bookID)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -272,6 +281,16 @@ func tagsToBodyLoans(tags []*models.Tag) []map[string]any {
 	out := make([]map[string]any, 0, len(tags))
 	for _, t := range tags {
 		out = append(out, map[string]any{"id": t.ID, "name": t.Name, "color": t.Color})
+	}
+	return out
+}
+
+// loanBodies projects a slice of loans through loanBody. Always returns a
+// non-nil slice so JSON marshalling yields [] not null.
+func loanBodies(loans []*models.Loan) []map[string]any {
+	out := make([]map[string]any, 0, len(loans))
+	for _, l := range loans {
+		out = append(out, loanBody(l))
 	}
 	return out
 }
