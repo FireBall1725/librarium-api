@@ -13246,6 +13246,14 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                },
+                "user_progress_pct": {
+                    "description": "UserProgressPct is the caller's reading progress 0-100 (0 = none).",
+                    "type": "number"
+                },
+                "user_rating": {
+                    "description": "UserRating is the caller's rating (1-10 half-star integer; 0 = none).",
+                    "type": "integer"
                 }
             }
         },
@@ -13412,6 +13420,10 @@ const docTemplate = `{
         "responses.LibraryResponse": {
             "type": "object",
             "properties": {
+                "book_count": {
+                    "description": "BookCount is the total number of books in the library. ReadingCount\nand ReadCount are caller-scoped — the calling user's reading + read\nbooks in this library. Always populated on list endpoints; on single-\nlibrary endpoints they fall back to 0 unless the path was scoped.",
+                    "type": "integer"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -13429,6 +13441,12 @@ const docTemplate = `{
                 },
                 "owner_id": {
                     "type": "string"
+                },
+                "read_count": {
+                    "type": "integer"
+                },
+                "reading_count": {
+                    "type": "integer"
                 },
                 "slug": {
                     "type": "string"
@@ -13554,6 +13572,12 @@ const docTemplate = `{
                 },
                 "per_page": {
                     "type": "integer"
+                },
+                "suggestions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "total": {
                     "type": "integer"
