@@ -69,23 +69,47 @@ func (r *BookRepo) ListMediaTypes(ctx context.Context) ([]*models.MediaType, err
 // arg (used by ListBooks). When 0, it counts active loans across every
 // library the book belongs to (used by FindByID).
 func booksSelect(userStatusArg, loanLibraryArg int) string {
-	var userReadStatusExpr string
+	// All three caller-scoped subqueries (status / rating / progress) use
+	// the same ORDER BY so they pick the same interaction row, keeping the
+	// returned values internally consistent for users who own multiple
+	// editions of the same book.
+	const interactionPickOrder = `ORDER BY CASE ubi.read_status
+		WHEN 'read' THEN 1
+		WHEN 'reading' THEN 2
+		WHEN 'did_not_finish' THEN 3
+		ELSE 4
+	END`
+
+	var userReadStatusExpr, userRatingExpr, userProgressExpr string
 	if userStatusArg > 0 {
 		userReadStatusExpr = fmt.Sprintf(`COALESCE((
 		SELECT ubi.read_status
 		FROM book_editions be_rs
 		JOIN user_book_interactions ubi ON ubi.book_edition_id = be_rs.id
 		WHERE be_rs.book_id = b.id AND ubi.user_id = $%d
-		ORDER BY CASE ubi.read_status
-			WHEN 'read' THEN 1
-			WHEN 'reading' THEN 2
-			WHEN 'did_not_finish' THEN 3
-			ELSE 4
-		END
+		%s
 		LIMIT 1
-	), '') AS user_read_status`, userStatusArg)
+	), '') AS user_read_status`, userStatusArg, interactionPickOrder)
+		userRatingExpr = fmt.Sprintf(`COALESCE((
+		SELECT ubi.rating
+		FROM book_editions be_rt
+		JOIN user_book_interactions ubi ON ubi.book_edition_id = be_rt.id
+		WHERE be_rt.book_id = b.id AND ubi.user_id = $%d
+		%s
+		LIMIT 1
+	), 0) AS user_rating`, userStatusArg, interactionPickOrder)
+		userProgressExpr = fmt.Sprintf(`COALESCE((
+		SELECT (ubi.progress->>'percent')::numeric
+		FROM book_editions be_pg
+		JOIN user_book_interactions ubi ON ubi.book_edition_id = be_pg.id
+		WHERE be_pg.book_id = b.id AND ubi.user_id = $%d
+		%s
+		LIMIT 1
+	), 0) AS user_progress_pct`, userStatusArg, interactionPickOrder)
 	} else {
 		userReadStatusExpr = `'' AS user_read_status`
+		userRatingExpr = `0 AS user_rating`
+		userProgressExpr = `0 AS user_progress_pct`
 	}
 
 	var activeLoanExpr string
@@ -193,6 +217,8 @@ func booksSelect(userStatusArg, loanLibraryArg int) string {
 			LIMIT 1
 		), '') AS language,
 		` + userReadStatusExpr + `,
+		` + userRatingExpr + `,
+		` + userProgressExpr + `,
 		` + activeLoanExpr + `
 	FROM books b
 	JOIN media_types mt ON mt.id = b.media_type_id`
@@ -800,6 +826,8 @@ func scanBook(s scanner) (*models.Book, error) {
 		publishYear    pgtype.Int4
 		language       pgtype.Text
 		userReadStatus string
+		userRating     int
+		userProgress   pgtype.Numeric
 		activeLoans    int
 		b              models.Book
 	)
@@ -810,7 +838,7 @@ func scanBook(s scanner) (*models.Book, error) {
 		&pgDesc, &b.CreatedAt, &b.UpdatedAt,
 		&contribJSON, &tagsJSON, &genresJSON, &b.HasCover,
 		&seriesJSON, &shelvesJSON, &publisher, &publishYear, &language,
-		&userReadStatus, &activeLoans,
+		&userReadStatus, &userRating, &userProgress, &activeLoans,
 	)
 	if err != nil {
 		return nil, err
@@ -824,6 +852,11 @@ func scanBook(s scanner) (*models.Book, error) {
 	b.Publisher = publisher.String
 	b.Language = language.String
 	b.UserReadStatus = userReadStatus
+	b.UserRating = userRating
+	if userProgress.Valid {
+		f, _ := userProgress.Float64Value()
+		b.UserProgressPct = f.Float64
+	}
 	b.ActiveLoanCount = activeLoans
 	if publishYear.Valid {
 		y := int(publishYear.Int32)

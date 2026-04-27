@@ -674,8 +674,10 @@ func bookBody(b *models.Book) map[string]any {
 		"publisher":        b.Publisher,
 		"publish_year":     b.PublishYear,
 		"language":         b.Language,
-		"user_read_status":  b.UserReadStatus,
-		"active_loan_count": b.ActiveLoanCount,
+		"user_read_status":   b.UserReadStatus,
+		"user_rating":        b.UserRating,
+		"user_progress_pct":  b.UserProgressPct,
+		"active_loan_count":  b.ActiveLoanCount,
 	}
 }
 

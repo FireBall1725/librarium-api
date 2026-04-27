@@ -156,6 +156,10 @@ type BookResponse struct {
 	Series       []SeriesRef      `json:"series"`
 	Shelves      []ShelfRef       `json:"shelves"`
 	AddedBy      *uuid.UUID       `json:"added_by,omitempty"`
+	// UserRating is the caller's rating (1-10 half-star integer; 0 = none).
+	UserRating int `json:"user_rating"`
+	// UserProgressPct is the caller's reading progress 0-100 (0 = none).
+	UserProgressPct float64 `json:"user_progress_pct"`
 	// ActiveLoanCount is the number of active (not yet returned) loans for
 	// this book — scoped to the library when the read is library-scoped,
 	// global otherwise. Always populated.
