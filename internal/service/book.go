@@ -401,6 +401,9 @@ type InteractionRequest struct {
 	DateStarted  *time.Time
 	DateFinished *time.Time
 	IsFavorite   bool
+	// Progress is the {pages_read?, percent?, position?} JSON body for
+	// reading progress. Empty / nil clears the column.
+	Progress []byte
 }
 
 func (s *BookService) GetInteraction(ctx context.Context, userID, editionID uuid.UUID) (*models.UserBookInteraction, error) {
@@ -410,7 +413,7 @@ func (s *BookService) GetInteraction(ctx context.Context, userID, editionID uuid
 func (s *BookService) UpsertInteraction(ctx context.Context, userID, editionID uuid.UUID, req InteractionRequest) (*models.UserBookInteraction, error) {
 	interaction, err := s.editions.UpsertInteraction(ctx, userID, editionID,
 		req.ReadStatus, req.Rating, req.Notes, req.Review,
-		req.DateStarted, req.DateFinished, req.IsFavorite,
+		req.DateStarted, req.DateFinished, req.IsFavorite, req.Progress,
 	)
 	if err != nil {
 		return nil, err

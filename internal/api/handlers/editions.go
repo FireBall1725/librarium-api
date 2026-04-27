@@ -360,13 +360,14 @@ func parseEditionRequestBody(body *editionRequestBody) (*service.EditionRequest,
 }
 
 type interactionRequestBody struct {
-	ReadStatus   string `json:"read_status"`
-	Rating       *int   `json:"rating"`
-	Notes        string `json:"notes"`
-	Review       string `json:"review"`
-	DateStarted  string `json:"date_started"`  // YYYY-MM-DD or ""
-	DateFinished string `json:"date_finished"` // YYYY-MM-DD or ""
-	IsFavorite   bool   `json:"is_favorite"`
+	ReadStatus   string          `json:"read_status"`
+	Rating       *int            `json:"rating"`
+	Notes        string          `json:"notes"`
+	Review       string          `json:"review"`
+	DateStarted  string          `json:"date_started"`  // YYYY-MM-DD or ""
+	DateFinished string          `json:"date_finished"` // YYYY-MM-DD or ""
+	IsFavorite   bool            `json:"is_favorite"`
+	Progress     json.RawMessage `json:"progress"` // {pages_read?, percent?, position?}
 }
 
 func decodeInteractionRequest(r *http.Request) (*service.InteractionRequest, error) {
@@ -402,6 +403,7 @@ func decodeInteractionRequest(r *http.Request) (*service.InteractionRequest, err
 		DateStarted:  dateStarted,
 		DateFinished: dateFinished,
 		IsFavorite:   body.IsFavorite,
+		Progress:     body.Progress,
 	}, nil
 }
 
@@ -467,6 +469,11 @@ func interactionBody(i *models.UserBookInteraction) map[string]any {
 		"reread_count":    i.RereadCount,
 		"created_at":      i.CreatedAt,
 		"updated_at":      i.UpdatedAt,
+	}
+	if len(i.Progress) > 0 {
+		body["progress"] = json.RawMessage(i.Progress)
+	} else {
+		body["progress"] = nil
 	}
 	if i.Rating != nil {
 		body["rating"] = *i.Rating

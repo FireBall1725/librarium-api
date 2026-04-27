@@ -597,7 +597,7 @@ func (w *ImportWorker) applyInteraction(ctx context.Context, editionID, userID u
 		readStatusArg, ratingArg,
 		notesArg, reviewArg,
 		startedArg, finishedArg,
-		favoriteArg,
+		favoriteArg, nil, // progress not imported from CSV
 	); err != nil {
 		slog.Warn("import: merging user interaction failed",
 			"user_id", userID, "edition_id", editionID, "error", err)
