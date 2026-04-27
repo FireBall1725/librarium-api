@@ -35,7 +35,6 @@ func NewLoanHandler(svc *service.LoanService) *LoanHandler {
 // @Param       library_id        path      string   true   "Library UUID"
 // @Param       include_returned  query     boolean  false  "Include returned loans"
 // @Param       search            query     string   false  "Filter by borrower name"
-// @Param       tag               query     string   false  "Filter by tag"
 // @Param       book_id           query     string   false  "Filter to loans of a specific book"
 // @Success     200  {array}   responses.LoanResponse
 // @Failure     400  {object}  object{error=string}
@@ -49,7 +48,6 @@ func (h *LoanHandler) ListLoans(w http.ResponseWriter, r *http.Request) {
 	}
 	includeReturned := r.URL.Query().Get("include_returned") == "true"
 	search := r.URL.Query().Get("search")
-	tagFilter := r.URL.Query().Get("tag")
 	var bookID uuid.UUID
 	if raw := r.URL.Query().Get("book_id"); raw != "" {
 		bookID, err = uuid.Parse(raw)
@@ -58,7 +56,7 @@ func (h *LoanHandler) ListLoans(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	loans, err := h.svc.ListLoans(r.Context(), libraryID, includeReturned, search, tagFilter, bookID)
+	loans, err := h.svc.ListLoans(r.Context(), libraryID, includeReturned, search, bookID)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -79,7 +77,7 @@ func (h *LoanHandler) ListLoans(w http.ResponseWriter, r *http.Request) {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
-// @Param       body        body      object{book_id=string,loaned_to=string,loaned_at=string,due_date=string,notes=string,tag_ids=[]string}  true  "Loan details"
+// @Param       body        body      object{book_id=string,loaned_to=string,loaned_at=string,due_date=string,notes=string}  true  "Loan details"
 // @Success     201  {object}  responses.LoanResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -114,7 +112,7 @@ func (h *LoanHandler) CreateLoan(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       loan_id     path      string  true  "Loan UUID"
-// @Param       body        body      object{loaned_to=string,due_date=string,returned_at=string,notes=string,tag_ids=[]string}  true  "Updated loan"
+// @Param       body        body      object{loaned_to=string,due_date=string,returned_at=string,notes=string}  true  "Updated loan"
 // @Success     200  {object}  responses.LoanResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -176,12 +174,11 @@ func (h *LoanHandler) DeleteLoan(w http.ResponseWriter, r *http.Request) {
 
 func decodeLoanCreateRequest(r *http.Request) (*service.LoanRequest, error) {
 	var body struct {
-		BookID   string   `json:"book_id"`
-		LoanedTo string   `json:"loaned_to"`
-		LoanedAt string   `json:"loaned_at"` // YYYY-MM-DD; defaults to today
-		DueDate  string   `json:"due_date"`  // YYYY-MM-DD or ""
-		Notes    string   `json:"notes"`
-		TagIDs   []string `json:"tag_ids"`
+		BookID   string `json:"book_id"`
+		LoanedTo string `json:"loaned_to"`
+		LoanedAt string `json:"loaned_at"` // YYYY-MM-DD; defaults to today
+		DueDate  string `json:"due_date"`  // YYYY-MM-DD or ""
+		Notes    string `json:"notes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return nil, errors.New("invalid request body")
@@ -208,35 +205,21 @@ func decodeLoanCreateRequest(r *http.Request) (*service.LoanRequest, error) {
 		}
 	}
 
-	var tagIDs []uuid.UUID
-	if body.TagIDs != nil {
-		tagIDs = make([]uuid.UUID, 0, len(body.TagIDs))
-		for _, s := range body.TagIDs {
-			id, err := uuid.Parse(s)
-			if err != nil {
-				return nil, errors.New("invalid tag_id: " + s)
-			}
-			tagIDs = append(tagIDs, id)
-		}
-	}
-
 	return &service.LoanRequest{
 		BookID:   bookID,
 		LoanedTo: body.LoanedTo,
 		LoanedAt: loanedAt,
 		DueDate:  dueDate,
 		Notes:    body.Notes,
-		TagIDs:   tagIDs,
 	}, nil
 }
 
 func decodeLoanUpdateRequest(r *http.Request) (*service.LoanUpdateRequest, error) {
 	var body struct {
-		LoanedTo   string   `json:"loaned_to"`
-		DueDate    *string  `json:"due_date"`    // null = clear, "YYYY-MM-DD" = set
-		ReturnedAt *string  `json:"returned_at"` // null = clear, "YYYY-MM-DD" = set
-		Notes      string   `json:"notes"`
-		TagIDs     []string `json:"tag_ids"`
+		LoanedTo   string  `json:"loaned_to"`
+		DueDate    *string `json:"due_date"`    // null = clear, "YYYY-MM-DD" = set
+		ReturnedAt *string `json:"returned_at"` // null = clear, "YYYY-MM-DD" = set
+		Notes      string  `json:"notes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return nil, errors.New("invalid request body")
@@ -256,33 +239,12 @@ func decodeLoanUpdateRequest(r *http.Request) (*service.LoanUpdateRequest, error
 		return &t
 	}
 
-	var tagIDs []uuid.UUID
-	if body.TagIDs != nil {
-		tagIDs = make([]uuid.UUID, 0, len(body.TagIDs))
-		for _, s := range body.TagIDs {
-			id, err := uuid.Parse(s)
-			if err != nil {
-				return nil, errors.New("invalid tag_id: " + s)
-			}
-			tagIDs = append(tagIDs, id)
-		}
-	}
-
 	return &service.LoanUpdateRequest{
 		LoanedTo:   body.LoanedTo,
 		DueDate:    parseDate(body.DueDate),
 		ReturnedAt: parseDate(body.ReturnedAt),
 		Notes:      body.Notes,
-		TagIDs:     tagIDs,
 	}, nil
-}
-
-func tagsToBodyLoans(tags []*models.Tag) []map[string]any {
-	out := make([]map[string]any, 0, len(tags))
-	for _, t := range tags {
-		out = append(out, map[string]any{"id": t.ID, "name": t.Name, "color": t.Color})
-	}
-	return out
 }
 
 // loanBodies projects a slice of loans through loanBody. Always returns a
@@ -296,10 +258,6 @@ func loanBodies(loans []*models.Loan) []map[string]any {
 }
 
 func loanBody(l *models.Loan) map[string]any {
-	tags := l.Tags
-	if tags == nil {
-		tags = []*models.Tag{}
-	}
 	body := map[string]any{
 		"id":         l.ID,
 		"library_id": l.LibraryID,
@@ -308,7 +266,6 @@ func loanBody(l *models.Loan) map[string]any {
 		"loaned_to":  l.LoanedTo,
 		"loaned_at":  l.LoanedAt.Format("2006-01-02"),
 		"notes":      l.Notes,
-		"tags":       tagsToBodyLoans(tags),
 		"created_at": l.CreatedAt,
 		"updated_at": l.UpdatedAt,
 	}

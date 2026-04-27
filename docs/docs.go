@@ -6991,12 +6991,6 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by tag",
-                        "name": "tag",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
                         "description": "Filter to loans of a specific book",
                         "name": "book_id",
                         "in": "query"
@@ -7083,12 +7077,6 @@ const docTemplate = `{
                                 },
                                 "notes": {
                                     "type": "string"
-                                },
-                                "tag_ids": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string"
-                                    }
                                 }
                             }
                         }
@@ -7244,12 +7232,6 @@ const docTemplate = `{
                                 },
                                 "returned_at": {
                                     "type": "string"
-                                },
-                                "tag_ids": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "string"
-                                    }
                                 }
                             }
                         }

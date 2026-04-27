@@ -5770,10 +5770,6 @@ paths:
         in: query
         name: search
         type: string
-      - description: Filter by tag
-        in: query
-        name: tag
-        type: string
       - description: Filter to loans of a specific book
         in: query
         name: book_id
@@ -5832,10 +5828,6 @@ paths:
               type: string
             notes:
               type: string
-            tag_ids:
-              items:
-                type: string
-              type: array
           type: object
       produces:
       - application/json
@@ -5935,10 +5927,6 @@ paths:
               type: string
             returned_at:
               type: string
-            tag_ids:
-              items:
-                type: string
-              type: array
           type: object
       produces:
       - application/json

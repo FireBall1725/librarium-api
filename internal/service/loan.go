@@ -15,11 +15,10 @@ import (
 
 type LoanService struct {
 	loans *repository.LoanRepo
-	tags  *repository.TagRepo
 }
 
-func NewLoanService(loans *repository.LoanRepo, tags *repository.TagRepo) *LoanService {
-	return &LoanService{loans: loans, tags: tags}
+func NewLoanService(loans *repository.LoanRepo) *LoanService {
+	return &LoanService{loans: loans}
 }
 
 type LoanRequest struct {
@@ -28,7 +27,6 @@ type LoanRequest struct {
 	LoanedAt time.Time
 	DueDate  *time.Time
 	Notes    string
-	TagIDs   []uuid.UUID
 }
 
 type LoanUpdateRequest struct {
@@ -36,52 +34,25 @@ type LoanUpdateRequest struct {
 	DueDate    *time.Time
 	ReturnedAt *time.Time
 	Notes      string
-	TagIDs     []uuid.UUID
 }
 
-func (s *LoanService) ListLoans(ctx context.Context, libraryID uuid.UUID, includeReturned bool, search, tagFilter string, bookID uuid.UUID) ([]*models.Loan, error) {
-	return s.loans.List(ctx, libraryID, includeReturned, search, tagFilter, bookID)
+func (s *LoanService) ListLoans(ctx context.Context, libraryID uuid.UUID, includeReturned bool, search string, bookID uuid.UUID) ([]*models.Loan, error) {
+	return s.loans.List(ctx, libraryID, includeReturned, search, bookID)
 }
 
 func (s *LoanService) CreateLoan(ctx context.Context, libraryID, callerID uuid.UUID, req LoanRequest) (*models.Loan, error) {
 	if req.LoanedTo == "" {
 		return nil, fmt.Errorf("loaned_to is required")
 	}
-	loan, err := s.loans.Create(ctx, uuid.New(), libraryID, req.BookID, callerID,
+	return s.loans.Create(ctx, uuid.New(), libraryID, req.BookID, callerID,
 		req.LoanedTo, req.Notes, req.LoanedAt, req.DueDate)
-	if err != nil {
-		return nil, err
-	}
-	if req.TagIDs != nil {
-		if err := s.tags.SetLoanTags(ctx, loan.ID, req.TagIDs); err != nil {
-			return nil, fmt.Errorf("setting loan tags: %w", err)
-		}
-		loan, err = s.loans.FindByID(ctx, loan.ID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return loan, nil
 }
 
 func (s *LoanService) UpdateLoan(ctx context.Context, id uuid.UUID, req LoanUpdateRequest) (*models.Loan, error) {
 	if req.LoanedTo == "" {
 		return nil, fmt.Errorf("loaned_to is required")
 	}
-	loan, err := s.loans.Update(ctx, id, req.LoanedTo, req.Notes, req.DueDate, req.ReturnedAt)
-	if err != nil {
-		return nil, err
-	}
-	if req.TagIDs != nil {
-		if err := s.tags.SetLoanTags(ctx, loan.ID, req.TagIDs); err != nil {
-			return nil, fmt.Errorf("setting loan tags: %w", err)
-		}
-		loan, err = s.loans.FindByID(ctx, loan.ID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return loan, nil
+	return s.loans.Update(ctx, id, req.LoanedTo, req.Notes, req.DueDate, req.ReturnedAt)
 }
 
 func (s *LoanService) DeleteLoan(ctx context.Context, id uuid.UUID) error {

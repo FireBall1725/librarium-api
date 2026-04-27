@@ -83,7 +83,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 
 	contributorSvc := service.NewContributorService(contributorRepo, bookRepo, coverRepo, providerSvc.Registry(), cfg.CoverStoragePath)
 
-	loanSvc := service.NewLoanService(loanRepo, tagRepo)
+	loanSvc := service.NewLoanService(loanRepo)
 	seriesSvc := service.NewSeriesService(seriesRepo, seriesArcRepo, seriesVolumesRepo, tagRepo)
 	releaseSyncSvc := service.NewReleaseSyncService(seriesRepo, seriesVolumesRepo, providerSvc)
 
