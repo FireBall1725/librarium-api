@@ -296,12 +296,21 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 	for _, b := range books {
 		items = append(items, bookBody(b))
 	}
-	respond.JSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"items":    items,
 		"total":    total,
 		"page":     max(page, 1),
 		"per_page": perPage,
-	})
+	}
+	// "Did you mean…" — when the literal query found nothing, run a
+	// pg_trgm similarity match and include up to 5 suggestions. Skipped
+	// when q is empty (pure browse) or when results came back.
+	if total == 0 && q != "" {
+		if suggestions, err := h.books.SearchSuggestions(r.Context(), libraryID, q); err == nil && len(suggestions) > 0 {
+			resp["suggestions"] = suggestions
+		}
+	}
+	respond.JSON(w, http.StatusOK, resp)
 }
 
 // CreateBook godoc

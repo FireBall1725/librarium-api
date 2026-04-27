@@ -748,6 +748,36 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 	return books, total, nil
 }
 
+// SearchSuggestions returns up to 5 book titles in the library whose
+// (title || subtitle) is similar to the supplied query, ranked by trgm
+// distance. Used by the books-search "did you mean" fallback when a
+// literal match returns nothing. Empty result if pg_trgm has no candidates
+// above the default similarity threshold (0.3).
+func (r *BookRepo) SearchSuggestions(ctx context.Context, libraryID uuid.UUID, query string) ([]string, error) {
+	const q = `
+		SELECT DISTINCT ON (lower(b.title)) b.title
+		FROM books b
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1
+		  AND lower(b.title || ' ' || COALESCE(b.subtitle, '')) % lower($2)
+		ORDER BY lower(b.title), lower(b.title || ' ' || COALESCE(b.subtitle, '')) <-> lower($2)
+		LIMIT 5`
+	rows, err := r.db.Query(ctx, q, libraryID, query)
+	if err != nil {
+		return nil, fmt.Errorf("fuzzy search: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 func (r *BookRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, title, subtitle string, mediaTypeID uuid.UUID, description string) error {
 	const q = `
 		UPDATE books

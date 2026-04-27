@@ -173,11 +173,15 @@ type BookResponse struct {
 }
 
 // PagedBooksResponse is the paginated response from book list endpoints.
+// When the literal query returns zero results, Suggestions carries up to
+// five trigram-similar titles so the client can surface a "did you mean"
+// hint.
 type PagedBooksResponse struct {
-	Items   []BookResponse `json:"items"`
-	Total   int            `json:"total"`
-	Page    int            `json:"page"`
-	PerPage int            `json:"per_page"`
+	Items       []BookResponse `json:"items"`
+	Total       int            `json:"total"`
+	Page        int            `json:"page"`
+	PerPage     int            `json:"per_page"`
+	Suggestions []string       `json:"suggestions,omitempty"`
 }
 
 // LettersResponse is returned by GET .../books/letters.
