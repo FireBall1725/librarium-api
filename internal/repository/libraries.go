@@ -201,18 +201,6 @@ func (r *LibraryRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func collectLibraries(rows pgx.Rows) ([]*models.Library, error) {
-	var out []*models.Library
-	for rows.Next() {
-		lib, err := scanLibrary(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scanning library: %w", err)
-		}
-		out = append(out, lib)
-	}
-	return out, rows.Err()
-}
-
 func collectLibrariesWithCounts(rows pgx.Rows) ([]*models.Library, error) {
 	var out []*models.Library
 	for rows.Next() {
