@@ -83,6 +83,11 @@ type UserBookInteraction struct {
 	DateFinished  *time.Time
 	IsFavorite    bool
 	RereadCount   int
+	// Progress is the user's reading progress on this edition. Schema is
+	// {pages_read?: int, percent?: float, position?: string} — pages for
+	// print, percent for ebook readers, position free text for audio.
+	// Empty []byte (or nil) when never set; raw JSON bytes otherwise.
+	Progress      []byte
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }

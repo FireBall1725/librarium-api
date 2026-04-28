@@ -54,6 +54,14 @@ type Book struct {
 	PublishYear    *int
 	Language       string
 	UserReadStatus string
+	// UserRating is the calling user's rating (1-10 half-star integer; 0
+	// means no rating). Picked from the same interaction row as
+	// UserReadStatus so multi-edition books stay consistent.
+	UserRating int
+	// UserProgressPct is the calling user's reading progress as a percent
+	// (0-100). Pulled from progress.percent on the chosen interaction;
+	// zero when there's no progress row or no percent set.
+	UserProgressPct float64
 	// ActiveLoanCount is the number of active (not yet returned) loans for
 	// this book. Scoped to a single library when the read is library-scoped
 	// (ListBooks via library), or counted across every library otherwise.

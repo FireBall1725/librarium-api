@@ -113,6 +113,13 @@ type LibraryResponse struct {
 	IsPublic    bool      `json:"is_public"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// BookCount is the total number of books in the library. ReadingCount
+	// and ReadCount are caller-scoped — the calling user's reading + read
+	// books in this library. Always populated on list endpoints; on single-
+	// library endpoints they fall back to 0 unless the path was scoped.
+	BookCount    int `json:"book_count"`
+	ReadingCount int `json:"reading_count"`
+	ReadCount    int `json:"read_count"`
 }
 
 // MemberResponse is returned by library member endpoints.
@@ -149,6 +156,10 @@ type BookResponse struct {
 	Series       []SeriesRef      `json:"series"`
 	Shelves      []ShelfRef       `json:"shelves"`
 	AddedBy      *uuid.UUID       `json:"added_by,omitempty"`
+	// UserRating is the caller's rating (1-10 half-star integer; 0 = none).
+	UserRating int `json:"user_rating"`
+	// UserProgressPct is the caller's reading progress 0-100 (0 = none).
+	UserProgressPct float64 `json:"user_progress_pct"`
 	// ActiveLoanCount is the number of active (not yet returned) loans for
 	// this book — scoped to the library when the read is library-scoped,
 	// global otherwise. Always populated.
@@ -162,11 +173,15 @@ type BookResponse struct {
 }
 
 // PagedBooksResponse is the paginated response from book list endpoints.
+// When the literal query returns zero results, Suggestions carries up to
+// five trigram-similar titles so the client can surface a "did you mean"
+// hint.
 type PagedBooksResponse struct {
-	Items   []BookResponse `json:"items"`
-	Total   int            `json:"total"`
-	Page    int            `json:"page"`
-	PerPage int            `json:"per_page"`
+	Items       []BookResponse `json:"items"`
+	Total       int            `json:"total"`
+	Page        int            `json:"page"`
+	PerPage     int            `json:"per_page"`
+	Suggestions []string       `json:"suggestions,omitempty"`
 }
 
 // LettersResponse is returned by GET .../books/letters.

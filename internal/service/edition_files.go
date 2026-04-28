@@ -178,7 +178,7 @@ func (s *EditionFileService) UploadEditionFile(ctx context.Context, edition *mod
 		return nil, validationErr("unsupported file type %q", ext)
 	}
 
-	book, err := s.bookRepo.FindByID(ctx, edition.BookID)
+	book, err := s.bookRepo.FindByID(ctx, edition.BookID, uuid.Nil, uuid.Nil)
 	if err != nil {
 		return nil, fmt.Errorf("looking up book: %w", err)
 	}

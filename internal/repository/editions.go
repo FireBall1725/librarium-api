@@ -256,7 +256,7 @@ func (r *EditionRepo) IncrementCopyCount(ctx context.Context, libraryID, edition
 
 const interactionColumns = `
 	id, user_id, book_edition_id, read_status, rating, COALESCE(notes,''), COALESCE(review,''),
-	date_started, date_finished, is_favorite, reread_count, created_at, updated_at
+	date_started, date_finished, is_favorite, reread_count, progress, created_at, updated_at
 `
 
 func (r *EditionRepo) GetInteraction(ctx context.Context, userID, editionID uuid.UUID) (*models.UserBookInteraction, error) {
@@ -271,12 +271,16 @@ func (r *EditionRepo) GetInteraction(ctx context.Context, userID, editionID uuid
 	return i, nil
 }
 
-func (r *EditionRepo) UpsertInteraction(ctx context.Context, userID, editionID uuid.UUID, readStatus string, rating any, notes, review string, dateStarted, dateFinished any, isFavorite bool) (*models.UserBookInteraction, error) {
+// UpsertInteraction creates or fully overwrites a user's interaction
+// with an edition. progress is the JSONB body for reading-progress
+// ({pages_read?, percent?, position?}) — pass nil or empty []byte to
+// clear the column.
+func (r *EditionRepo) UpsertInteraction(ctx context.Context, userID, editionID uuid.UUID, readStatus string, rating any, notes, review string, dateStarted, dateFinished any, isFavorite bool, progress []byte) (*models.UserBookInteraction, error) {
 	const q = `
 		INSERT INTO user_book_interactions
-			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite)
+			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite, progress)
 		VALUES
-			($1, $2, $3, $4, $5, NULLIF($6,''), NULLIF($7,''), $8, $9, $10)
+			($1, $2, $3, $4, $5, NULLIF($6,''), NULLIF($7,''), $8, $9, $10, $11)
 		ON CONFLICT (user_id, book_edition_id) DO UPDATE
 		SET read_status   = EXCLUDED.read_status,
 		    rating        = EXCLUDED.rating,
@@ -285,10 +289,15 @@ func (r *EditionRepo) UpsertInteraction(ctx context.Context, userID, editionID u
 		    date_started  = EXCLUDED.date_started,
 		    date_finished = EXCLUDED.date_finished,
 		    is_favorite   = EXCLUDED.is_favorite,
+		    progress      = EXCLUDED.progress,
 		    updated_at    = NOW()
 		RETURNING ` + interactionColumns
 
-	i, err := scanInteraction(r.db.QueryRow(ctx, q, uuid.New(), userID, editionID, readStatus, rating, notes, review, dateStarted, dateFinished, isFavorite))
+	var progressArg any
+	if len(progress) > 0 {
+		progressArg = progress
+	}
+	i, err := scanInteraction(r.db.QueryRow(ctx, q, uuid.New(), userID, editionID, readStatus, rating, notes, review, dateStarted, dateFinished, isFavorite, progressArg))
 	if err != nil {
 		return nil, fmt.Errorf("upserting interaction: %w", err)
 	}
@@ -305,6 +314,8 @@ func (r *EditionRepo) UpsertInteraction(ctx context.Context, userID, editionID u
 // String columns treat empty as no-input via NULLIF; nullable columns
 // treat nil the same way. is_favorite has to be tri-state, so it
 // takes a *bool — pass nil to leave the existing flag alone.
+// MergeInteraction is the import-safe variant — pass nil progress to
+// preserve whatever the existing row holds.
 func (r *EditionRepo) MergeInteraction(
 	ctx context.Context,
 	userID, editionID uuid.UUID,
@@ -313,12 +324,13 @@ func (r *EditionRepo) MergeInteraction(
 	notes, review *string,
 	dateStarted, dateFinished any,
 	isFavorite *bool,
+	progress []byte,
 ) (*models.UserBookInteraction, error) {
 	const q = `
 		INSERT INTO user_book_interactions
-			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite)
+			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite, progress)
 		VALUES
-			($1, $2, $3, COALESCE(NULLIF($4,''),''), $5, NULLIF($6,''), NULLIF($7,''), $8, $9, COALESCE($10, false))
+			($1, $2, $3, COALESCE(NULLIF($4,''),''), $5, NULLIF($6,''), NULLIF($7,''), $8, $9, COALESCE($10, false), $11)
 		ON CONFLICT (user_id, book_edition_id) DO UPDATE
 		SET read_status   = COALESCE(NULLIF(EXCLUDED.read_status,''), user_book_interactions.read_status),
 		    rating        = COALESCE(EXCLUDED.rating, user_book_interactions.rating),
@@ -327,6 +339,7 @@ func (r *EditionRepo) MergeInteraction(
 		    date_started  = COALESCE(EXCLUDED.date_started, user_book_interactions.date_started),
 		    date_finished = COALESCE(EXCLUDED.date_finished, user_book_interactions.date_finished),
 		    is_favorite   = COALESCE($10, user_book_interactions.is_favorite),
+		    progress      = COALESCE(EXCLUDED.progress, user_book_interactions.progress),
 		    updated_at    = NOW()
 		RETURNING ` + interactionColumns
 
@@ -342,7 +355,11 @@ func (r *EditionRepo) MergeInteraction(
 	if review != nil {
 		rv = *review
 	}
-	i, err := scanInteraction(r.db.QueryRow(ctx, q, uuid.New(), userID, editionID, rs, rating, nt, rv, dateStarted, dateFinished, isFavorite))
+	var progressArg any
+	if len(progress) > 0 {
+		progressArg = progress
+	}
+	i, err := scanInteraction(r.db.QueryRow(ctx, q, uuid.New(), userID, editionID, rs, rating, nt, rv, dateStarted, dateFinished, isFavorite, progressArg))
 	if err != nil {
 		return nil, fmt.Errorf("merging interaction: %w", err)
 	}
@@ -365,19 +382,21 @@ func (r *EditionRepo) DeleteInteraction(ctx context.Context, userID, editionID u
 
 func scanInteraction(s scanner) (*models.UserBookInteraction, error) {
 	var (
-		pgID          pgtype.UUID
-		pgUserID      pgtype.UUID
-		pgEditionID   pgtype.UUID
-		pgRating      pgtype.Int4
-		pgDateStarted pgtype.Date
+		pgID           pgtype.UUID
+		pgUserID       pgtype.UUID
+		pgEditionID    pgtype.UUID
+		pgRating       pgtype.Int4
+		pgDateStarted  pgtype.Date
 		pgDateFinished pgtype.Date
-		i             models.UserBookInteraction
+		progress       []byte
+		i              models.UserBookInteraction
 	)
 	err := s.Scan(
 		&pgID, &pgUserID, &pgEditionID,
 		&i.ReadStatus, &pgRating, &i.Notes, &i.Review,
 		&pgDateStarted, &pgDateFinished,
-		&i.IsFavorite, &i.RereadCount, &i.CreatedAt, &i.UpdatedAt,
+		&i.IsFavorite, &i.RereadCount, &progress,
+		&i.CreatedAt, &i.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -397,5 +416,6 @@ func scanInteraction(s scanner) (*models.UserBookInteraction, error) {
 		t := pgDateFinished.Time
 		i.DateFinished = &t
 	}
+	i.Progress = progress
 	return &i, nil
 }

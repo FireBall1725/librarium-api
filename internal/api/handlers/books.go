@@ -296,12 +296,21 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 	for _, b := range books {
 		items = append(items, bookBody(b))
 	}
-	respond.JSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"items":    items,
 		"total":    total,
 		"page":     max(page, 1),
 		"per_page": perPage,
-	})
+	}
+	// "Did you mean…" — when the literal query found nothing, run a
+	// pg_trgm similarity match and include up to 5 suggestions. Skipped
+	// when q is empty (pure browse) or when results came back.
+	if total == 0 && q != "" {
+		if suggestions, err := h.books.SearchSuggestions(r.Context(), libraryID, q); err == nil && len(suggestions) > 0 {
+			resp["suggestions"] = suggestions
+		}
+	}
+	respond.JSON(w, http.StatusOK, resp)
 }
 
 // CreateBook godoc
@@ -360,7 +369,21 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, "invalid book id")
 		return
 	}
-	book, err := h.svc.GetBook(r.Context(), bookID)
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+	// Caller-scope the user_read_status / user_rating / user_progress_pct
+	// + per-library active_loan_count columns so the per-book GET emits
+	// the same shape as the list endpoint. Series detail (and any other
+	// per-book lookup that needs reading state) depends on this.
+	claims := middleware.ClaimsFromContext(r.Context())
+	var callerID uuid.UUID
+	if claims != nil {
+		callerID = claims.UserID
+	}
+	book, err := h.svc.GetBook(r.Context(), bookID, callerID, libraryID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "book not found")
 		return
@@ -674,8 +697,10 @@ func bookBody(b *models.Book) map[string]any {
 		"publisher":        b.Publisher,
 		"publish_year":     b.PublishYear,
 		"language":         b.Language,
-		"user_read_status":  b.UserReadStatus,
-		"active_loan_count": b.ActiveLoanCount,
+		"user_read_status":   b.UserReadStatus,
+		"user_rating":        b.UserRating,
+		"user_progress_pct":  b.UserProgressPct,
+		"active_loan_count":  b.ActiveLoanCount,
 	}
 }
 

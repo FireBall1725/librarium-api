@@ -164,7 +164,7 @@ func (w *MetadataWorker) applyMerged(
 	force bool,
 ) error {
 	_ = callerID // reserved for audit trail; applyMerged itself doesn't use it
-	book, err := w.bookSvc.GetBook(ctx, bookID)
+	book, err := w.bookSvc.GetBook(ctx, bookID, uuid.Nil, uuid.Nil)
 	if err != nil {
 		return err
 	}

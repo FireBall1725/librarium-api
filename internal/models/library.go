@@ -18,6 +18,13 @@ type Library struct {
 	IsPublic    bool
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	// BookCount is the total number of books in the library. ReadingCount
+	// and ReadCount are caller-scoped — books the calling user has marked
+	// 'reading' or 'read' respectively. List endpoints populate these so
+	// clients can render per-library hero stats without a follow-up call.
+	BookCount    int
+	ReadingCount int
+	ReadCount    int
 }
 
 type LibraryMember struct {

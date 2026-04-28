@@ -900,6 +900,13 @@ definitions:
         type: string
       updated_at:
         type: string
+      user_progress_pct:
+        description: UserProgressPct is the caller's reading progress 0-100 (0 = none).
+        type: number
+      user_rating:
+        description: UserRating is the caller's rating (1-10 half-star integer; 0
+          = none).
+        type: integer
     type: object
   responses.ContributorItem:
     properties:
@@ -1009,6 +1016,13 @@ definitions:
     type: object
   responses.LibraryResponse:
     properties:
+      book_count:
+        description: |-
+          BookCount is the total number of books in the library. ReadingCount
+          and ReadCount are caller-scoped — the calling user's reading + read
+          books in this library. Always populated on list endpoints; on single-
+          library endpoints they fall back to 0 unless the path was scoped.
+        type: integer
       created_at:
         type: string
       description:
@@ -1021,6 +1035,10 @@ definitions:
         type: string
       owner_id:
         type: string
+      read_count:
+        type: integer
+      reading_count:
+        type: integer
       slug:
         type: string
       updated_at:
@@ -1104,6 +1122,10 @@ definitions:
         type: integer
       per_page:
         type: integer
+      suggestions:
+        items:
+          type: string
+        type: array
       total:
         type: integer
     type: object

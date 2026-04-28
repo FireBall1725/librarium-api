@@ -402,14 +402,17 @@ func (h *LibraryHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 
 func libraryBody(l *models.Library) map[string]any {
 	return map[string]any{
-		"id":          l.ID,
-		"name":        l.Name,
-		"description": l.Description,
-		"slug":        l.Slug,
-		"owner_id":    l.OwnerID,
-		"is_public":   l.IsPublic,
-		"created_at":  l.CreatedAt,
-		"updated_at":  l.UpdatedAt,
+		"id":            l.ID,
+		"name":          l.Name,
+		"description":   l.Description,
+		"slug":          l.Slug,
+		"owner_id":      l.OwnerID,
+		"is_public":     l.IsPublic,
+		"created_at":    l.CreatedAt,
+		"updated_at":    l.UpdatedAt,
+		"book_count":    l.BookCount,
+		"reading_count": l.ReadingCount,
+		"read_count":    l.ReadCount,
 	}
 }
 

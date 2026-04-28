@@ -69,23 +69,47 @@ func (r *BookRepo) ListMediaTypes(ctx context.Context) ([]*models.MediaType, err
 // arg (used by ListBooks). When 0, it counts active loans across every
 // library the book belongs to (used by FindByID).
 func booksSelect(userStatusArg, loanLibraryArg int) string {
-	var userReadStatusExpr string
+	// All three caller-scoped subqueries (status / rating / progress) use
+	// the same ORDER BY so they pick the same interaction row, keeping the
+	// returned values internally consistent for users who own multiple
+	// editions of the same book.
+	const interactionPickOrder = `ORDER BY CASE ubi.read_status
+		WHEN 'read' THEN 1
+		WHEN 'reading' THEN 2
+		WHEN 'did_not_finish' THEN 3
+		ELSE 4
+	END`
+
+	var userReadStatusExpr, userRatingExpr, userProgressExpr string
 	if userStatusArg > 0 {
 		userReadStatusExpr = fmt.Sprintf(`COALESCE((
 		SELECT ubi.read_status
 		FROM book_editions be_rs
 		JOIN user_book_interactions ubi ON ubi.book_edition_id = be_rs.id
 		WHERE be_rs.book_id = b.id AND ubi.user_id = $%d
-		ORDER BY CASE ubi.read_status
-			WHEN 'read' THEN 1
-			WHEN 'reading' THEN 2
-			WHEN 'did_not_finish' THEN 3
-			ELSE 4
-		END
+		%s
 		LIMIT 1
-	), '') AS user_read_status`, userStatusArg)
+	), '') AS user_read_status`, userStatusArg, interactionPickOrder)
+		userRatingExpr = fmt.Sprintf(`COALESCE((
+		SELECT ubi.rating
+		FROM book_editions be_rt
+		JOIN user_book_interactions ubi ON ubi.book_edition_id = be_rt.id
+		WHERE be_rt.book_id = b.id AND ubi.user_id = $%d
+		%s
+		LIMIT 1
+	), 0) AS user_rating`, userStatusArg, interactionPickOrder)
+		userProgressExpr = fmt.Sprintf(`COALESCE((
+		SELECT (ubi.progress->>'percent')::numeric
+		FROM book_editions be_pg
+		JOIN user_book_interactions ubi ON ubi.book_edition_id = be_pg.id
+		WHERE be_pg.book_id = b.id AND ubi.user_id = $%d
+		%s
+		LIMIT 1
+	), 0) AS user_progress_pct`, userStatusArg, interactionPickOrder)
 	} else {
 		userReadStatusExpr = `'' AS user_read_status`
+		userRatingExpr = `0 AS user_rating`
+		userProgressExpr = `0 AS user_progress_pct`
 	}
 
 	var activeLoanExpr string
@@ -193,6 +217,8 @@ func booksSelect(userStatusArg, loanLibraryArg int) string {
 			LIMIT 1
 		), '') AS language,
 		` + userReadStatusExpr + `,
+		` + userRatingExpr + `,
+		` + userProgressExpr + `,
 		` + activeLoanExpr + `
 	FROM books b
 	JOIN media_types mt ON mt.id = b.media_type_id`
@@ -267,10 +293,27 @@ func (r *BookRepo) EnsureBookContributor(ctx context.Context, tx pgx.Tx, bookID,
 	return nil
 }
 
-func (r *BookRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Book, error) {
-	q := booksSelect(0, 0) + ` WHERE b.id = $1`
+// FindByID returns a single book by id. callerID + libraryID are
+// optional; when non-Nil they hydrate the caller-scoped subqueries
+// (user_read_status / user_rating / user_progress_pct + per-library
+// active_loan_count) that mirror the list endpoint. Pass uuid.Nil for
+// internal lookups that don't need them.
+func (r *BookRepo) FindByID(ctx context.Context, id uuid.UUID, callerID uuid.UUID, libraryID uuid.UUID) (*models.Book, error) {
+	args := []any{id}
+	callerArg := 0
+	loanLibraryArg := 0
+	if callerID != uuid.Nil {
+		args = append(args, callerID)
+		callerArg = len(args)
+	}
+	if libraryID != uuid.Nil {
+		args = append(args, libraryID)
+		loanLibraryArg = len(args)
+	}
 
-	book, err := scanBook(r.db.QueryRow(ctx, q, id))
+	q := booksSelect(callerArg, loanLibraryArg) + ` WHERE b.id = $1`
+
+	book, err := scanBook(r.db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -419,6 +462,18 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 		sortCol = "lower(mt.display_name)"
 	case "publish_date":
 		sortCol = "(SELECT be.publish_date FROM book_editions be WHERE be.book_id = b.id AND be.is_primary = true AND be.publish_date IS NOT NULL LIMIT 1)"
+	case "author":
+		// Sort by the first contributor's lowercased name (display
+		// order ascending so the "primary" credit wins). Books with
+		// no contributors fall to the end via NULLS LAST below.
+		sortCol = `(
+			SELECT lower(c.name)
+			FROM book_contributors bc
+			JOIN contributors c ON c.id = bc.contributor_id
+			WHERE bc.book_id = b.id
+			ORDER BY bc.display_order, c.name
+			LIMIT 1
+		)`
 	}
 	sortDir := "ASC"
 	if opts.SortDir == "desc" {
@@ -696,7 +751,7 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 	// List
 	args = append(args, opts.PerPage, offset)
 	nullsClause := ""
-	if opts.Sort == "publish_date" {
+	if opts.Sort == "publish_date" || opts.Sort == "author" {
 		nullsClause = " NULLS LAST"
 	}
 	listQ := selectQuery + scopeJoin + where +
@@ -720,6 +775,36 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 		return nil, 0, err
 	}
 	return books, total, nil
+}
+
+// SearchSuggestions returns up to 5 book titles in the library whose
+// (title || subtitle) is similar to the supplied query, ranked by trgm
+// distance. Used by the books-search "did you mean" fallback when a
+// literal match returns nothing. Empty result if pg_trgm has no candidates
+// above the default similarity threshold (0.3).
+func (r *BookRepo) SearchSuggestions(ctx context.Context, libraryID uuid.UUID, query string) ([]string, error) {
+	const q = `
+		SELECT DISTINCT ON (lower(b.title)) b.title
+		FROM books b
+		JOIN library_books lb ON lb.book_id = b.id
+		WHERE lb.library_id = $1
+		  AND lower(b.title || ' ' || COALESCE(b.subtitle, '')) % lower($2)
+		ORDER BY lower(b.title), lower(b.title || ' ' || COALESCE(b.subtitle, '')) <-> lower($2)
+		LIMIT 5`
+	rows, err := r.db.Query(ctx, q, libraryID, query)
+	if err != nil {
+		return nil, fmt.Errorf("fuzzy search: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 func (r *BookRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, title, subtitle string, mediaTypeID uuid.UUID, description string) error {
@@ -800,6 +885,8 @@ func scanBook(s scanner) (*models.Book, error) {
 		publishYear    pgtype.Int4
 		language       pgtype.Text
 		userReadStatus string
+		userRating     int
+		userProgress   pgtype.Numeric
 		activeLoans    int
 		b              models.Book
 	)
@@ -810,7 +897,7 @@ func scanBook(s scanner) (*models.Book, error) {
 		&pgDesc, &b.CreatedAt, &b.UpdatedAt,
 		&contribJSON, &tagsJSON, &genresJSON, &b.HasCover,
 		&seriesJSON, &shelvesJSON, &publisher, &publishYear, &language,
-		&userReadStatus, &activeLoans,
+		&userReadStatus, &userRating, &userProgress, &activeLoans,
 	)
 	if err != nil {
 		return nil, err
@@ -824,6 +911,11 @@ func scanBook(s scanner) (*models.Book, error) {
 	b.Publisher = publisher.String
 	b.Language = language.String
 	b.UserReadStatus = userReadStatus
+	b.UserRating = userRating
+	if userProgress.Valid {
+		f, _ := userProgress.Float64Value()
+		b.UserProgressPct = f.Float64
+	}
 	b.ActiveLoanCount = activeLoans
 	if publishYear.Valid {
 		y := int(publishYear.Int32)
