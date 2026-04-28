@@ -105,7 +105,7 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 				if incrErr := s.editions.IncrementCopyCount(ctx, libraryID, existing.ID); incrErr != nil {
 					return nil, fmt.Errorf("incrementing copy count: %w", incrErr)
 				}
-				return s.books.FindByID(ctx, existing.BookID)
+				return s.books.FindByID(ctx, existing.BookID, callerID, libraryID)
 			}
 		}
 	}
@@ -169,11 +169,16 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
 
-	return s.books.FindByID(ctx, bookID)
+	return s.books.FindByID(ctx, bookID, callerID, libraryID)
 }
 
-func (s *BookService) GetBook(ctx context.Context, id uuid.UUID) (*models.Book, error) {
-	b, err := s.books.FindByID(ctx, id)
+// GetBook returns one book with caller-scoped fields hydrated. callerID
+// and libraryID are passed through to the repo so user_read_status /
+// user_rating / user_progress_pct + per-library active_loan_count match
+// what the list endpoint emits. Pass uuid.Nil for either param when the
+// caller is purely internal.
+func (s *BookService) GetBook(ctx context.Context, id uuid.UUID, callerID uuid.UUID, libraryID uuid.UUID) (*models.Book, error) {
+	b, err := s.books.FindByID(ctx, id, callerID, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +208,7 @@ func (s *BookService) FindBookByISBN(ctx context.Context, libraryID uuid.UUID, i
 	if err != nil {
 		return nil, err
 	}
-	return s.books.FindByID(ctx, edition.BookID)
+	return s.books.FindByID(ctx, edition.BookID, uuid.Nil, libraryID)
 }
 
 func (s *BookService) ListBooks(ctx context.Context, libraryID uuid.UUID, opts repository.ListBooksOpts) ([]*models.Book, int, error) {
@@ -255,7 +260,7 @@ func (s *BookService) UpdateBook(ctx context.Context, id uuid.UUID, req BookRequ
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
 
-	return s.books.FindByID(ctx, id)
+	return s.books.FindByID(ctx, id, uuid.Nil, uuid.Nil)
 }
 
 // DeleteBook permanently deletes a book. Cascades through library_books,

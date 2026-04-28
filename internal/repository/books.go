@@ -293,10 +293,27 @@ func (r *BookRepo) EnsureBookContributor(ctx context.Context, tx pgx.Tx, bookID,
 	return nil
 }
 
-func (r *BookRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Book, error) {
-	q := booksSelect(0, 0) + ` WHERE b.id = $1`
+// FindByID returns a single book by id. callerID + libraryID are
+// optional; when non-Nil they hydrate the caller-scoped subqueries
+// (user_read_status / user_rating / user_progress_pct + per-library
+// active_loan_count) that mirror the list endpoint. Pass uuid.Nil for
+// internal lookups that don't need them.
+func (r *BookRepo) FindByID(ctx context.Context, id uuid.UUID, callerID uuid.UUID, libraryID uuid.UUID) (*models.Book, error) {
+	args := []any{id}
+	callerArg := 0
+	loanLibraryArg := 0
+	if callerID != uuid.Nil {
+		args = append(args, callerID)
+		callerArg = len(args)
+	}
+	if libraryID != uuid.Nil {
+		args = append(args, libraryID)
+		loanLibraryArg = len(args)
+	}
 
-	book, err := scanBook(r.db.QueryRow(ctx, q, id))
+	q := booksSelect(callerArg, loanLibraryArg) + ` WHERE b.id = $1`
+
+	book, err := scanBook(r.db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

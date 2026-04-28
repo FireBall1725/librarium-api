@@ -369,7 +369,21 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, "invalid book id")
 		return
 	}
-	book, err := h.svc.GetBook(r.Context(), bookID)
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+	// Caller-scope the user_read_status / user_rating / user_progress_pct
+	// + per-library active_loan_count columns so the per-book GET emits
+	// the same shape as the list endpoint. Series detail (and any other
+	// per-book lookup that needs reading state) depends on this.
+	claims := middleware.ClaimsFromContext(r.Context())
+	var callerID uuid.UUID
+	if claims != nil {
+		callerID = claims.UserID
+	}
+	book, err := h.svc.GetBook(r.Context(), bookID, callerID, libraryID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "book not found")
 		return
