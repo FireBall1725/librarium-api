@@ -462,6 +462,18 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 		sortCol = "lower(mt.display_name)"
 	case "publish_date":
 		sortCol = "(SELECT be.publish_date FROM book_editions be WHERE be.book_id = b.id AND be.is_primary = true AND be.publish_date IS NOT NULL LIMIT 1)"
+	case "author":
+		// Sort by the first contributor's lowercased name (display
+		// order ascending so the "primary" credit wins). Books with
+		// no contributors fall to the end via NULLS LAST below.
+		sortCol = `(
+			SELECT lower(c.name)
+			FROM book_contributors bc
+			JOIN contributors c ON c.id = bc.contributor_id
+			WHERE bc.book_id = b.id
+			ORDER BY bc.display_order, c.name
+			LIMIT 1
+		)`
 	}
 	sortDir := "ASC"
 	if opts.SortDir == "desc" {
@@ -739,7 +751,7 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 	// List
 	args = append(args, opts.PerPage, offset)
 	nullsClause := ""
-	if opts.Sort == "publish_date" {
+	if opts.Sort == "publish_date" || opts.Sort == "author" {
 		nullsClause = " NULLS LAST"
 	}
 	listQ := selectQuery + scopeJoin + where +
