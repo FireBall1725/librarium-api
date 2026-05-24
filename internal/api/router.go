@@ -67,6 +67,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	genreRepo := repository.NewGenreRepo(db)
 	mediaTypeRepo := repository.NewMediaTypeRepo(db)
 	importJobRepo := repository.NewImportJobRepo(db)
+	syncRepo := repository.NewSyncRepo(db)
 
 	// Book and AI provider services are built in main.go and passed in so the
 	// HTTP handlers and the worker share the same registry instances — that's
@@ -121,6 +122,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	importHandler := handlers.NewImportHandler(importSvc, membershipRepo)
 	genreHandler := handlers.NewGenreHandler(genreRepo)
 	mediaTypeHandler := handlers.NewMediaTypeHandler(mediaTypeRepo)
+	syncHandler := handlers.NewSyncHandler(syncRepo)
 	enrichmentHandler := handlers.NewEnrichmentBatchHandler(enrichmentBatchRepo)
 	editionFileHandler := handlers.NewEditionFileHandler(editionFileSvc, bookSvc)
 	storageLocationHandler := handlers.NewStorageLocationHandler(editionFileSvc)
@@ -261,6 +263,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("PUT /api/v1/me/suggestions/{id}/status", requireAuth(http.HandlerFunc(aiSuggestionsHandler.UpdateSuggestionStatus)))
 	mux.Handle("DELETE /api/v1/me/suggestions/{id}", requireAuth(http.HandlerFunc(aiSuggestionsHandler.DeleteSuggestion)))
 	mux.Handle("POST /api/v1/me/suggestions/{id}/block", requireAuth(http.HandlerFunc(aiSuggestionsHandler.BlockSuggestion)))
+
+	// Sync (per-user delta endpoint)
+	mux.Handle("GET /api/v1/sync/changes", requireAuth(http.HandlerFunc(syncHandler.GetChanges)))
 
 	// Lookup (any authenticated user)
 	mux.Handle("GET /api/v1/lookup/isbn/{isbn}", requireAuth(http.HandlerFunc(providerHandler.LookupISBN)))
