@@ -264,8 +264,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("DELETE /api/v1/me/suggestions/{id}", requireAuth(http.HandlerFunc(aiSuggestionsHandler.DeleteSuggestion)))
 	mux.Handle("POST /api/v1/me/suggestions/{id}/block", requireAuth(http.HandlerFunc(aiSuggestionsHandler.BlockSuggestion)))
 
-	// Sync (per-user delta endpoint)
+	// Sync (per-user delta endpoint + outbox apply)
 	mux.Handle("GET /api/v1/sync/changes", requireAuth(http.HandlerFunc(syncHandler.GetChanges)))
+	mux.Handle("POST /api/v1/sync/apply", requireAuth(http.HandlerFunc(syncHandler.ApplyChanges)))
 
 	// Lookup (any authenticated user)
 	mux.Handle("GET /api/v1/lookup/isbn/{isbn}", requireAuth(http.HandlerFunc(providerHandler.LookupISBN)))

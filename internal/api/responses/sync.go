@@ -35,3 +35,48 @@ type SyncOp struct {
 	Deleted    bool        `json:"deleted,omitempty"`
 	UpdatedAt  time.Time   `json:"updated_at"`
 }
+
+// SyncApplyRequest is the wire shape for POST /sync/apply.
+//
+// The client batches outbox ops (per-field LWW changes and tombstones
+// written while offline) and pushes them. The server reconciles each
+// op via field-level last-write-wins and returns a per-op status. The
+// endpoint is idempotent: replaying the same ops just produces
+// discarded_stale results since the timestamps no longer beat what's
+// in the database.
+type SyncApplyRequest struct {
+	ClientID uuid.UUID      `json:"client_id,omitempty"`
+	Ops      []SyncApplyOp  `json:"ops"`
+}
+
+// SyncApplyOp mirrors SyncOp but is what the client sends back to the
+// server. OpID is a client-generated UUID the client uses to correlate
+// the per-op result.
+type SyncApplyOp struct {
+	OpID       uuid.UUID   `json:"op_id"`
+	EntityType string      `json:"entity_type"`
+	EntityID   uuid.UUID   `json:"entity_id"`
+	Field      string      `json:"field,omitempty"`
+	Value      interface{} `json:"value,omitempty"`
+	Deleted    bool        `json:"deleted,omitempty"`
+	UpdatedAt  time.Time   `json:"updated_at"`
+}
+
+// SyncApplyResponse is the wire shape returned by POST /sync/apply.
+type SyncApplyResponse struct {
+	Results    []SyncApplyResult `json:"results"`
+	ServerTime time.Time         `json:"server_time"`
+}
+
+// SyncApplyResult is the per-op outcome.
+//
+// Status values:
+//   - "applied"          field was updated (or row was soft-deleted)
+//   - "discarded_stale"  server's timestamp for this field is newer; op is older
+//   - "not_found"        no row matches entity_id (or caller doesn't own it)
+//   - "invalid"          op shape was malformed (unknown field, bad value type, etc.)
+type SyncApplyResult struct {
+	OpID   uuid.UUID `json:"op_id"`
+	Status string    `json:"status"`
+	Error  string    `json:"error,omitempty"`
+}
