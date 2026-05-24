@@ -3,7 +3,7 @@
 
 // @title           Librarium API
 // @version         26.4.0
-// @description     Backend API for Librarium — a self-hosted, privacy-focused tracker for your physical book, manga, and comic collection. All protected endpoints require a Bearer JWT (or `lbrm_pat_*` personal access token) in the Authorization header.
+// @description     Backend API for Librarium, a privacy-focused tracker for your physical book, manga, and comic collection. Powers the self-hosted edition today; iOS Lite and Librarium Plus (hosted) are on the roadmap. All protected endpoints require a Bearer JWT (or `lbrm_pat_*` personal access token) in the Authorization header.
 // @termsOfService  https://librarium.press
 
 // @contact.name   Librarium
