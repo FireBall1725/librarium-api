@@ -1,6 +1,6 @@
 # librarium-api
 
-The backend service for **[Librarium](https://librarium.press)** — a self-hosted, privacy-focused tracker for your physical book, manga, and comic collection. A self-hosted alternative to Libib and similar cloud catalog services.
+The backend service for **[Librarium](https://librarium.press)**, a self-hosted, privacy-focused tracker for your physical book, manga, and comic collection. A self-hosted alternative to Libib and similar cloud catalog services. iOS Lite and Librarium Plus (hosted) are on the roadmap.
 
 Go 1.25 · PostgreSQL 16 · [River](https://riverqueue.com) for background jobs · Swagger-generated OpenAPI docs.
 

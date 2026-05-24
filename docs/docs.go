@@ -13860,7 +13860,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
 	Title:            "Librarium API",
-	Description:      "Backend API for Librarium — a self-hosted, privacy-focused tracker for your physical book, manga, and comic collection. All protected endpoints require a Bearer JWT (or `lbrm_pat_*` personal access token) in the Authorization header.",
+	Description:      "Backend API for Librarium, a privacy-focused tracker for your physical book, manga, and comic collection. Powers the self-hosted edition today; iOS Lite and Librarium Plus (hosted) are on the roadmap. All protected endpoints require a Bearer JWT (or `lbrm_pat_*` personal access token) in the Authorization header.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",
