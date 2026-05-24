@@ -28,6 +28,19 @@ var (
 	ErrAlreadyInitialized   = errors.New("instance already initialized")
 )
 
+// refreshGraceWindow is how long after a refresh token is rotated the
+// original token will still be honoured as a benign retry. Within this
+// window, presenting the just-rotated token issues fresh tokens
+// instead of treating it as compromise. After the window, the
+// compromise behaviour (burn every token for the user) kicks back in.
+//
+// The window absorbs the realistic causes of a client re-presenting a
+// just-rotated refresh token: network glitches that drop the response,
+// the app being killed mid-rotation, parallel cold-start fan-out where
+// multiple inflight requests each request a refresh. None of those
+// warrant kicking the user out of every device.
+const refreshGraceWindow = 30 * time.Second
+
 type AuthConfig struct {
 	AccessTTL           time.Duration
 	RefreshTTL          time.Duration
@@ -232,13 +245,29 @@ func (s *AuthService) Refresh(ctx context.Context, rawToken string) (*AuthRespon
 		return nil, err
 	}
 
-	// A revoked refresh token presented for refresh is a compromise
-	// signal: the token was already rotated once, and now an attacker
-	// (or — rarer — a buggy client) is trying to reuse it. Burn every
-	// outstanding refresh token for this user so the legitimate session
-	// has to re-authenticate. The legitimate user will see one annoying
-	// re-login; the attacker loses all tokens they may have stolen.
+	// A revoked refresh token presented for refresh is *usually* a
+	// compromise signal: the token was already rotated once, and now an
+	// attacker (or a buggy client) is reusing it. Burn every outstanding
+	// refresh token for the user so the legitimate session has to
+	// re-authenticate.
+	//
+	// The "buggy client" case is also the network-glitch case: parallel
+	// cold-start fan-out, a retry that crossed the response wire, an
+	// app killed mid-rotation. Those should not punish the user. Grant
+	// a 30-second grace window after revocation where re-presenting the
+	// same token is treated as a benign retry and gets fresh tokens.
+	// After the grace window, the compromise behaviour kicks back in.
 	if rt.RevokedAt != nil {
+		if time.Since(*rt.RevokedAt) < refreshGraceWindow {
+			user, err := s.users.FindByID(ctx, rt.UserID)
+			if err != nil {
+				return nil, err
+			}
+			if !user.IsActive {
+				return nil, ErrAccountInactive
+			}
+			return s.issueTokens(ctx, user)
+		}
 		_ = s.tokens.RevokeAllForUser(ctx, rt.UserID)
 		return nil, ErrTokenRevoked
 	}
