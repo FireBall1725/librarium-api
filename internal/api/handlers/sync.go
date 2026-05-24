@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -15,8 +16,9 @@ import (
 )
 
 const (
-	syncDefaultLimit = 500
-	syncMaxLimit     = 1000
+	syncDefaultLimit  = 500
+	syncMaxLimit      = 1000
+	syncApplyMaxBatch = 1000
 )
 
 type SyncHandler struct {
@@ -94,5 +96,66 @@ func (h *SyncHandler) GetChanges(w http.ResponseWriter, r *http.Request) {
 		Ops:        ops,
 		ServerTime: serverTime,
 		HasMore:    hasMore,
+	})
+}
+
+// ApplyChanges accepts a batch of outbox ops from a client and applies
+// them with per-field LWW. Each op gets a status in the response so the
+// client can clear its outbox accordingly.
+//
+// Request body shape (responses.SyncApplyRequest): { client_id?, ops: [...] }.
+// Op shape (responses.SyncApplyOp): { op_id, entity_type, entity_id, field?, value?, deleted?, updated_at }.
+//
+// Response shape (responses.SyncApplyResponse): { results: [...], server_time }.
+// Each result is { op_id, status, error? } where status is one of:
+// applied / discarded_stale / not_found / invalid.
+//
+// v1 scope is user_book_interactions only and update-only (no creates
+// through this endpoint; clients still POST/PUT new rows via the
+// existing per-resource endpoints).
+func (h *SyncHandler) ApplyChanges(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	var req responses.SyncApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Ops) == 0 {
+		respond.JSON(w, http.StatusOK, responses.SyncApplyResponse{
+			Results:    []responses.SyncApplyResult{},
+			ServerTime: time.Now().UTC(),
+		})
+		return
+	}
+	if len(req.Ops) > syncApplyMaxBatch {
+		respond.Error(w, http.StatusBadRequest, "too many ops in one request (max 1000)")
+		return
+	}
+
+	results := make([]responses.SyncApplyResult, 0, len(req.Ops))
+	for _, op := range req.Ops {
+		status, err := h.repo.ApplyUserBookInteractionOp(r.Context(), claims.UserID, op)
+		if err != nil {
+			results = append(results, responses.SyncApplyResult{
+				OpID:   op.OpID,
+				Status: "error",
+				Error:  err.Error(),
+			})
+			continue
+		}
+		results = append(results, responses.SyncApplyResult{
+			OpID:   op.OpID,
+			Status: status,
+		})
+	}
+
+	respond.JSON(w, http.StatusOK, responses.SyncApplyResponse{
+		Results:    results,
+		ServerTime: time.Now().UTC(),
 	})
 }
