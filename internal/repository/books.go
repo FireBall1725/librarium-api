@@ -365,8 +365,8 @@ func (r *BookRepo) ListByContributor(ctx context.Context, libraryID, contributor
 // BookFingerprint summarizes the books collection in a library. Clients
 // compare this to a stored fingerprint to decide whether to resync.
 type BookFingerprint struct {
-	Total         int     `json:"total"`
-	MaxUpdatedAt  *string `json:"max_updated_at"` // RFC3339; nil when library is empty
+	Total        int     `json:"total"`
+	MaxUpdatedAt *string `json:"max_updated_at"` // RFC3339; nil when library is empty
 }
 
 // Fingerprint returns the total book count and the most recent updated_at
@@ -425,7 +425,7 @@ type FilterCondition struct {
 // ConditionGroup is a set of conditions with their own join mode.
 // Multiple groups in a query are always ANDed together at the top level.
 type ConditionGroup struct {
-	Mode       string            `json:"mode"`       // "AND" | "OR"
+	Mode       string            `json:"mode"` // "AND" | "OR"
 	Conditions []FilterCondition `json:"conditions"`
 }
 
@@ -433,12 +433,12 @@ type ListBooksOpts struct {
 	Query      string
 	Page       int
 	PerPage    int
-	Sort       string // "title" | "created_at" | "media_type"; default "title"
-	SortDir    string // "asc" | "desc"; default "asc"
-	Letter     string // single char: 'a'-'z' matches LIKE 'letter%'
-	TagFilter  string // filter to books that have a tag with this exact name (case-insensitive)
-	TypeFilter string // filter by media type display name (case-insensitive), e.g. "Novel"
-	IsRegex    bool   // if true, use b.title ~* $query instead of ILIKE
+	Sort       string           // "title" | "created_at" | "media_type"; default "title"
+	SortDir    string           // "asc" | "desc"; default "asc"
+	Letter     string           // single char: 'a'-'z' matches LIKE 'letter%'
+	TagFilter  string           // filter to books that have a tag with this exact name (case-insensitive)
+	TypeFilter string           // filter by media type display name (case-insensitive), e.g. "Novel"
+	IsRegex    bool             // if true, use b.title ~* $query instead of ILIKE
 	Groups     []ConditionGroup // from query language parser; groups are ANDed together
 	CallerID   uuid.UUID        // when non-zero, includes user_read_status for this user
 }
@@ -493,12 +493,7 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 			args = append(args, opts.Query)
 			argIdx++
 		} else {
-			conditions = append(conditions, fmt.Sprintf(
-				"(b.title ILIKE '%%' || $%d || '%%' "+
-					"OR regexp_replace(lower(b.title), '[^a-z0-9]', '', 'g') LIKE '%%' || regexp_replace(lower($%d), '[^a-z0-9]', '', 'g') || '%%' "+
-					"OR EXISTS (SELECT 1 FROM book_contributors bc_q JOIN contributors c_q ON c_q.id = bc_q.contributor_id WHERE bc_q.book_id = b.id AND c_q.name ILIKE '%%' || $%d || '%%'))",
-				argIdx, argIdx+1, argIdx+2,
-			))
+			conditions = append(conditions, titleContainsSQL(argIdx, asciiNormNoSpace))
 			args = append(args, opts.Query, opts.Query, opts.Query)
 			argIdx += 3
 		}
@@ -547,15 +542,14 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 			switch cond.Field {
 			case "title":
 				switch cond.Op {
-				case "contains", "phrase":
-					parts = append(parts, fmt.Sprintf(
-						"(b.title ILIKE '%%' || $%d || '%%' "+
-							"OR regexp_replace(lower(b.title), '[^a-z0-9 ]', '', 'g') ILIKE '%%' || regexp_replace(lower($%d), '[^a-z0-9 ]', '', 'g') || '%%' "+
-							"OR EXISTS (SELECT 1 FROM book_contributors bc_q JOIN contributors c_q ON c_q.id = bc_q.contributor_id WHERE bc_q.book_id = b.id AND c_q.name ILIKE '%%' || $%d || '%%'))",
-						argIdx, argIdx+1, argIdx+2,
-					))
+				case "contains":
+					parts = append(parts, titleContainsSQL(argIdx, asciiNormSpace))
 					args = append(args, cond.Value, cond.Value, cond.Value)
 					argIdx += 3
+				case "phrase":
+					parts = append(parts, titlePhraseSQL(argIdx))
+					args = append(args, cond.Value, cond.Value)
+					argIdx += 2
 				case "not_contains":
 					parts = append(parts, fmt.Sprintf("b.title NOT ILIKE '%%' || $%d || '%%'", argIdx))
 					args = append(args, cond.Value)
