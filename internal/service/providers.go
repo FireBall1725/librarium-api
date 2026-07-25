@@ -61,18 +61,45 @@ func (s *ProviderService) GetAllProviderStatus(ctx context.Context) ([]ProviderS
 			Capabilities: info.Capabilities,
 			HelpText:     info.HelpText,
 			HelpURL:      info.HelpURL,
+			ConfigFields: info.ConfigFields,
 			Enabled:      p.Enabled(),
 		}
-
-		// Mask API key but indicate whether one is set
-		if key, ok := cfg["api_key"]; ok && key != "" {
-			status.Config = map[string]string{"api_key": "***"}
-			status.HasAPIKey = true
-		}
+		status.Config, status.HasAPIKey = maskProviderConfig(info, cfg)
 
 		out = append(out, status)
 	}
 	return out, nil
+}
+
+// maskProviderConfig builds the display-safe config map for a provider's
+// current settings. When the provider declares ConfigFields, every
+// "password"-type field present in cfg is masked and every other field
+// (e.g. a mirror's base_url) passes through in the clear; hasAPIKey is true
+// if any password field is set. Providers with no ConfigFields fall back to
+// the legacy single api_key convention, unchanged from before ConfigFields
+// existed.
+func maskProviderConfig(info providers.ProviderInfo, cfg map[string]string) (config map[string]string, hasAPIKey bool) {
+	if len(info.ConfigFields) > 0 {
+		masked := make(map[string]string, len(info.ConfigFields))
+		for _, field := range info.ConfigFields {
+			val, ok := cfg[field.Key]
+			if !ok || val == "" {
+				continue
+			}
+			if field.Type == "password" {
+				masked[field.Key] = "***"
+				hasAPIKey = true
+			} else {
+				masked[field.Key] = val
+			}
+		}
+		return masked, hasAPIKey
+	}
+
+	if key, ok := cfg["api_key"]; ok && key != "" {
+		return map[string]string{"api_key": "***"}, true
+	}
+	return nil, false
 }
 
 // ConfigureProvider saves config to the DB and reconfigures the live provider.
@@ -383,14 +410,15 @@ func (s *ProviderService) loadConfig(ctx context.Context, name string) (map[stri
 // ─── DTO ──────────────────────────────────────────────────────────────────────
 
 type ProviderStatus struct {
-	Name         string            `json:"name"`
-	DisplayName  string            `json:"display_name"`
-	Description  string            `json:"description"`
-	RequiresKey  bool              `json:"requires_key"`
-	Capabilities []string          `json:"capabilities"`
-	HelpText     string            `json:"help_text,omitempty"`
-	HelpURL      string            `json:"help_url,omitempty"`
-	Enabled      bool              `json:"enabled"`
-	HasAPIKey    bool              `json:"has_api_key"`
-	Config       map[string]string `json:"config,omitempty"`
+	Name         string                  `json:"name"`
+	DisplayName  string                  `json:"display_name"`
+	Description  string                  `json:"description"`
+	RequiresKey  bool                    `json:"requires_key"`
+	Capabilities []string                `json:"capabilities"`
+	HelpText     string                  `json:"help_text,omitempty"`
+	HelpURL      string                  `json:"help_url,omitempty"`
+	Enabled      bool                    `json:"enabled"`
+	HasAPIKey    bool                    `json:"has_api_key"`
+	Config       map[string]string       `json:"config,omitempty"`
+	ConfigFields []providers.ConfigField `json:"config_fields,omitempty"`
 }

@@ -20,6 +20,20 @@ const (
 	CapContributor   = "contributor"
 )
 
+// ConfigField describes a single config input the admin settings page should
+// render for a provider. Mirrors internal/ai.ConfigField (kept as a separate
+// type rather than a shared import so the two provider plugin systems stay
+// independent) — needed for providers whose config is more than a single API
+// key, e.g. a self-hosted mirror that only needs a base URL.
+type ConfigField struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Type        string `json:"type"` // "password" | "text" | "url"
+	Required    bool   `json:"required"`
+	Placeholder string `json:"placeholder,omitempty"`
+	HelpText    string `json:"help_text,omitempty"`
+}
+
 // ProviderInfo describes a provider's static metadata.
 type ProviderInfo struct {
 	Name         string
@@ -31,6 +45,11 @@ type ProviderInfo struct {
 	HelpText string
 	// HelpURL links to the page where users can obtain the API key.
 	HelpURL string
+	// ConfigFields declares the config inputs the settings page should render.
+	// Optional — a provider that only needs the legacy single API key can
+	// leave this nil and rely on RequiresKey; the settings page falls back
+	// to the existing single-API-key form in that case.
+	ConfigFields []ConfigField
 }
 
 // BookResult is a normalised book record returned by a BookISBNProvider.
