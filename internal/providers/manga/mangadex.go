@@ -240,8 +240,8 @@ type mdResponse struct {
 }
 
 type mdManga struct {
-	ID           string          `json:"id"`
-	Attributes   mdMangaAttrs    `json:"attributes"`
+	ID            string           `json:"id"`
+	Attributes    mdMangaAttrs     `json:"attributes"`
 	Relationships []mdRelationship `json:"relationships"`
 }
 
@@ -266,9 +266,9 @@ type mdTagAttrs struct {
 }
 
 type mdRelationship struct {
-	Type       string         `json:"type"`
-	ID         string         `json:"id"`
-	Attributes *mdCoverAttrs  `json:"attributes,omitempty"`
+	Type       string        `json:"type"`
+	ID         string        `json:"id"`
+	Attributes *mdCoverAttrs `json:"attributes,omitempty"`
 }
 
 type mdCoverAttrs struct {
@@ -294,7 +294,7 @@ type mdChaptersResponse struct {
 }
 
 type mdChapterData struct {
-	ID         string             `json:"id"`
+	ID         string              `json:"id"`
 	Attributes mdChapterAttributes `json:"attributes"`
 }
 

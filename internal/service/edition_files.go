@@ -97,11 +97,11 @@ func resolveTemplate(tmpl string, book *models.Book, edition *models.BookEdition
 	}
 
 	replacer := strings.NewReplacer(
-		"{title}",   sanitizeName(book.Title),
-		"{author}",  sanitizeName(author),
-		"{year}",    year,
-		"{isbn13}",  edition.ISBN13,
-		"{isbn10}",  edition.ISBN10,
+		"{title}", sanitizeName(book.Title),
+		"{author}", sanitizeName(author),
+		"{year}", year,
+		"{isbn13}", edition.ISBN13,
+		"{isbn10}", edition.ISBN10,
 		"{edition}", sanitizeName(edition.EditionName),
 	)
 	result := replacer.Replace(tmpl)

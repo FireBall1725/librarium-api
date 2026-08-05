@@ -360,10 +360,10 @@ func (r *SeriesRepo) ListMatchCandidates(ctx context.Context, libraryID, seriesI
 	var out []*MatchCandidate
 	for rows.Next() {
 		var (
-			c            MatchCandidate
-			pgBookID     pgtype.UUID
-			otherJSON    []byte
-			otherParsed  []struct {
+			c           MatchCandidate
+			pgBookID    pgtype.UUID
+			otherJSON   []byte
+			otherParsed []struct {
 				SeriesID   string  `json:"series_id"`
 				SeriesName string  `json:"series_name"`
 				Position   float64 `json:"position"`
@@ -497,18 +497,18 @@ func (r *SeriesRepo) RemoveBook(ctx context.Context, seriesID, bookID uuid.UUID)
 
 func scanSeries(s scanner) (*models.Series, error) {
 	var (
-		pgID            pgtype.UUID
-		pgLibraryID     pgtype.UUID
-		pgTotal         pgtype.Int4
-		pgOrigLang      pgtype.Text
-		pgPubYear       pgtype.Int4
-		pgDemographic   pgtype.Text
-		genres          []string
-		pgLastDate      pgtype.Date
-		pgNextDate      pgtype.Date
-		previewJSON     []byte
-		tagsJSON        []byte
-		ser             models.Series
+		pgID          pgtype.UUID
+		pgLibraryID   pgtype.UUID
+		pgTotal       pgtype.Int4
+		pgOrigLang    pgtype.Text
+		pgPubYear     pgtype.Int4
+		pgDemographic pgtype.Text
+		genres        []string
+		pgLastDate    pgtype.Date
+		pgNextDate    pgtype.Date
+		previewJSON   []byte
+		tagsJSON      []byte
+		ser           models.Series
 	)
 	err := s.Scan(
 		&pgID, &pgLibraryID, &ser.Name, &ser.Description,

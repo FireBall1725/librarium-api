@@ -25,18 +25,18 @@ type Series struct {
 	ExternalSource   string     `json:"external_source"`
 	LastReleaseDate  *time.Time `json:"last_release_date"`
 	NextReleaseDate  *time.Time `json:"next_release_date"`
-	BookCount        int                  `json:"book_count"`
-	ArcCount         int                  `json:"arc_count"`
+	BookCount        int        `json:"book_count"`
+	ArcCount         int        `json:"arc_count"`
 	// Caller-relative reading state. Only populated when the caller is known
 	// (List / FindByID receive a non-zero callerID). Both default to 0 when
 	// not populated, which is fine because clients gate the indicator behind
 	// the user's `show_read_badges` preference anyway.
-	ReadCount        int                  `json:"read_count"`
-	ReadingCount     int                  `json:"reading_count"`
-	PreviewBooks     []SeriesPreviewBook  `json:"preview_books"`
-	Tags             []*Tag               `json:"tags"`
-	CreatedAt        time.Time            `json:"created_at"`
-	UpdatedAt        time.Time            `json:"updated_at"`
+	ReadCount    int                 `json:"read_count"`
+	ReadingCount int                 `json:"reading_count"`
+	PreviewBooks []SeriesPreviewBook `json:"preview_books"`
+	Tags         []*Tag              `json:"tags"`
+	CreatedAt    time.Time           `json:"created_at"`
+	UpdatedAt    time.Time           `json:"updated_at"`
 }
 
 // SeriesPreviewBook is the trimmed shape used to assemble a series cover

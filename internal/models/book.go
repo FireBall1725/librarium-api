@@ -36,20 +36,20 @@ type BookShelfRef struct {
 // is expressed via the library_books junction (see LibraryBook); a book row
 // no longer carries a single library_id.
 type Book struct {
-	ID           uuid.UUID
-	Title        string
-	Subtitle     string
-	MediaTypeID  uuid.UUID
-	MediaType    string // display_name from joined media_types row
-	Description  string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	Contributors []BookContributor
-	Tags         []Tag
-	Genres       []Genre
-	HasCover     bool
-	Series       []BookSeriesRef
-	Shelves      []BookShelfRef
+	ID             uuid.UUID
+	Title          string
+	Subtitle       string
+	MediaTypeID    uuid.UUID
+	MediaType      string // display_name from joined media_types row
+	Description    string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Contributors   []BookContributor
+	Tags           []Tag
+	Genres         []Genre
+	HasCover       bool
+	Series         []BookSeriesRef
+	Shelves        []BookShelfRef
 	Publisher      string
 	PublishYear    *int
 	Language       string

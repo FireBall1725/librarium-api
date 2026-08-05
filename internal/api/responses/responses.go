@@ -204,7 +204,7 @@ type EditionResponse struct {
 	EditionName     string    `json:"edition_name"`
 	Narrator        string    `json:"narrator"`
 	Publisher       string    `json:"publisher"`
-	PublishDate     *string   `json:"publish_date"`     // YYYY-MM-DD
+	PublishDate     *string   `json:"publish_date"` // YYYY-MM-DD
 	ISBN10          string    `json:"isbn_10"`
 	ISBN13          string    `json:"isbn_13"`
 	CopyCount       int       `json:"copy_count"`
@@ -336,9 +336,9 @@ type LoanResponse struct {
 	BookID     uuid.UUID `json:"book_id"`
 	BookTitle  string    `json:"book_title"`
 	LoanedTo   string    `json:"loaned_to"`
-	LoanedAt   string    `json:"loaned_at"`    // YYYY-MM-DD
-	DueDate    *string   `json:"due_date"`     // YYYY-MM-DD
-	ReturnedAt *string   `json:"returned_at"`  // YYYY-MM-DD
+	LoanedAt   string    `json:"loaned_at"`   // YYYY-MM-DD
+	DueDate    *string   `json:"due_date"`    // YYYY-MM-DD
+	ReturnedAt *string   `json:"returned_at"` // YYYY-MM-DD
 	Notes      string    `json:"notes"`
 	Tags       []TagRef  `json:"tags"`
 	CreatedAt  time.Time `json:"created_at"`

@@ -25,10 +25,10 @@ const (
 	AIMetaRunStatusFailed    = "failed"
 	AIMetaRunStatusSkipped   = "skipped"
 
-	AIMetaProposalStatusPending            = "pending"
-	AIMetaProposalStatusAccepted           = "accepted"
-	AIMetaProposalStatusRejected           = "rejected"
-	AIMetaProposalStatusPartiallyAccepted  = "partially_accepted"
+	AIMetaProposalStatusPending           = "pending"
+	AIMetaProposalStatusAccepted          = "accepted"
+	AIMetaProposalStatusRejected          = "rejected"
+	AIMetaProposalStatusPartiallyAccepted = "partially_accepted"
 )
 
 // AIMetadataRun is one AI call recorded for audit + cost accounting +
@@ -77,11 +77,11 @@ type AIMetadataProposal struct {
 // proposals. Each field is optional — the AI may have evidence for some and
 // not others. Genres is always non-nil but may be empty.
 type SeriesMetadataPayload struct {
-	Status      *string  `json:"status,omitempty"`       // ongoing | completed | hiatus | cancelled
+	Status      *string  `json:"status,omitempty"` // ongoing | completed | hiatus | cancelled
 	TotalCount  *int     `json:"total_count,omitempty"`
-	Demographic *string  `json:"demographic,omitempty"`  // shounen | seinen | shoujo | josei | etc
+	Demographic *string  `json:"demographic,omitempty"` // shounen | seinen | shoujo | josei | etc
 	Genres      []string `json:"genres"`
-	Description *string  `json:"description,omitempty"`  // cleaned-up description
+	Description *string  `json:"description,omitempty"` // cleaned-up description
 }
 
 // SeriesArcsPayload is the shape persisted for kind=series_arcs proposals.

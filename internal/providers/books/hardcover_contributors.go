@@ -185,7 +185,6 @@ func (p *HardcoverProvider) FetchContributor(ctx context.Context, externalID str
 	return cd, nil
 }
 
-
 func parseHardcoverAuthorDocs(raw json.RawMessage) ([]hcAuthorSearchDoc, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -240,11 +239,11 @@ type hcAuthorDetailResponse struct {
 }
 
 type hcAuthorDetail struct {
-	ID            int              `json:"id"`
-	Name          string           `json:"name"`
-	Bio           string           `json:"bio"`
-	Image         *hcImage         `json:"image"`
-	Contributions []hcAuthorBook   `json:"contributions"`
+	ID            int            `json:"id"`
+	Name          string         `json:"name"`
+	Bio           string         `json:"bio"`
+	Image         *hcImage       `json:"image"`
+	Contributions []hcAuthorBook `json:"contributions"`
 }
 
 type hcAuthorBook struct {

@@ -240,15 +240,15 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	start := time.Now()
 
 	s.emit(ctx, runID, "pipeline_start", map[string]any{
-		"triggered_by":    triggeredBy,
-		"provider":        info.Name,
-		"model":           modelID,
-		"library_titles":  len(titles),
-		"blocks":          len(blocks),
-		"permissions":     perms,
-		"max_buy":         cfg.MaxBuyPerUser,
-		"max_read_next":   cfg.MaxReadNextPerUser,
-		"include_taste":   cfg.IncludeTasteProfile,
+		"triggered_by":   triggeredBy,
+		"provider":       info.Name,
+		"model":          modelID,
+		"library_titles": len(titles),
+		"blocks":         len(blocks),
+		"permissions":    perms,
+		"max_buy":        cfg.MaxBuyPerUser,
+		"max_read_next":  cfg.MaxReadNextPerUser,
+		"include_taste":  cfg.IncludeTasteProfile,
 	})
 	s.emit(ctx, runID, "prompt", map[string]any{
 		"pass":       "initial",
@@ -293,13 +293,13 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 	totalOut += resp.Usage.OutputTokens
 	totalCost += resp.Usage.EstimatedCostUSD
 	s.emit(ctx, runID, "ai_response", map[string]any{
-		"pass":             "initial",
-		"model":            resp.Usage.ModelID,
-		"text":             resp.Text,
-		"tokens_in":        resp.Usage.InputTokens,
-		"tokens_out":       resp.Usage.OutputTokens,
-		"cost_usd":         resp.Usage.EstimatedCostUSD,
-		"truncated":        resp.Truncated,
+		"pass":       "initial",
+		"model":      resp.Usage.ModelID,
+		"text":       resp.Text,
+		"tokens_in":  resp.Usage.InputTokens,
+		"tokens_out": resp.Usage.OutputTokens,
+		"cost_usd":   resp.Usage.EstimatedCostUSD,
+		"truncated":  resp.Truncated,
 	})
 
 	if err := s.checkCancelled(ctx, runID); err != nil {
@@ -378,10 +378,10 @@ func (s *SuggestionsService) RunForUser(ctx context.Context, userID uuid.UUID, t
 		if bfResp.Truncated {
 			slog.Warn("ai suggestions backfill truncated", "user_id", userID, "attempt", backfillAttempts, "max_tokens", cfg.MaxTokensBackfill)
 			s.emit(ctx, runID, "error", map[string]any{
-				"stage":     "ai_generate_backfill",
-				"attempt":   backfillAttempts,
-				"error":     fmt.Sprintf("backfill stopped at max_tokens (%d)", cfg.MaxTokensBackfill),
-				"reason":    "max_tokens",
+				"stage":   "ai_generate_backfill",
+				"attempt": backfillAttempts,
+				"error":   fmt.Sprintf("backfill stopped at max_tokens (%d)", cfg.MaxTokensBackfill),
+				"reason":  "max_tokens",
 			})
 			break
 		}
@@ -743,7 +743,7 @@ func (s *SuggestionsService) resolveFloatingBook(ctx context.Context, callerID u
 
 	if err := s.editions.Create(ctx, tx, editionID, bookID,
 		models.EditionFormatPaperback, // placeholder until real enrichment
-		meta.Language, "", "", // language, edition_name, narrator
+		meta.Language, "", "",         // language, edition_name, narrator
 		meta.Publisher, publishDate,
 		meta.ISBN10, meta.ISBN13, "", // description lives on book, not edition
 		nil,            // duration_seconds

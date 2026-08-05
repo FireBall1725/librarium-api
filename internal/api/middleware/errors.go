@@ -16,4 +16,3 @@ import (
 func SetHandlerError(ctx context.Context, err error) {
 	respond.SetHandlerError(ctx, err)
 }
-

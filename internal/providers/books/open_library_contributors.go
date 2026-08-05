@@ -187,7 +187,7 @@ func (p *OpenLibraryProvider) FetchContributor(ctx context.Context, externalID s
 type olAuthor struct {
 	Key       string          `json:"key"`
 	Name      string          `json:"name"`
-	Bio       json.RawMessage `json:"bio"`        // string or {"type":"...","value":"..."}
+	Bio       json.RawMessage `json:"bio"` // string or {"type":"...","value":"..."}
 	BirthDate string          `json:"birth_date"`
 	DeathDate string          `json:"death_date"`
 	Photos    []int64         `json:"photos"`
@@ -255,4 +255,3 @@ func olParsePersonDate(s string) *time.Time {
 	}
 	return nil
 }
-

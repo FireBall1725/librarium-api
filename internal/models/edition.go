@@ -38,22 +38,22 @@ func NormalizeEditionFormat(s string) string {
 }
 
 type BookEdition struct {
-	ID                     uuid.UUID
-	BookID                 uuid.UUID
-	Format                 string // paperback | hardcover | ebook | audiobook | digital
-	Language               string
-	EditionName            string
-	Narrator               string
-	Publisher              string
-	PublishDate            *time.Time
-	ISBN10                 string
-	ISBN13                 string
-	Description            string
-	DurationSeconds        *int
-	PageCount              *int
-	IsPrimary              bool
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	ID                      uuid.UUID
+	BookID                  uuid.UUID
+	Format                  string // paperback | hardcover | ebook | audiobook | digital
+	Language                string
+	EditionName             string
+	Narrator                string
+	Publisher               string
+	PublishDate             *time.Time
+	ISBN10                  string
+	ISBN13                  string
+	Description             string
+	DurationSeconds         *int
+	PageCount               *int
+	IsPrimary               bool
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 	NarratorContributorID   *uuid.UUID
 	NarratorContributorName string
 	// Files is populated by the service layer — not a DB column on book_editions.
@@ -87,7 +87,7 @@ type UserBookInteraction struct {
 	// {pages_read?: int, percent?: float, position?: string} — pages for
 	// print, percent for ebook readers, position free text for audio.
 	// Empty []byte (or nil) when never set; raw JSON bytes otherwise.
-	Progress      []byte
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	Progress  []byte
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

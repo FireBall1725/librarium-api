@@ -365,8 +365,8 @@ func (r *BookRepo) ListByContributor(ctx context.Context, libraryID, contributor
 // BookFingerprint summarizes the books collection in a library. Clients
 // compare this to a stored fingerprint to decide whether to resync.
 type BookFingerprint struct {
-	Total         int     `json:"total"`
-	MaxUpdatedAt  *string `json:"max_updated_at"` // RFC3339; nil when library is empty
+	Total        int     `json:"total"`
+	MaxUpdatedAt *string `json:"max_updated_at"` // RFC3339; nil when library is empty
 }
 
 // Fingerprint returns the total book count and the most recent updated_at
@@ -425,7 +425,7 @@ type FilterCondition struct {
 // ConditionGroup is a set of conditions with their own join mode.
 // Multiple groups in a query are always ANDed together at the top level.
 type ConditionGroup struct {
-	Mode       string            `json:"mode"`       // "AND" | "OR"
+	Mode       string            `json:"mode"` // "AND" | "OR"
 	Conditions []FilterCondition `json:"conditions"`
 }
 
@@ -433,12 +433,12 @@ type ListBooksOpts struct {
 	Query      string
 	Page       int
 	PerPage    int
-	Sort       string // "title" | "created_at" | "media_type"; default "title"
-	SortDir    string // "asc" | "desc"; default "asc"
-	Letter     string // single char: 'a'-'z' matches LIKE 'letter%'
-	TagFilter  string // filter to books that have a tag with this exact name (case-insensitive)
-	TypeFilter string // filter by media type display name (case-insensitive), e.g. "Novel"
-	IsRegex    bool   // if true, use b.title ~* $query instead of ILIKE
+	Sort       string           // "title" | "created_at" | "media_type"; default "title"
+	SortDir    string           // "asc" | "desc"; default "asc"
+	Letter     string           // single char: 'a'-'z' matches LIKE 'letter%'
+	TagFilter  string           // filter to books that have a tag with this exact name (case-insensitive)
+	TypeFilter string           // filter by media type display name (case-insensitive), e.g. "Novel"
+	IsRegex    bool             // if true, use b.title ~* $query instead of ILIKE
 	Groups     []ConditionGroup // from query language parser; groups are ANDed together
 	CallerID   uuid.UUID        // when non-zero, includes user_read_status for this user
 }

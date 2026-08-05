@@ -521,11 +521,11 @@ type RunView struct {
 // SteeringView hydrates stored steering IDs to {id, name} objects for direct
 // UI consumption. Notes is free-form text and flows through unchanged.
 type SteeringView struct {
-	Authors []NamedRef        `json:"authors,omitempty"`
-	Series  []NamedRef        `json:"series,omitempty"`
-	Genres  []NamedRef        `json:"genres,omitempty"`
-	Tags    []NamedTagRef     `json:"tags,omitempty"`
-	Notes   string            `json:"notes,omitempty"`
+	Authors []NamedRef    `json:"authors,omitempty"`
+	Series  []NamedRef    `json:"series,omitempty"`
+	Genres  []NamedRef    `json:"genres,omitempty"`
+	Tags    []NamedTagRef `json:"tags,omitempty"`
+	Notes   string        `json:"notes,omitempty"`
 }
 
 type NamedRef struct {
@@ -932,4 +932,3 @@ func parseRelativeDays(s string) (int, bool) {
 	}
 	return n, true
 }
-

@@ -111,11 +111,11 @@ func (r *LibraryBookRepo) FindLibraryBook(ctx context.Context, libraryID, bookID
 		FROM library_books
 		WHERE library_id = $1 AND book_id = $2`
 	var (
-		lb         models.LibraryBook
-		pgID       pgtype.UUID
-		pgLibID    pgtype.UUID
-		pgBookID   pgtype.UUID
-		pgAddedBy  pgtype.UUID
+		lb        models.LibraryBook
+		pgID      pgtype.UUID
+		pgLibID   pgtype.UUID
+		pgBookID  pgtype.UUID
+		pgAddedBy pgtype.UUID
 	)
 	err := r.db.QueryRow(ctx, q, libraryID, bookID).Scan(&pgID, &pgLibID, &pgBookID, &pgAddedBy, &lb.AddedAt)
 	if errors.Is(err, pgx.ErrNoRows) {

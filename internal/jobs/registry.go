@@ -25,10 +25,10 @@ type Kind string
 // Built-in kinds. New kinds can declare their own constants alongside
 // their worker package and register from there.
 const (
-	KindImport         Kind = "import"
-	KindEnrichment     Kind = "enrichment"
-	KindAISuggestions  Kind = "ai_suggestions"
-	KindCoverBackfill  Kind = "cover_backfill"
+	KindImport        Kind = "import"
+	KindEnrichment    Kind = "enrichment"
+	KindAISuggestions Kind = "ai_suggestions"
+	KindCoverBackfill Kind = "cover_backfill"
 )
 
 // TriggerCtx is everything the Enqueue hook of a Definition needs

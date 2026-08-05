@@ -30,10 +30,10 @@ const (
 type ImportItemStatus string
 
 const (
-	ImportItemPending  ImportItemStatus = "pending"
-	ImportItemDone     ImportItemStatus = "done"
-	ImportItemSkipped  ImportItemStatus = "skipped"
-	ImportItemFailed   ImportItemStatus = "failed"
+	ImportItemPending ImportItemStatus = "pending"
+	ImportItemDone    ImportItemStatus = "done"
+	ImportItemSkipped ImportItemStatus = "skipped"
+	ImportItemFailed  ImportItemStatus = "failed"
 )
 
 // ImportOptions holds per-import configuration stored in the DB. The
@@ -91,15 +91,15 @@ type ImportJob struct {
 }
 
 type ImportJobItem struct {
-	ID          uuid.UUID        `json:"id"`
-	ImportJobID uuid.UUID        `json:"import_job_id"`
-	RowNumber   int              `json:"row_number"`
+	ID          uuid.UUID         `json:"id"`
+	ImportJobID uuid.UUID         `json:"import_job_id"`
+	RowNumber   int               `json:"row_number"`
 	RawData     map[string]string `json:"raw_data"`
-	Status      ImportItemStatus `json:"status"`
-	Title       string           `json:"title"`
-	ISBN        string           `json:"isbn"`
-	Message     string           `json:"message"`
-	BookID      *uuid.UUID       `json:"book_id,omitempty"`
-	CreatedAt   time.Time        `json:"created_at"`
-	UpdatedAt   time.Time        `json:"updated_at"`
+	Status      ImportItemStatus  `json:"status"`
+	Title       string            `json:"title"`
+	ISBN        string            `json:"isbn"`
+	Message     string            `json:"message"`
+	BookID      *uuid.UUID        `json:"book_id,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }

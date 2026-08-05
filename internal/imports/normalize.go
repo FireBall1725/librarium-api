@@ -141,4 +141,3 @@ func Bool(raw string) (bool, bool) {
 	}
 	return false, false
 }
-

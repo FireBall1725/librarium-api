@@ -18,31 +18,31 @@ import (
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 var (
-	styleBorder   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240"))
-	styleTitle    = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
-	styleDim      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleBar      = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))  // soft purple
-	styleBarPeak  = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))  // bright purple for recent
-	styleAxisLine = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleDebug    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleInfo     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	styleWarn     = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
-	styleError    = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	style2xx      = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
-	style3xx      = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))
-	style4xx      = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	style5xx      = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	styleMethod   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	styleTimeCol  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleClient   = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // soft lavender
-	styleIP       = lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
+	styleBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240"))
+	styleTitle     = lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
+	styleDim       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleBar       = lipgloss.NewStyle().Foreground(lipgloss.Color("63")) // soft purple
+	styleBarPeak   = lipgloss.NewStyle().Foreground(lipgloss.Color("99")) // bright purple for recent
+	styleAxisLine  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleDebug     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleInfo      = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	styleWarn      = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	styleError     = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	style2xx       = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+	style3xx       = lipgloss.NewStyle().Foreground(lipgloss.Color("81"))
+	style4xx       = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	style5xx       = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	styleMethod    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	styleTimeCol   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleClient    = lipgloss.NewStyle().Foreground(lipgloss.Color("141")) // soft lavender
+	styleIP        = lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
 	styleMark      = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true) // bright yellow
 	styleScroll    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))            // orange scroll indicator
 	styleQueueIdle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	styleProgress  = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
 	styleProgressD = lipgloss.NewStyle().Foreground(lipgloss.Color("237"))
-	styleRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))             // green ► running
-	stylePending   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))            // orange ● waiting
+	styleRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))  // green ► running
+	stylePending   = lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // orange ● waiting
 )
 
 // sub-block runes: index 0 = empty, 1-8 = ▁▂▃▄▅▆▇█
@@ -390,7 +390,7 @@ func renderBarChart(buckets []int, height, maxVal int) []string {
 	rows := make([]string, height)
 	for row := 0; row < height; row++ {
 		// row 0 = topmost display row, row height-1 = bottommost
-		level := height - 1 - row // 0 at bottom, height-1 at top
+		level := height - 1 - row  // 0 at bottom, height-1 at top
 		floor := level * 8         // sub-units at cell bottom
 		ceiling := (level + 1) * 8 // sub-units at cell top
 
@@ -515,7 +515,7 @@ func hScrollLine(s string, skip int) string {
 		return s
 	}
 	var out strings.Builder
-	vis := 0     // visible columns counted so far
+	vis := 0 // visible columns counted so far
 	inEsc := false
 	inCSI := false
 	for _, r := range s {

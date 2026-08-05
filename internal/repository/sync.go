@@ -70,17 +70,17 @@ func (r *SyncRepo) UserBookInteractionChanges(ctx context.Context, userID uuid.U
 	var ops []responses.SyncOp
 	for rows.Next() {
 		var (
-			id             uuid.UUID
-			rating         *int16
-			ratingTS       *time.Time
-			readStatus     string
-			readStatusTS   *time.Time
-			progressRaw    []byte
-			progressTS     *time.Time
-			isFavorite     bool
-			isFavoriteTS   *time.Time
-			updatedAt      time.Time
-			deletedAt      *time.Time
+			id           uuid.UUID
+			rating       *int16
+			ratingTS     *time.Time
+			readStatus   string
+			readStatusTS *time.Time
+			progressRaw  []byte
+			progressTS   *time.Time
+			isFavorite   bool
+			isFavoriteTS *time.Time
+			updatedAt    time.Time
+			deletedAt    *time.Time
 		)
 		if err := rows.Scan(
 			&id,
