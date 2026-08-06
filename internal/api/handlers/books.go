@@ -208,6 +208,7 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query().Get("q")
+	rawSearchQuery := q
 	if len(q) > 500 {
 		respond.Error(w, http.StatusBadRequest, "query too long")
 		return
@@ -305,8 +306,8 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 	// "Did you mean…" — when the literal query found nothing, run a
 	// pg_trgm similarity match and include up to 5 suggestions. Skipped
 	// when q is empty (pure browse) or when results came back.
-	if total == 0 && q != "" {
-		if suggestions, err := h.books.SearchSuggestions(r.Context(), libraryID, q); err == nil && len(suggestions) > 0 {
+	if total == 0 && rawSearchQuery != "" {
+		if suggestions, err := h.books.SearchSuggestions(r.Context(), libraryID, rawSearchQuery); err == nil && len(suggestions) > 0 {
 			resp["suggestions"] = suggestions
 		}
 	}

@@ -493,12 +493,7 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 			args = append(args, opts.Query)
 			argIdx++
 		} else {
-			conditions = append(conditions, fmt.Sprintf(
-				"(b.title ILIKE '%%' || $%d || '%%' "+
-					"OR regexp_replace(lower(b.title), '[^a-z0-9]', '', 'g') LIKE '%%' || regexp_replace(lower($%d), '[^a-z0-9]', '', 'g') || '%%' "+
-					"OR EXISTS (SELECT 1 FROM book_contributors bc_q JOIN contributors c_q ON c_q.id = bc_q.contributor_id WHERE bc_q.book_id = b.id AND c_q.name ILIKE '%%' || $%d || '%%'))",
-				argIdx, argIdx+1, argIdx+2,
-			))
+			conditions = append(conditions, titleContainsSQL(argIdx, asciiNormNoSpace))
 			args = append(args, opts.Query, opts.Query, opts.Query)
 			argIdx += 3
 		}
@@ -547,15 +542,14 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 			switch cond.Field {
 			case "title":
 				switch cond.Op {
-				case "contains", "phrase":
-					parts = append(parts, fmt.Sprintf(
-						"(b.title ILIKE '%%' || $%d || '%%' "+
-							"OR regexp_replace(lower(b.title), '[^a-z0-9 ]', '', 'g') ILIKE '%%' || regexp_replace(lower($%d), '[^a-z0-9 ]', '', 'g') || '%%' "+
-							"OR EXISTS (SELECT 1 FROM book_contributors bc_q JOIN contributors c_q ON c_q.id = bc_q.contributor_id WHERE bc_q.book_id = b.id AND c_q.name ILIKE '%%' || $%d || '%%'))",
-						argIdx, argIdx+1, argIdx+2,
-					))
+				case "contains":
+					parts = append(parts, titleContainsSQL(argIdx, asciiNormSpace))
 					args = append(args, cond.Value, cond.Value, cond.Value)
 					argIdx += 3
+				case "phrase":
+					parts = append(parts, titlePhraseSQL(argIdx))
+					args = append(args, cond.Value, cond.Value)
+					argIdx += 2
 				case "not_contains":
 					parts = append(parts, fmt.Sprintf("b.title NOT ILIKE '%%' || $%d || '%%'", argIdx))
 					args = append(args, cond.Value)
