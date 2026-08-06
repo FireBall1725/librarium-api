@@ -45,8 +45,8 @@ type SyncOp struct {
 // discarded_stale results since the timestamps no longer beat what's
 // in the database.
 type SyncApplyRequest struct {
-	ClientID uuid.UUID      `json:"client_id,omitempty"`
-	Ops      []SyncApplyOp  `json:"ops"`
+	ClientID uuid.UUID     `json:"client_id,omitempty"`
+	Ops      []SyncApplyOp `json:"ops"`
 }
 
 // SyncApplyOp mirrors SyncOp but is what the client sends back to the

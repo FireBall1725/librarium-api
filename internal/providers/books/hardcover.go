@@ -598,58 +598,58 @@ func (p *HardcoverProvider) FetchSeriesVolumes(ctx context.Context, externalID s
 // Hardcover returns e.g. "English" where every other provider returns "en".
 func normalizeHardcoverLanguage(name string) string {
 	codes := map[string]string{
-		"Afrikaans":           "af",
-		"Albanian":            "sq",
-		"Arabic":              "ar",
-		"Basque":              "eu",
-		"Belarusian":          "be",
-		"Bengali":             "bn",
-		"Bulgarian":           "bg",
-		"Catalan":             "ca",
-		"Chinese":             "zh",
-		"Croatian":            "hr",
-		"Czech":               "cs",
-		"Danish":              "da",
-		"Dutch":               "nl",
-		"English":             "en",
-		"Estonian":            "et",
-		"Finnish":             "fi",
-		"French":              "fr",
-		"Galician":            "gl",
-		"German":              "de",
-		"Greek":               "el",
-		"Hebrew":              "he",
-		"Hindi":               "hi",
-		"Hungarian":           "hu",
-		"Icelandic":           "is",
-		"Indonesian":          "id",
-		"Irish":               "ga",
-		"Italian":             "it",
-		"Japanese":            "ja",
-		"Korean":              "ko",
-		"Latvian":             "lv",
-		"Lithuanian":          "lt",
-		"Macedonian":          "mk",
-		"Malay":               "ms",
-		"Maltese":             "mt",
-		"Norwegian":           "no",
-		"Persian":             "fa",
-		"Polish":              "pl",
-		"Portuguese":          "pt",
-		"Romanian":            "ro",
-		"Russian":             "ru",
-		"Serbian":             "sr",
-		"Slovak":              "sk",
-		"Slovenian":           "sl",
-		"Spanish":             "es",
-		"Swahili":             "sw",
-		"Swedish":             "sv",
-		"Thai":                "th",
-		"Turkish":             "tr",
-		"Ukrainian":           "uk",
-		"Urdu":                "ur",
-		"Vietnamese":          "vi",
-		"Welsh":               "cy",
+		"Afrikaans":  "af",
+		"Albanian":   "sq",
+		"Arabic":     "ar",
+		"Basque":     "eu",
+		"Belarusian": "be",
+		"Bengali":    "bn",
+		"Bulgarian":  "bg",
+		"Catalan":    "ca",
+		"Chinese":    "zh",
+		"Croatian":   "hr",
+		"Czech":      "cs",
+		"Danish":     "da",
+		"Dutch":      "nl",
+		"English":    "en",
+		"Estonian":   "et",
+		"Finnish":    "fi",
+		"French":     "fr",
+		"Galician":   "gl",
+		"German":     "de",
+		"Greek":      "el",
+		"Hebrew":     "he",
+		"Hindi":      "hi",
+		"Hungarian":  "hu",
+		"Icelandic":  "is",
+		"Indonesian": "id",
+		"Irish":      "ga",
+		"Italian":    "it",
+		"Japanese":   "ja",
+		"Korean":     "ko",
+		"Latvian":    "lv",
+		"Lithuanian": "lt",
+		"Macedonian": "mk",
+		"Malay":      "ms",
+		"Maltese":    "mt",
+		"Norwegian":  "no",
+		"Persian":    "fa",
+		"Polish":     "pl",
+		"Portuguese": "pt",
+		"Romanian":   "ro",
+		"Russian":    "ru",
+		"Serbian":    "sr",
+		"Slovak":     "sk",
+		"Slovenian":  "sl",
+		"Spanish":    "es",
+		"Swahili":    "sw",
+		"Swedish":    "sv",
+		"Thai":       "th",
+		"Turkish":    "tr",
+		"Ukrainian":  "uk",
+		"Urdu":       "ur",
+		"Vietnamese": "vi",
+		"Welsh":      "cy",
 	}
 	if code, ok := codes[name]; ok {
 		return code
@@ -718,14 +718,14 @@ type hcGQLResponse struct {
 }
 
 type hcEdition struct {
-	ISBN13      string          `json:"isbn_13"`
-	ISBN10      string          `json:"isbn_10"`
-	PageCount   *int            `json:"pages"`
-	ReleaseDate string          `json:"release_date"`
-	Image       *hcImage        `json:"image"`
-	Publisher   *hcNameField    `json:"publisher"`
-	Language    *hcLanguage     `json:"language"`
-	Book        *hcBook         `json:"book"`
+	ISBN13      string       `json:"isbn_13"`
+	ISBN10      string       `json:"isbn_10"`
+	PageCount   *int         `json:"pages"`
+	ReleaseDate string       `json:"release_date"`
+	Image       *hcImage     `json:"image"`
+	Publisher   *hcNameField `json:"publisher"`
+	Language    *hcLanguage  `json:"language"`
+	Book        *hcBook      `json:"book"`
 }
 
 type hcImage struct {

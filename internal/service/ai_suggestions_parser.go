@@ -21,9 +21,9 @@ type ParsedSuggestion struct {
 
 // suggestionLinePattern parses lines of the shape:
 //
-//	1. Title — ISBN — Reason
-//	1) Title - 9781234567890 - Reason goes here
-//	- Title | ISBN-10 | reason text
+//  1. Title — ISBN — Reason
+//  1. Title - 9781234567890 - Reason goes here
+//     - Title | ISBN-10 | reason text
 //
 // All three separators (em-dash, hyphen-dash, pipe) are accepted. Leading list
 // numbering is optional. ISBN is captured only when it looks like an ISBN —

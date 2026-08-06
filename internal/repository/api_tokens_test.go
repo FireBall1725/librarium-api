@@ -115,9 +115,9 @@ func TestAPITokenActive(t *testing.T) {
 	future := now.Add(1 * time.Hour)
 
 	cases := []struct {
-		name    string
-		tok     models.APIToken
-		wantOK  bool
+		name   string
+		tok    models.APIToken
+		wantOK bool
 	}{
 		{
 			name:   "fresh, no expiry",

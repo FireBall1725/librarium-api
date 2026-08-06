@@ -237,8 +237,8 @@ func (r *EnrichmentBatchRepo) UpdateStatus(ctx context.Context, id uuid.UUID, st
 		WHERE  id = $1 AND status != 'cancelled'
 		RETURNING job_id, processed_books, failed_books, skipped_books, total_books`
 	var (
-		pgJobID                            pgtype.UUID
-		processed, failed, skipped, total  int
+		pgJobID                           pgtype.UUID
+		processed, failed, skipped, total int
 	)
 	if err := r.db.QueryRow(ctx, q, id, string(status)).Scan(&pgJobID, &processed, &failed, &skipped, &total); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -358,8 +358,8 @@ func (r *EnrichmentBatchRepo) Cancel(ctx context.Context, batchID, userID uuid.U
 		WHERE  id = $1 AND created_by = $2 AND status IN ('pending', 'processing')
 		RETURNING job_id, processed_books, failed_books, skipped_books, total_books`
 	var (
-		pgJobID                            pgtype.UUID
-		processed, failed, skipped, total  int
+		pgJobID                           pgtype.UUID
+		processed, failed, skipped, total int
 	)
 	if err := r.db.QueryRow(ctx, q, batchID, userID).Scan(&pgJobID, &processed, &failed, &skipped, &total); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

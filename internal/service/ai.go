@@ -274,14 +274,14 @@ func maskedConfig(fields []ConfigFieldView, cfg map[string]string) map[string]st
 type ConfigFieldView = ai.ConfigField
 
 type AIProviderStatus struct {
-	Name         string             `json:"name"`
-	DisplayName  string             `json:"display_name"`
-	Description  string             `json:"description"`
-	HelpText     string             `json:"help_text,omitempty"`
-	HelpURL      string             `json:"help_url,omitempty"`
-	ConfigFields []ConfigFieldView  `json:"config_fields"`
-	Enabled      bool               `json:"enabled"`
-	Active       bool               `json:"active"`
-	HasAPIKey    bool               `json:"has_api_key"`
-	Config       map[string]string  `json:"config,omitempty"`
+	Name         string            `json:"name"`
+	DisplayName  string            `json:"display_name"`
+	Description  string            `json:"description"`
+	HelpText     string            `json:"help_text,omitempty"`
+	HelpURL      string            `json:"help_url,omitempty"`
+	ConfigFields []ConfigFieldView `json:"config_fields"`
+	Enabled      bool              `json:"enabled"`
+	Active       bool              `json:"active"`
+	HasAPIKey    bool              `json:"has_api_key"`
+	Config       map[string]string `json:"config,omitempty"`
 }

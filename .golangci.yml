@@ -53,6 +53,16 @@ linters:
         # I/O failure surfaces via the writer, not the encoder return.
         - (*encoding/json.Encoder).Encode
 
+# gofmt is enforced in CI (see .github/workflows/ci.yml). The tree was
+# brought to a clean baseline in one sweep; this keeps it there so outside
+# PRs stop carrying unrelated whitespace churn from editors that format on
+# save. Run `golangci-lint fmt` to fix locally.
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

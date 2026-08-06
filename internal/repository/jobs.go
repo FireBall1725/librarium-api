@@ -130,15 +130,15 @@ func (r *JobRepo) GetJob(ctx context.Context, id uuid.UUID) (*models.Job, error)
 
 // ListJobsOpts filters ListJobs. Zero-value = no filter for that field.
 type ListJobsOpts struct {
-	Kind      string      // empty = any kind
+	Kind string // empty = any kind
 	// Subtype only applies when Kind=='enrichment' — filters
 	// enrichment_batches.type so the UI can split Metadata vs Covers without
 	// exposing kind=enrichment&subtype=foo as a polluted filter combo.
 	Subtype   string
-	Status    string      // empty = any status
-	CreatedBy *uuid.UUID  // nil = any caller
-	Since     *time.Time  // nil = no time floor
-	Limit     int         // 0 = default 50
+	Status    string     // empty = any status
+	CreatedBy *uuid.UUID // nil = any caller
+	Since     *time.Time // nil = no time floor
+	Limit     int        // 0 = default 50
 	Offset    int
 }
 
@@ -425,9 +425,9 @@ func scanJob(s scanner) (*models.Job, error) {
 
 func scanSchedule(s scanner) (*models.JobSchedule, error) {
 	var (
-		pgID    pgtype.UUID
-		config  []byte
-		sched   models.JobSchedule
+		pgID   pgtype.UUID
+		config []byte
+		sched  models.JobSchedule
 	)
 	if err := s.Scan(
 		&pgID, &sched.Kind, &sched.Cron, &sched.Enabled, &config,

@@ -23,9 +23,9 @@ type RateLimiter struct {
 	mu       sync.Mutex
 	buckets  map[string]*bucket
 	burst    float64
-	refill   float64        // tokens per second
-	interval time.Duration  // window used for human-readable config
-	idleTTL  time.Duration  // garbage-collect buckets unseen this long
+	refill   float64       // tokens per second
+	interval time.Duration // window used for human-readable config
+	idleTTL  time.Duration // garbage-collect buckets unseen this long
 }
 
 type bucket struct {

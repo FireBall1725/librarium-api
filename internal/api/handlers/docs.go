@@ -6,8 +6,8 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/swaggo/swag"
 	_ "github.com/fireball1725/librarium-api/docs"
+	"github.com/swaggo/swag"
 )
 
 // ServeOpenAPISpec serves the generated OpenAPI JSON spec.

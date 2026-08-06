@@ -57,8 +57,8 @@ func (r *MediaTypeRepo) Create(ctx context.Context, id uuid.UUID, name, displayN
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, name, display_name, COALESCE(description, '')`
 	var (
-		pgID        pgtype.UUID
-		mt          models.MediaType
+		pgID pgtype.UUID
+		mt   models.MediaType
 	)
 	err := r.db.QueryRow(ctx, q, id, name, displayName, description).Scan(
 		&pgID, &mt.Name, &mt.DisplayName, &mt.Description,

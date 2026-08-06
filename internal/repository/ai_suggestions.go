@@ -524,7 +524,7 @@ func (r *AISuggestionsRepo) ListNewSuggestionKeys(ctx context.Context, userID uu
 }
 
 // ListSuggestions returns the caller's current suggestions. Filter by type
-// ('buy' | 'read_next' | '' for all), status ('new' | '' for all), and
+// ('buy' | 'read_next' | empty for all), status ('new' | empty for all), and
 // optionally scope to a specific run (non-nil runID). When runID is set, the
 // status filter is ignored — scoped views surface every suggestion the run
 // produced, including ones the user later dismissed or saved.

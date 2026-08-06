@@ -11,14 +11,14 @@ import (
 )
 
 type Config struct {
-	Host                string
-	Port                string
-	DatabaseURL         string
-	JWTSecret           string
-	JWTAccessTTL        time.Duration
-	JWTRefreshTTL       time.Duration
-	RegistrationEnabled bool
-	LogLevel            slog.Level
+	Host                  string
+	Port                  string
+	DatabaseURL           string
+	JWTSecret             string
+	JWTAccessTTL          time.Duration
+	JWTRefreshTTL         time.Duration
+	RegistrationEnabled   bool
+	LogLevel              slog.Level
 	CoverStoragePath      string
 	EbookStoragePath      string
 	AudiobookStoragePath  string
@@ -29,20 +29,20 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		Host:                 getEnv("HOST", "0.0.0.0"),
-		Port:                 getEnv("PORT", "8080"),
-		DatabaseURL:          getEnv("DATABASE_URL", "postgres://librarium:librarium@localhost:5432/librarium?sslmode=disable"),
-		JWTSecret:            getEnv("JWT_SECRET", ""),
-		JWTAccessTTL:         parseDuration(getEnv("JWT_ACCESS_TTL", "30m")),
-		JWTRefreshTTL:        parseDuration(getEnv("JWT_REFRESH_TTL", "720h")),
-		RegistrationEnabled:  getEnv("REGISTRATION_ENABLED", "true") != "false",
-		LogLevel:             parseLogLevel(getEnv("LOG_LEVEL", "info")),
+		Host:                  getEnv("HOST", "0.0.0.0"),
+		Port:                  getEnv("PORT", "8080"),
+		DatabaseURL:           getEnv("DATABASE_URL", "postgres://librarium:librarium@localhost:5432/librarium?sslmode=disable"),
+		JWTSecret:             getEnv("JWT_SECRET", ""),
+		JWTAccessTTL:          parseDuration(getEnv("JWT_ACCESS_TTL", "30m")),
+		JWTRefreshTTL:         parseDuration(getEnv("JWT_REFRESH_TTL", "720h")),
+		RegistrationEnabled:   getEnv("REGISTRATION_ENABLED", "true") != "false",
+		LogLevel:              parseLogLevel(getEnv("LOG_LEVEL", "info")),
 		CoverStoragePath:      getEnv("COVER_STORAGE_PATH", "./data/covers"),
 		EbookStoragePath:      getEnv("EBOOK_STORAGE_PATH", "./data/media/ebooks"),
 		AudiobookStoragePath:  getEnv("AUDIOBOOK_STORAGE_PATH", "./data/media/audiobooks"),
 		EbookPathTemplate:     getEnv("EBOOK_PATH_TEMPLATE", "{title}"),
 		AudiobookPathTemplate: getEnv("AUDIOBOOK_PATH_TEMPLATE", "{title}"),
-		TUI:                  getEnv("TUI", "false") == "true",
+		TUI:                   getEnv("TUI", "false") == "true",
 	}
 }
 

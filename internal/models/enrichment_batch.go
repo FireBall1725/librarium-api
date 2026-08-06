@@ -54,25 +54,25 @@ type EnrichmentBatchItem struct {
 // EnrichmentBatch is the application-level tracking record for a bulk
 // metadata or cover refresh operation.
 type EnrichmentBatch struct {
-	ID             uuid.UUID              `json:"id"`
+	ID uuid.UUID `json:"id"`
 	// LibraryID scopes the batch to a library when set. Null for
 	// floating-book batches (e.g. re-enriching a suggestion-backed book not
 	// yet held by any library).
-	LibraryID      *uuid.UUID             `json:"library_id,omitempty"`
-	LibraryName    string                 `json:"library_name,omitempty"`
-	CreatedBy      uuid.UUID              `json:"created_by"`
-	Type           EnrichmentBatchType    `json:"type"`
-	Force          bool                   `json:"force"`
-	UseAICleanup   bool                   `json:"use_ai_cleanup"`
-	Status         EnrichmentBatchStatus  `json:"status"`
-	BookIDs        []uuid.UUID            `json:"book_ids,omitempty"`
-	TotalBooks     int                    `json:"total_books"`
-	ProcessedBooks int                    `json:"processed_books"`
-	FailedBooks    int                    `json:"failed_books"`
-	SkippedBooks   int                    `json:"skipped_books"`
-	Items          []EnrichmentBatchItem  `json:"items,omitempty"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
+	LibraryID      *uuid.UUID            `json:"library_id,omitempty"`
+	LibraryName    string                `json:"library_name,omitempty"`
+	CreatedBy      uuid.UUID             `json:"created_by"`
+	Type           EnrichmentBatchType   `json:"type"`
+	Force          bool                  `json:"force"`
+	UseAICleanup   bool                  `json:"use_ai_cleanup"`
+	Status         EnrichmentBatchStatus `json:"status"`
+	BookIDs        []uuid.UUID           `json:"book_ids,omitempty"`
+	TotalBooks     int                   `json:"total_books"`
+	ProcessedBooks int                   `json:"processed_books"`
+	FailedBooks    int                   `json:"failed_books"`
+	SkippedBooks   int                   `json:"skipped_books"`
+	Items          []EnrichmentBatchItem `json:"items,omitempty"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
 }
 
 // EnrichmentBatchJobArgs is the River job payload for a batch enrichment run.

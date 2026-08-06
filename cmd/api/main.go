@@ -443,11 +443,11 @@ func main() {
 		ProviderSvc: providerSvc,
 	})
 	srv := &http.Server{
-		Addr:           addr,
-		Handler:        handler,
-		ReadTimeout:    15 * time.Second,
-		WriteTimeout:   15 * time.Second,
-		IdleTimeout:    60 * time.Second,
+		Addr:         addr,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 		// Cap request headers at 1 MiB so a malformed client can't pin a
 		// goroutine on an unbounded header read. Per-handler limits cover
 		// bodies (multipart, JSON); this catches everything else.

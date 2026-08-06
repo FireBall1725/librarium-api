@@ -51,11 +51,11 @@ type Job struct {
 	// Progress is a kind-specific JSON blob for summary UI. Import uses
 	// {processed,failed,skipped,total}; enrichment similar; AI suggestions
 	// uses {tokens_in,tokens_out,cost_usd}. Kept opaque at this layer.
-	Progress    json.RawMessage
-	StartedAt   *time.Time
-	FinishedAt  *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	Progress   json.RawMessage
+	StartedAt  *time.Time
+	FinishedAt *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // JobEvent is one entry in a job's progress log. Type is free-form per

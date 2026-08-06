@@ -36,20 +36,20 @@ var allowedImageTypes = map[string]struct{}{
 // allowed because EPUB/CBZ files are detected as zip by net/http; the
 // service layer pins format more narrowly via the explicit `format` field.
 var allowedEditionFileTypes = map[string]struct{}{
-	"application/pdf":  {},
+	"application/pdf":      {},
 	"application/epub+zip": {},
-	"application/zip":  {},
-	"audio/mpeg":       {},
-	"audio/mp4":        {},
-	"audio/m4a":        {},
-	"audio/x-m4a":      {},
-	"audio/x-m4b":      {},
-	"audio/aac":        {},
-	"audio/ogg":        {},
-	"audio/flac":       {},
-	"audio/x-flac":     {},
-	"audio/wav":        {},
-	"audio/x-wav":      {},
+	"application/zip":      {},
+	"audio/mpeg":           {},
+	"audio/mp4":            {},
+	"audio/m4a":            {},
+	"audio/x-m4a":          {},
+	"audio/x-m4b":          {},
+	"audio/aac":            {},
+	"audio/ogg":            {},
+	"audio/flac":           {},
+	"audio/x-flac":         {},
+	"audio/wav":            {},
+	"audio/x-wav":          {},
 }
 
 // SniffImage validates that `r` is one of the allowed image types and
