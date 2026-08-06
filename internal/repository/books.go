@@ -1260,6 +1260,14 @@ type MonthlyReadBucket struct {
 
 // GetDashboardStats returns aggregate book and reading counts for the user across
 // all libraries they are a member of.
+//
+// "Read this year" / the monthly sparkline only count interactions with a
+// known date_finished. There is no fallback to updated_at: that column
+// reflects whenever the row was last written for any reason (an import, a
+// metadata refresh, an unrelated bulk correction), not when the book was
+// actually finished, and using it as a stand-in silently misattributes
+// books with no known finish date to "just read" the moment anything
+// touches their row.
 func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*DashboardStats, error) {
 	var s DashboardStats
 	err := r.db.QueryRow(ctx, `
@@ -1276,7 +1284,8 @@ func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*Da
 			COUNT(DISTINCT CASE WHEN ub.added_at >= date_trunc('year', NOW()) THEN b.id END) AS added_this_year,
 			COUNT(DISTINCT CASE
 				WHEN ubi.read_status = 'read'
-				 AND COALESCE(ubi.date_finished::timestamptz, ubi.updated_at) >= date_trunc('year', NOW())
+				 AND ubi.date_finished IS NOT NULL
+				 AND ubi.date_finished::timestamptz >= date_trunc('year', NOW())
 				THEN b.id END) AS read_this_year,
 			COUNT(DISTINCT CASE WHEN ubi.is_favorite THEN b.id END) AS favorites_count
 		FROM books b
@@ -1302,7 +1311,7 @@ func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*Da
 		),
 		reads AS (
 			SELECT
-				date_trunc('month', COALESCE(ubi.date_finished::timestamptz, ubi.updated_at)) AS m,
+				date_trunc('month', ubi.date_finished::timestamptz) AS m,
 				COUNT(DISTINCT b.id) AS c
 			FROM books b
 			JOIN library_books lb ON lb.book_id = b.id
@@ -1310,7 +1319,8 @@ func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*Da
 			JOIN book_editions be ON be.book_id = b.id
 			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1
 			WHERE ubi.read_status = 'read'
-			  AND COALESCE(ubi.date_finished::timestamptz, ubi.updated_at) >= date_trunc('month', NOW()) - INTERVAL '11 months'
+			  AND ubi.date_finished IS NOT NULL
+			  AND ubi.date_finished::timestamptz >= date_trunc('month', NOW()) - INTERVAL '11 months'
 			GROUP BY 1
 		)
 		SELECT to_char(months.m, 'YYYY-MM'), COALESCE(reads.c, 0)
@@ -1468,6 +1478,8 @@ type FinishedBook struct {
 
 // RecentlyFinished returns the most recently finished books for the user.
 // De-duplicates by book (multiple editions read collapse to a single row).
+// Only considers interactions with a known date_finished — see the
+// GetDashboardStats comment on why there is no updated_at fallback.
 func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit int) ([]*FinishedBook, error) {
 	q := `
 		WITH user_book AS (
@@ -1481,15 +1493,15 @@ func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit
 				b.id AS book_id,
 				ub.library_id,
 				b.title,
-				COALESCE(ubi.date_finished::timestamptz, ubi.updated_at) AS finished_at,
+				ubi.date_finished::timestamptz AS finished_at,
 				ubi.rating,
 				ubi.is_favorite
 			FROM books b
 			JOIN user_book ub ON ub.book_id = b.id
 			JOIN book_editions be ON be.book_id = b.id
 			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1
-			WHERE ubi.read_status = 'read'
-			ORDER BY b.id, COALESCE(ubi.date_finished::timestamptz, ubi.updated_at) DESC
+			WHERE ubi.read_status = 'read' AND ubi.date_finished IS NOT NULL
+			ORDER BY b.id, ubi.date_finished DESC
 		)
 		SELECT
 			f.book_id, f.library_id, l.name, f.title, f.finished_at, f.rating, f.is_favorite,
