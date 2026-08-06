@@ -41,6 +41,21 @@ func TestISFDBProvider_Configure(t *testing.T) {
 	}
 }
 
+func TestISFDBProvider_Configure_RejectsNonHTTPScheme(t *testing.T) {
+	for _, raw := range []string{
+		"file:///etc/passwd",
+		"gopher://internal.example/1",
+		"not a url",
+		"",
+	} {
+		p := NewISFDBProvider()
+		p.Configure(map[string]string{"base_url": raw})
+		if p.Enabled() || p.baseURL != "" {
+			t.Errorf("base_url %q: got enabled=%v baseURL=%q, want disabled with empty baseURL", raw, p.Enabled(), p.baseURL)
+		}
+	}
+}
+
 func TestISFDBProvider_LookupByISBN(t *testing.T) {
 	pages := 158
 	p := newTestISFDBProvider(t, func(w http.ResponseWriter, r *http.Request) {

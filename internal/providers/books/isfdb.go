@@ -67,7 +67,15 @@ func (p *ISFDBProvider) Info() providers.ProviderInfo {
 }
 
 func (p *ISFDBProvider) Configure(cfg map[string]string) {
-	p.baseURL = strings.TrimRight(cfg["base_url"], "/")
+	raw := strings.TrimRight(cfg["base_url"], "/")
+	if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		// Reject anything that isn't a well-formed http(s) URL rather than
+		// concatenating it straight into fetchJSON's request — base_url is
+		// admin-supplied, and the /providers/{name}/test endpoint would
+		// otherwise let it probe any scheme/host the API server can reach.
+		raw = ""
+	}
+	p.baseURL = raw
 	if v, ok := cfg["enabled"]; ok {
 		p.enabled = v != "false" && p.baseURL != ""
 	} else {
