@@ -89,6 +89,13 @@ type BookISBNProvider interface {
 }
 
 // BookSearchProvider can search for books by freetext query.
+//
+// Implementations must bound SearchBooks themselves, via an http.Client
+// Timeout or equivalent. Registry.SearchBooks only starts its deadline once
+// some provider has already responded, so before the first result the only
+// things that can end the wait are a provider returning and the request
+// context being cancelled. A provider that can hang indefinitely holds up
+// every search that includes it.
 type BookSearchProvider interface {
 	MetadataProvider
 	SearchBooks(ctx context.Context, query string) ([]*BookResult, error)
