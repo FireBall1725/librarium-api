@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/fireball1725/librarium-api/internal/providers"
 )
@@ -23,7 +24,7 @@ type ISBNdbProvider struct {
 func NewISBNdbProvider() *ISBNdbProvider {
 	return &ISBNdbProvider{
 		base:   base{enabled: false},
-		client: &http.Client{},
+		client: &http.Client{Timeout: 15 * time.Second},
 	}
 }
 

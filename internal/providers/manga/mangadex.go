@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/fireball1725/librarium-api/internal/providers"
 )
@@ -25,7 +26,7 @@ type MangaDexProvider struct {
 
 func NewMangaDexProvider() *MangaDexProvider {
 	return &MangaDexProvider{
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: 15 * time.Second},
 		enabled: true, // enabled by default (free, no key)
 	}
 }
