@@ -525,7 +525,7 @@ query SeriesVolumes($slug: String!) {
     id
     name
     books_count
-    series_books(order_by: {position: asc}) {
+    book_series(order_by: {position: asc}) {
       position
       book {
         title
@@ -584,7 +584,7 @@ func (p *HardcoverProvider) FetchSeriesVolumes(ctx context.Context, externalID s
 		}
 		if sb.Book != nil {
 			vr.Title = sb.Book.Title
-			vr.ReleaseDate = sb.Book.ReleaseDate
+			vr.ReleaseDate = normalizeHardcoverVolumeDate(sb.Book.ReleaseDate)
 			if sb.Book.Image != nil {
 				vr.CoverURL = sb.Book.Image.URL
 			}
@@ -592,6 +592,27 @@ func (p *HardcoverProvider) FetchSeriesVolumes(ctx context.Context, externalID s
 		out = append(out, vr)
 	}
 	return out, nil
+}
+
+// normalizeHardcoverVolumeDate reduces s to VolumeResult.ReleaseDate's
+// documented "YYYY-MM-DD" or "" contract. Hardcover's release dates are
+// typically already full dates (see the "already YYYY-MM-DD" assumption
+// elsewhere in this file for the book-level PublishDate field), but that's
+// an assumption about a crowdsourced, community-editable database, not a
+// guarantee — and unlike PublishDate, this field's value flows into a
+// series_volumes.release_date column via a raw `::date` SQL cast, where an
+// imprecise or malformed date isn't just cosmetically wrong, it fails the
+// whole insert. Validate rather than trust.
+func normalizeHardcoverVolumeDate(s string) string {
+	if s == "" {
+		return ""
+	}
+	for _, layout := range []string{"2006-01-02", "2006-01", "2006"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Format("2006-01-02")
+		}
+	}
+	return ""
 }
 
 // normalizeHardcoverLanguage converts Hardcover's full language names to ISO 639-1 codes.
@@ -807,10 +828,14 @@ type hcSeriesVolumesGQLResponse struct {
 }
 
 type hcSeriesData struct {
-	ID          int            `json:"id"`
-	Name        string         `json:"name"`
-	BooksCount  int            `json:"books_count"`
-	SeriesBooks []hcSeriesBook `json:"series_books"`
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	BooksCount int    `json:"books_count"`
+	// Hardcover's schema field is "book_series" (verified live against
+	// api.hardcover.app — "series_books" doesn't exist and fails GraphQL
+	// validation outright, so this was broken for every Hardcover-linked
+	// series regardless of data quality, not an edge case).
+	SeriesBooks []hcSeriesBook `json:"book_series"`
 }
 
 type hcSeriesBook struct {
