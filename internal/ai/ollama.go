@@ -25,10 +25,16 @@ const (
 )
 
 // OllamaProvider calls a local or self-hosted Ollama instance via /api/chat.
-// No API key — the server is trusted by virtue of being on the user's network.
+//
+// Ollama itself has no auth, but it's often reached through something that
+// does: a reverse proxy, or a management front end like Ollama Admin, whose
+// path-preserving /api/proxy gateway forwards to the real server and requires
+// a bearer token of its own. apiKey is optional and only sent when set, so a
+// bare Ollama on the local network keeps working untouched.
 type OllamaProvider struct {
 	base
 	baseURL string
+	apiKey  string
 	model   string
 	client  *http.Client
 }
@@ -46,7 +52,7 @@ func (p *OllamaProvider) Info() ProviderInfo {
 	return ProviderInfo{
 		Name:        "ollama",
 		DisplayName: "Ollama",
-		Description: "Local LLM inference via Ollama. No API key, no per-request cost.",
+		Description: "Local LLM inference via Ollama. No per-request cost.",
 		HelpText:    "Point this at a running Ollama server (default http://localhost:11434) and name a model you've pulled locally (e.g. llama3, mistral, qwen2).",
 		HelpURL:     "https://ollama.com/",
 		ConfigFields: []ConfigField{
@@ -59,6 +65,14 @@ func (p *OllamaProvider) Info() ProviderInfo {
 				Placeholder: defaultOllamaModel,
 				HelpText:    "Any model you've pulled locally. Run `ollama list` on the Ollama host to see what's available.",
 			},
+			{
+				Key:         "api_key",
+				Label:       "API key (optional)",
+				Type:        "password",
+				Required:    false,
+				Placeholder: "only if fronted by an auth proxy",
+				HelpText:    "Sent as `Authorization: Bearer <key>`. Leave blank for a bare Ollama server. Needed when the base URL points at a gateway that authenticates, e.g. Ollama Admin's /api/proxy.",
+			},
 		},
 	}
 }
@@ -70,6 +84,7 @@ func (p *OllamaProvider) Configure(cfg map[string]string) {
 	if p.baseURL == "" {
 		p.baseURL = defaultOllamaBaseURL
 	}
+	p.apiKey = cfg["api_key"]
 	if m, ok := cfg["model"]; ok && m != "" {
 		p.model = m
 	}
@@ -118,6 +133,9 @@ func (p *OllamaProvider) Generate(ctx context.Context, req GenerateRequest) (*Ge
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
 
 	// Ollama can hang for a long time: the model may still be loading, a dead
 	// TCP connection from the pool may need to time out, or a thinking model
@@ -200,6 +218,9 @@ func (p *OllamaProvider) ListModels(ctx context.Context) ([]OllamaModel, error) 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/api/tags", nil)
 	if err != nil {
 		return nil, err
+	}
+	if p.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 
 	resp, err := p.client.Do(httpReq)
