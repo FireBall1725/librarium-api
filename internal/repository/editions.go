@@ -280,14 +280,21 @@ func (r *EditionRepo) UpsertInteraction(ctx context.Context, userID, editionID u
 		INSERT INTO user_book_interactions
 			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite, progress)
 		VALUES
-			($1, $2, $3, $4, $5, NULLIF($6,''), NULLIF($7,''), $8, $9, $10, $11)
+			($1, $2, $3, $4, $5, NULLIF($6,''), NULLIF($7,''), $8,
+			 COALESCE($9, CASE WHEN $4 = 'read' THEN CURRENT_DATE END), $10, $11)
 		ON CONFLICT (user_id, book_edition_id) DO UPDATE
 		SET read_status   = EXCLUDED.read_status,
 		    rating        = EXCLUDED.rating,
 		    notes         = EXCLUDED.notes,
 		    review        = EXCLUDED.review,
 		    date_started  = EXCLUDED.date_started,
-		    date_finished = EXCLUDED.date_finished,
+		    -- Marking a book read without naming a day stamps today. The
+		    -- dashboard counts finished books by date_finished alone, so a
+		    -- read row with no date is invisible to it. See migration 000022.
+		    date_finished = COALESCE(
+		        EXCLUDED.date_finished,
+		        CASE WHEN EXCLUDED.read_status = 'read' THEN CURRENT_DATE END
+		    ),
 		    is_favorite   = EXCLUDED.is_favorite,
 		    progress      = EXCLUDED.progress,
 		    updated_at    = NOW()
@@ -330,14 +337,23 @@ func (r *EditionRepo) MergeInteraction(
 		INSERT INTO user_book_interactions
 			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite, progress)
 		VALUES
-			($1, $2, $3, COALESCE(NULLIF($4,''),''), $5, NULLIF($6,''), NULLIF($7,''), $8, $9, COALESCE($10, false), $11)
+			($1, $2, $3, COALESCE(NULLIF($4,''),''), $5, NULLIF($6,''), NULLIF($7,''), $8,
+			 COALESCE($9, CASE WHEN NULLIF($4,'') = 'read' THEN CURRENT_DATE END), COALESCE($10, false), $11)
 		ON CONFLICT (user_id, book_edition_id) DO UPDATE
 		SET read_status   = COALESCE(NULLIF(EXCLUDED.read_status,''), user_book_interactions.read_status),
 		    rating        = COALESCE(EXCLUDED.rating, user_book_interactions.rating),
 		    notes         = COALESCE(EXCLUDED.notes, user_book_interactions.notes),
 		    review        = COALESCE(EXCLUDED.review, user_book_interactions.review),
 		    date_started  = COALESCE(EXCLUDED.date_started, user_book_interactions.date_started),
-		    date_finished = COALESCE(EXCLUDED.date_finished, user_book_interactions.date_finished),
+		    -- Same rule as UpsertInteraction: a row that ends up read with no
+		    -- date gets today, so the dashboard can see it. Only fires on the
+		    -- transition, since an existing date_finished wins first.
+		    date_finished = COALESCE(
+		        EXCLUDED.date_finished,
+		        user_book_interactions.date_finished,
+		        CASE WHEN COALESCE(NULLIF(EXCLUDED.read_status,''), user_book_interactions.read_status) = 'read'
+		             THEN CURRENT_DATE END
+		    ),
 		    is_favorite   = COALESCE($10, user_book_interactions.is_favorite),
 		    progress      = COALESCE(EXCLUDED.progress, user_book_interactions.progress),
 		    updated_at    = NOW()
