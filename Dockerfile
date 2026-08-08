@@ -1,4 +1,6 @@
-FROM golang:1.26-alpine AS builder
+# Pinned to the BUILD platform: without this, buildx runs the arm64 leg under
+# QEMU emulation. Go cross-compiles natively.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -6,7 +8,9 @@ COPY . .
 # VERSION is injected at build time by the release workflow. Defaults to the
 # value baked into internal/version/version.go when building locally.
 ARG VERSION
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+# Supplied by buildx per platform leg.
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags="-s -w ${VERSION:+-X 'github.com/fireball1725/librarium-api/internal/version.Version=${VERSION}'}" \
     -o /librarium-api ./cmd/api
 # Pre-create the default cover storage path so it exists as a mount point.
