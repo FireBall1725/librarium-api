@@ -27,6 +27,13 @@ indent_size = 4
 [Makefile]
 indent_style = tab
 
+# SQL indents continuation lines to align under keywords, so a WHERE clause
+# sits at 5 spaces and its AND at 7. That is alignment, not indentation, and
+# demanding multiples of two mangles it. Trailing whitespace and the final
+# newline are still checked.
+[*.sql]
+indent_size = unset
+
 # Two trailing spaces are a hard line break in Markdown, and indentation is
 # structural: content nested under "1. " is indented three spaces, which is
 # correct and is not a multiple of two. Leaving indent_size set here fails every
