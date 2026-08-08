@@ -17,9 +17,10 @@
   "Verbose": false,
   "IgnoreDefaults": false,
   "SpacesAfterTabs": false,
+  "_comment_indentation": "Indentation is off because the rule is 'left padding must be a multiple of indent_size', which fires on ANY aligned continuation line rather than on genuinely wrong indentation. It flagged, in order: Go raw string literals, Markdown ordered-list nesting, SQL keyword alignment, a vendored glabels XML catalogue, a Helm comment block, CSS comment continuations, and a generated 4-space JSON manifest. Every one was formatted correctly. Indentation is enforced where it can be enforced honestly: gofmt for Go, eslint for TS, ruff for Python, swift-format for Swift. The .editorconfig still declares it, which is what editors read.",
   "Disable": {
     "EndOfLine": false,
-    "Indentation": false,
+    "Indentation": true,
     "InsertFinalNewline": false,
     "TrimTrailingWhitespace": false,
     "MaxLineLength": true
