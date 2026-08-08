@@ -34,6 +34,11 @@ indent_style = tab
 [*.sql]
 indent_size = unset
 
+# Helm templates indent to shape their rendered YAML, and their comment blocks
+# align continuation lines under prose. Neither lands on a multiple of two.
+[*.tpl]
+indent_size = unset
+
 # Two trailing spaces are a hard line break in Markdown, and indentation is
 # structural: content nested under "1. " is indented three spaces, which is
 # correct and is not a multiple of two. Leaving indent_size set here fails every
@@ -44,8 +49,10 @@ indent_size = unset
 indent_style = unset
 
 # Files whose bytes belong to a tool, not to us. Xcode rewrites pbxproj on
-# every project change and will happily undo anything done here.
-[{*.pbxproj,*.xcscheme,*.plist,appcast.xml,appcast-prerelease.xml}]
+# every project change and will happily undo anything done here, and the XML in
+# these repos is vendored or generated data (glabels label catalogues, the
+# Sparkle appcast) rather than anything anyone formats by hand.
+[{*.pbxproj,*.xcscheme,*.plist,*.xml}]
 indent_style = unset
 indent_size = unset
 trim_trailing_whitespace = false
