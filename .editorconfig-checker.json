@@ -1,0 +1,27 @@
+{
+  "_comment": "Go is excluded because gofmt owns it and is gated separately in ci-go.yml. This checker cannot see inside a raw string literal, so it reads a space-indented HTML template in a handler, or fixtures in a _test.go, as wrong indentation: 60 such findings on firebin-api, every one inside a string.",
+  "Exclude": [
+    "\\.go$",
+    "^vendor/",
+    "^node_modules/",
+    "^\\.build/",
+    "^dist/",
+    "^docs/swagger\\.",
+    "^docs/docs\\.go$",
+    "Package\\.resolved$",
+    "package-lock\\.json$",
+    "\\.generated\\.swift$",
+    "\\.min\\.(js|css)$",
+    "\\.(png|jpg|jpeg|gif|ico|icns|pdf|woff2?|ttf|dmg|zip)$"
+  ],
+  "Verbose": false,
+  "IgnoreDefaults": false,
+  "SpacesAfterTabs": false,
+  "Disable": {
+    "EndOfLine": false,
+    "Indentation": false,
+    "InsertFinalNewline": false,
+    "TrimTrailingWhitespace": false,
+    "MaxLineLength": true
+  }
+}

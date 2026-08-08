@@ -1,107 +1,40 @@
 name: Release
 
+# The release lives in FireBall1725/workflows. This repo gains an rc channel it
+# did not have: an rc builds a pullable image without moving :latest, so a
+# change can be deployed and tested before it counts as released.
+
 on:
   workflow_dispatch:
     inputs:
-      bump:
-        description: "Version bump type"
+      channel:
+        description: Release channel
         required: true
-        default: "auto"
+        default: rc
         type: choice
         options:
-          - auto    # next revision in current YY.MM (rolls to .0 on month change)
-          - major   # force YY.MM.0 from today's date
+          - rc
+          - stable
       dry-run:
-        description: "Compute the version but don't tag, push, or publish"
+        description: Compute and build, but push nothing and tag nothing
         required: false
         default: false
         type: boolean
-
-permissions:
-  contents: write
-  packages: write
+      force-version:
+        description: Re-cut this exact version instead of computing the next one
+        required: false
+        default: ""
+        type: string
 
 jobs:
   release:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Compute next version
-        id: version
-        env:
-          BUMP: ${{ inputs.bump }}
-        run: |
-          set -euo pipefail
-          YY=$(date -u +%y)
-          MM=$(date -u +%-m)
-          PREFIX="${YY}.${MM}"
-
-          if [ "$BUMP" = "major" ]; then
-            REV=0
-          else
-            LAST=$(git tag --list "v${PREFIX}.*" | sort -V | tail -n1 || true)
-            if [ -z "$LAST" ]; then
-              REV=0
-            else
-              LAST_REV=${LAST##*.}
-              REV=$((LAST_REV + 1))
-            fi
-          fi
-
-          VERSION="${PREFIX}.${REV}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Releasing version: $VERSION"
-
-      # The version lives only in the git tag and in the image the build embeds.
-      # version.go has no hardcoded string — dev builds compute "{YY}.{M}.DEV"
-      # at startup, and the Dockerfile injects the tagged version via the
-      # VERSION build-arg → ldflags.
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        if: ${{ inputs.dry-run == false }}
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        if: ${{ inputs.dry-run == false }}
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            VERSION=${{ steps.version.outputs.version }}
-          tags: |
-            ghcr.io/fireball1725/librarium-api:${{ steps.version.outputs.version }}
-            ghcr.io/fireball1725/librarium-api:latest
-
-      - name: Tag release
-        if: ${{ inputs.dry-run == false }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          git tag "v${VERSION}"
-          git push origin "v${VERSION}"
-
-      - name: Create GitHub Release
-        if: ${{ inputs.dry-run == false }}
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
-          generate_release_notes: true
+    permissions:
+      contents: write
+      packages: write
+    uses: FireBall1725/workflows/.github/workflows/release-container.yml@v1
+    with:
+      image: ghcr.io/fireball1725/librarium-api
+      channel: ${{ inputs.channel }}
+      dry-run: ${{ inputs.dry-run }}
+      force-version: ${{ inputs.force-version }}
+    secrets: inherit

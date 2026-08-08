@@ -1,0 +1,32 @@
+# Drives the Discord post in #releases.
+
+project:
+  name: Librarium API
+  emoji: "📚"
+  footer: "Librarium · self-hosted book, manga, and comic tracker"
+
+channels:
+  stable:
+    announce: true
+    colour: "0x2ECC71"
+    prefix: ""
+  rc:
+    announce: true
+    colour: "0xF1C40F"
+    prefix: "Release candidate — "
+  nightly:
+    announce: false
+
+getting_started: |
+  ```
+  docker pull {{image}}
+  ```
+  Self-hosters: bump the tag in `deploy/docker-compose/`.
+
+links:
+  - name: Site
+    url: https://librarium.press/
+  - name: API docs
+    url: https://fireball1725.github.io/librarium-api/
+  - name: Changes
+    url: "{{compare_url}}"

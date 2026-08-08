@@ -1,22 +1,28 @@
-# golangci-lint v2 configuration for librarium-api.
+# Shared golangci-lint config. Copied into every Go repo by scaffold.sh; do not
+# hand-edit a copy.
 #
-# First-pass baseline — establishes a quiet floor so CI stays green and
-# new code doesn't drift. Tighten later by re-enabling rules below as the
-# codebase warrants. Adding rules to a quiet tree is easy; opening a PR
-# with 50 new findings isn't.
+# Generalised from firebin-api's hand-tuned config, which was the best of the
+# five in the tree. librarium-mcp and firebin-mcp were missing the `formatters`
+# block entirely, so gofmt was not gated there despite the rest of the config
+# being near-identical.
+#
+# Keep in step with the runner pinned in the workflows repo's ci-go.yml:
+# golangci-lint-action@v8 with version v2.11.4. Older action majors install a
+# v1 binary, which rejects this file outright with "unsupported version of the
+# configuration".
 #
 # What's enabled:
 #
 #   standard set: errcheck, govet, ineffassign, staticcheck, unused
-#   bodyclose:    HTTP response body leaks bleed file descriptors in prod
+#   bodyclose:    the provider adapters are HTTP clients; a leaked response
+#                 body leaks a file descriptor per call
 #   misspell:     typos in user-facing strings, doc comments, errors
 #
 # What's disabled (and why):
 #
-#   gocritic    — useful but currently flags ~6 stylistic issues across
-#                 the codebase (appendAssign on common idioms, ifElseChain
-#                 / singleCaseSwitch suggestions). Re-enable in a focused
-#                 cleanup PR.
+#   gocritic    — worth having, but it flags a batch of stylistic issues across
+#                 the existing trees. Re-enable in a focused cleanup PR rather
+#                 than burying the findings in an unrelated diff.
 version: "2"
 
 run:
@@ -32,31 +38,36 @@ linters:
   # docs/, etc.) — keep it out of the linter's scope.
   exclusions:
     generated: lax
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go
   settings:
     errcheck:
       # Conventional patterns where the unchecked error is intentional:
       #   - `defer tx.Rollback(ctx)` after a successful `Commit` is a
-      #     documented pgx pattern; the second call returns
-      #     ErrTxClosed and we don't care.
+      #     documented pgx pattern; the second call returns ErrTxClosed and
+      #     we don't care.
       #   - `defer rows.Close()` is the canonical pgx idiom.
-      #   - `w.Write(...)` on response writers — middleware downstream
-      #     of us handles the actual I/O failure path.
+      #   - `w.Write(...)` on response writers — middleware downstream of us
+      #     handles the actual I/O failure path.
       exclude-functions:
         - (github.com/jackc/pgx/v5.Tx).Rollback
         - (github.com/jackc/pgx/v5.Rows).Close
+        - (github.com/jackc/pgx/v5.BatchResults).Close
         - (net/http.ResponseWriter).Write
+        - (*compress/gzip.Reader).Close
         # Deferred Close on file handles, response bodies, and other
         # io.Closer implementations — convention is to ignore the close
         # error, the read/write path already surfaced anything fatal.
         - (io.Closer).Close
-        # JSON encoders here write directly to the ResponseWriter; an
-        # I/O failure surfaces via the writer, not the encoder return.
+        # JSON encoders here write directly to the ResponseWriter; an I/O
+        # failure surfaces via the writer, not the encoder return.
         - (*encoding/json.Encoder).Encode
 
-# gofmt is enforced in CI (see .github/workflows/ci.yml). The tree was
-# brought to a clean baseline in one sweep; this keeps it there so outside
-# PRs stop carrying unrelated whitespace churn from editors that format on
-# save. Run `golangci-lint fmt` to fix locally.
+# gofmt is enforced so the tree stays clean and outside PRs stop carrying
+# unrelated whitespace churn from editors that format on save. Run
+# `golangci-lint fmt` to fix locally.
 formatters:
   enable:
     - gofmt
