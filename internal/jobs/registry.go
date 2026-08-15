@@ -29,6 +29,7 @@ const (
 	KindEnrichment    Kind = "enrichment"
 	KindAISuggestions Kind = "ai_suggestions"
 	KindCoverBackfill Kind = "cover_backfill"
+	KindHistoryPrune  Kind = "history_prune"
 )
 
 // TriggerCtx is everything the Enqueue hook of a Definition needs
@@ -62,6 +63,11 @@ type Definition struct {
 	// DefaultCron is the seed value when an admin first enables a
 	// schedule for this kind from the UI.
 	DefaultCron string
+	// DefaultEnabled seeds the schedule row switched on. Reserved for
+	// housekeeping kinds that have to run for the instance to stay
+	// healthy (history retention); anything that spends money or calls a
+	// provider stays off until an admin opts in.
+	DefaultEnabled bool
 	// Enqueue turns a trigger into a River job. Called by the
 	// scheduler loop (for scheduled runs) or directly by admin /
 	// user-facing endpoints (for manual runs).
