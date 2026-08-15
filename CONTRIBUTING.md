@@ -2,6 +2,8 @@
 
 Thanks for your interest in contributing. This document covers how to submit changes, what's expected in a PR, and the legal terms your contribution is made under.
 
+Using an AI coding agent? [AGENTS.md](./AGENTS.md) has the architecture, the build and test loop, and the conventions it needs. Point your tool at it, and review what it writes before you open the PR.
+
 ## Before you start
 
 - Check the open issues — your change may already be in progress or planned differently.
