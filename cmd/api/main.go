@@ -409,6 +409,54 @@ func main() {
 		},
 	})
 
+	// History retention. Every other kind writes rows into `jobs` and
+	// nothing ever took them out, so an instance that imports and enriches
+	// weekly grows job history without bound — job_events and the AI run
+	// log (prompt + response text inline) are the bulk of it. This kind
+	// ages finished runs out on a nightly sweep. On by default: an
+	// instance nobody administers still has to stay healthy.
+	jobRegistry.Register(&jobs.Definition{
+		Kind:           jobs.KindHistoryPrune,
+		DisplayName:    "Job history cleanup",
+		Description:    "Deletes finished job history past the retention window so it doesn't grow forever.",
+		Schedulable:    true,
+		DefaultCron:    "30 4 * * *",
+		DefaultEnabled: true,
+		Enqueue: func(ctx context.Context, trig jobs.TriggerCtx, cfgJSON json.RawMessage) error {
+			opts := jobs.ParseRetentionConfig(cfgJSON)
+			res, err := jobRepo.PruneHistory(ctx, opts)
+			if err != nil {
+				return err
+			}
+			// The sweep runs inline rather than through River — it's two
+			// DELETEs, and routing it through the queue would only add a
+			// row to the table we're trying to keep small.
+			total := res.JobsDeleted + res.AIRunsDeleted
+			if progressJSON, perr := json.Marshal(map[string]any{
+				"processed":       total,
+				"total":           total,
+				"jobs_deleted":    res.JobsDeleted,
+				"ai_runs_deleted": res.AIRunsDeleted,
+				"max_age_days":    opts.MaxAgeDays,
+				"max_per_kind":    opts.MaxPerKind,
+			}); perr == nil {
+				_ = jobRepo.UpdateProgress(ctx, trig.JobID, progressJSON)
+			}
+			_ = jobRepo.AppendEvent(ctx, trig.JobID, "prune_summary", map[string]any{
+				"jobs_deleted":    res.JobsDeleted,
+				"ai_runs_deleted": res.AIRunsDeleted,
+				"max_age_days":    opts.MaxAgeDays,
+				"max_per_kind":    opts.MaxPerKind,
+			})
+			slog.Info("job history pruned",
+				"jobs_deleted", res.JobsDeleted,
+				"ai_runs_deleted", res.AIRunsDeleted,
+				"max_age_days", opts.MaxAgeDays,
+				"max_per_kind", opts.MaxPerKind)
+			return nil
+		},
+	})
+
 	// Kick the scheduler off after registry is populated.
 	jobRepoForSched := repository.NewJobRepo(pool)
 	// Seed default schedule rows for any schedulable kind that doesn't
@@ -428,9 +476,12 @@ func main() {
 			cron = "0 3 * * *"
 		}
 		if err := jobRepoForSched.UpsertSchedule(baseCtx, &models.JobSchedule{
-			Kind:    string(def.Kind),
-			Cron:    cron,
-			Enabled: false, // admin flips this on from the UI
+			Kind: string(def.Kind),
+			Cron: cron,
+			// Off unless the kind asks to be on — admin flips the rest on
+			// from the UI. Housekeeping kinds set DefaultEnabled so an
+			// upgrade doesn't leave retention switched off by default.
+			Enabled: def.DefaultEnabled,
 		}); err != nil {
 			slog.Warn("seeding schedule failed", "kind", def.Kind, "error", err)
 		}
