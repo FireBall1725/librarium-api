@@ -1054,13 +1054,14 @@ func (h *BookHandler) Facets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts, _, err := parseListBooksOpts(r)
-	if err != nil {
-		respond.Error(w, http.StatusBadRequest, err.Error())
-		return
+	claims := middleware.ClaimsFromContext(r.Context())
+	var callerID uuid.UUID
+	if claims != nil {
+		callerID = claims.UserID
 	}
 
-	facets, err := h.books.Facets(r.Context(), []uuid.UUID{libraryID}, opts)
+	facets, err := h.books.Facets(r.Context(), []uuid.UUID{libraryID},
+		parseFacetSelection(r), r.URL.Query().Get("q"), callerID)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return

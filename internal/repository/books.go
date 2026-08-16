@@ -68,7 +68,12 @@ func (r *BookRepo) ListMediaTypes(ctx context.Context) ([]*models.MediaType, err
 // When loanLibraryArg > 0, active_loan_count is scoped to that library_id
 // arg (used by ListBooks). When 0, it counts active loans across every
 // library the book belongs to (used by FindByID).
-func booksSelect(userStatusArg, loanLibraryArg int) string {
+// loanLibraryIsSet says whether loanLibraryArg binds a uuid[] rather than a
+// single uuid. The cross-library Books surface scopes by a set; FindByID and
+// ListByContributor still scope by one library. Getting this wrong is a runtime
+// "operator does not exist: uuid = uuid[]", not a compile error, so it is a
+// parameter rather than something inferred.
+func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) string {
 	// All three caller-scoped subqueries (status / rating / progress) use
 	// the same ORDER BY so they pick the same interaction row, keeping the
 	// returned values internally consistent for users who own multiple
@@ -114,9 +119,17 @@ func booksSelect(userStatusArg, loanLibraryArg int) string {
 
 	var activeLoanExpr string
 	if loanLibraryArg > 0 {
+		// $1 is the library SCOPE and is always an array now, one entry for a
+		// per-library call and the caller's whole set for the cross-library
+		// Books surface. `= ANY` covers both; `=` broke the moment the scope
+		// stopped being a single id.
+		match := "library_id = $%d"
+		if loanLibraryIsSet {
+			match = "library_id = ANY($%d)"
+		}
 		activeLoanExpr = fmt.Sprintf(`(
 		SELECT COUNT(*) FROM loans
-		WHERE book_id = b.id AND library_id = $%d AND returned_at IS NULL
+		WHERE book_id = b.id AND `+match+` AND returned_at IS NULL
 	) AS active_loan_count`, loanLibraryArg)
 	} else {
 		activeLoanExpr = `(
@@ -311,7 +324,7 @@ func (r *BookRepo) FindByID(ctx context.Context, id uuid.UUID, callerID uuid.UUI
 		loanLibraryArg = len(args)
 	}
 
-	q := booksSelect(callerArg, loanLibraryArg) + ` WHERE b.id = $1`
+	q := booksSelect(callerArg, loanLibraryArg, false) + ` WHERE b.id = $1`
 
 	book, err := scanBook(r.db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -338,10 +351,10 @@ func (r *BookRepo) ListByContributor(ctx context.Context, libraryID, contributor
 		  )
 		ORDER BY natural_sort_key(b.title)`
 	if callerID != uuid.Nil {
-		q = booksSelect(3, 1) + scope
+		q = booksSelect(3, 1, false) + scope
 		args = []any{libraryID, contributorID, callerID}
 	} else {
-		q = booksSelect(0, 1) + scope
+		q = booksSelect(0, 1, false) + scope
 		args = []any{libraryID, contributorID}
 	}
 
@@ -781,9 +794,9 @@ func (r *BookRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, opts 
 		args = append(args, opts.CallerID)
 		userArgIdx := argIdx
 		argIdx++
-		selectQuery = booksSelect(userArgIdx, 1)
+		selectQuery = booksSelect(userArgIdx, 1, true)
 	} else {
-		selectQuery = booksSelect(0, 1)
+		selectQuery = booksSelect(0, 1, true)
 	}
 
 	// List

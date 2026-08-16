@@ -5,9 +5,12 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
+	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/google/uuid"
 )
 
@@ -121,41 +124,64 @@ func (h *BookHandler) ListMyBooks(w http.ResponseWriter, r *http.Request) {
 // @Failure     401  {object}  object{error=string}
 // @Router      /me/books/facets [get]
 func (h *BookHandler) MyBookFacets(w http.ResponseWriter, r *http.Request) {
-	opts, _, err := parseListBooksOpts(r)
-	if err != nil {
-		respond.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
 	libraryIDs, err := h.readableLibraryIDs(r)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
 	}
 
-	facets, err := h.books.Facets(r.Context(), libraryIDs, opts)
+	claims := middleware.ClaimsFromContext(r.Context())
+	var callerID uuid.UUID
+	if claims != nil {
+		callerID = claims.UserID
+	}
+
+	facets, err := h.books.Facets(r.Context(), libraryIDs, parseFacetSelection(r), r.URL.Query().Get("q"), callerID)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
 	}
+	respond.JSON(w, http.StatusOK, map[string]any{"data": facets})
+}
 
-	// The library facet is only meaningful across libraries, so it is built
-	// here rather than in the shared facet query: per-library routes would
-	// always return a single value with the same count as the total.
-	libFacet, err := h.books.LibraryFacet(r.Context(), libraryIDs, opts)
-	if err != nil {
-		respond.ServerError(w, r, err)
-		return
+// parseFacetSelection reads the same short parameters the client keeps in its
+// URL (lib, status, type, genre, tag, rating), each a comma-separated list.
+//
+// Deliberately not the structured `filter` JSON the list endpoint takes: the
+// facet query needs each dimension separately so it can exclude a dimension's
+// own selection when counting it, and flattened filter groups cannot be taken
+// apart again.
+func parseFacetSelection(r *http.Request) repository.FacetSelection {
+	q := r.URL.Query()
+	split := func(key string) []string {
+		raw := strings.TrimSpace(q.Get(key))
+		if raw == "" {
+			return nil
+		}
+		out := make([]string, 0, 4)
+		for _, part := range strings.Split(raw, ",") {
+			if p := strings.TrimSpace(part); p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
 	}
 
-	respond.JSON(w, http.StatusOK, map[string]any{
-		"data": map[string]any{
-			"read_status": facets.ReadStatus,
-			"media_type":  facets.MediaType,
-			"genre":       facets.Genre,
-			"tag":         facets.Tag,
-			"rating":      facets.Rating,
-			"library":     libFacet,
-		},
-	})
+	sel := repository.FacetSelection{
+		ReadStatus: split("status"),
+		MediaTypes: split("type"),
+		Genres:     split("genre"),
+		Tags:       split("tag"),
+	}
+	for _, s := range split("lib") {
+		if id, err := uuid.Parse(s); err == nil {
+			sel.Libraries = append(sel.Libraries, id)
+		}
+	}
+	for _, s := range split("rating") {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 && n <= 5 {
+			sel.Ratings = append(sel.Ratings, int32(n))
+		}
+	}
+	return sel
 }

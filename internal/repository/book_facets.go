@@ -6,6 +6,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/google/uuid"
@@ -22,6 +23,7 @@ type FacetValue struct {
 // BookFacets is the counts block returned alongside a book search, so a client
 // can render a filter rail without a request per value.
 type BookFacets struct {
+	Library    []FacetValue `json:"library"`
 	ReadStatus []FacetValue `json:"read_status"`
 	MediaType  []FacetValue `json:"media_type"`
 	Genre      []FacetValue `json:"genre"`
@@ -29,105 +31,190 @@ type BookFacets struct {
 	Rating     []FacetValue `json:"rating"`
 }
 
-// Facets counts books per facet value over the whole filtered set, not the
-// page. Everything is one round trip: a query per facet would multiply with the
-// number of dimensions and each would have to rebuild the same filter.
+// FacetSelection is what the user has ticked in each facet. An empty slice
+// means that facet is not filtering.
+//
+// Passed as structured values rather than as opaque filter JSON because each
+// dimension has to be counted with its OWN selection removed, which is
+// impossible once the conditions have been flattened into one WHERE string.
+type FacetSelection struct {
+	Libraries  []uuid.UUID
+	ReadStatus []string
+	MediaTypes []string // media_types.name
+	Genres     []string
+	Tags       []string
+	Ratings    []int32
+}
+
+func emptyFacets() *BookFacets {
+	return &BookFacets{
+		Library: []FacetValue{}, ReadStatus: []FacetValue{}, MediaType: []FacetValue{},
+		Genre: []FacetValue{}, Tag: []FacetValue{}, Rating: []FacetValue{},
+	}
+}
+
+// Facets counts books per facet value over the whole filtered set, not the page.
+//
+// Each dimension is counted with its own selection EXCLUDED. Applying every
+// filter uniformly collapses the facet you just used: tick Fantasy and the
+// genre list shows only Fantasy, so adding Science Fiction becomes impossible
+// without clearing first. Excluding a dimension's own selection answers the
+// question the rail is actually asking, which is "what would I get if I picked
+// this one as well".
+//
+// One pass, not a query per dimension. Match flags are computed once per row and
+// each dimension aggregates using the five flags it does not own.
 //
 // Read status and rating come from user_book_interactions, which is keyed on
-// book_edition_id rather than book_id. Joining editions directly would count a
-// work with three editions three times, so interactions are collapsed to one
-// row per book first. Measured during the spike: 1,000 extra editions inflated
-// the status counts by exactly 1,000 before this was fixed, and fixing it cost
-// nothing (338ms against 340ms at 100k books).
-//
-// Best status wins, read > reading > did_not_finish > unread, because "have I
-// read this" is a question about the work rather than about one printing.
-// libraryIDs scopes the counts. A single entry serves the per-library route;
-// the caller's whole membership set serves the cross-library Books surface.
-func (r *BookRepo) Facets(ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts) (*BookFacets, error) {
-	if len(libraryIDs) == 0 {
-		// No accessible libraries is a legitimate state, not an error: a new
-		// user, or one whose only membership was revoked. Empty facets let the
-		// client render its own empty state instead of a failure.
-		return &BookFacets{
-			ReadStatus: []FacetValue{}, MediaType: []FacetValue{}, Genre: []FacetValue{},
-			Tag: []FacetValue{}, Rating: []FacetValue{},
-		}, nil
-	}
-	f := r.buildBookFilter(libraryIDs, opts)
-
-	args := f.args
-	callerArg := 0
-	if opts.CallerID != uuid.Nil {
-		args = append(args, opts.CallerID)
-		callerArg = f.nextArg
+// book_edition_id. Joining editions directly counts a work with three editions
+// three times, so interactions collapse to one row per book first, best status
+// winning: read > reading > did_not_finish > unread.
+func (r *BookRepo) Facets(
+	ctx context.Context,
+	accessible []uuid.UUID,
+	sel FacetSelection,
+	query string,
+	callerID uuid.UUID,
+) (*BookFacets, error) {
+	if len(accessible) == 0 {
+		return emptyFacets(), nil
 	}
 
-	// The filtered set of book ids, computed once and reused by every facet.
-	interJoin := "SELECT NULL::uuid AS book_id, NULL::text AS read_status, NULL::int AS rating WHERE false"
-	if callerArg > 0 {
-		interJoin = fmt.Sprintf(`
-			SELECT e.book_id,
-			       CASE min(CASE i.read_status
-			                    WHEN 'read' THEN 1 WHEN 'reading' THEN 2
-			                    WHEN 'did_not_finish' THEN 3 ELSE 4 END)
-			            WHEN 1 THEN 'read' WHEN 2 THEN 'reading'
-			            WHEN 3 THEN 'did_not_finish' ELSE 'unread' END AS read_status,
-			       max(i.rating) AS rating
-			FROM user_book_interactions i
-			JOIN book_editions e ON e.id = i.book_edition_id
-			WHERE i.user_id = $%d AND i.deleted_at IS NULL
-			GROUP BY e.book_id`, callerArg)
+	args := []any{accessible}
+	arg := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
 	}
 
-	query := fmt.Sprintf(`
+	// Text search is not a facet, so it narrows every dimension including the
+	// one being counted, and belongs in the base scope.
+	textWhere := ""
+	if query != "" {
+		p := arg("%" + query + "%")
+		textWhere = fmt.Sprintf(`AND (b.title ILIKE %[1]s OR EXISTS (
+            SELECT 1 FROM book_contributors bc JOIN contributors c ON c.id = bc.contributor_id
+            WHERE bc.book_id = b.id AND c.name ILIKE %[1]s))`, p)
+	}
+
+	interCTE := "SELECT NULL::uuid AS book_id, NULL::text AS read_status, NULL::int AS rating WHERE false"
+	if callerID != uuid.Nil {
+		p := arg(callerID)
+		interCTE = fmt.Sprintf(`
+            SELECT e.book_id,
+                   CASE min(CASE i.read_status
+                                WHEN 'read' THEN 1 WHEN 'reading' THEN 2
+                                WHEN 'did_not_finish' THEN 3 ELSE 4 END)
+                        WHEN 1 THEN 'read' WHEN 2 THEN 'reading'
+                        WHEN 3 THEN 'did_not_finish' ELSE 'unread' END AS read_status,
+                   max(i.rating) AS rating
+            FROM user_book_interactions i
+            JOIN book_editions e ON e.id = i.book_edition_id
+            WHERE i.user_id = %s AND i.deleted_at IS NULL
+            GROUP BY e.book_id`, p)
+	}
+
+	// One flag per dimension. An unused facet is always TRUE so it narrows
+	// nothing, and critically its parameter is never bound: Go evaluates call
+	// arguments eagerly, so building the expression unconditionally would append
+	// an arg whose placeholder never reaches the SQL, and Postgres then fails
+	// with "could not determine data type of parameter $N".
+	mLib, mStatus, mType := "TRUE", "TRUE", "TRUE"
+	mGenre, mTag, mRating := "TRUE", "TRUE", "TRUE"
+
+	if len(sel.Libraries) > 0 {
+		mLib = fmt.Sprintf(`EXISTS (SELECT 1 FROM library_books lb2 WHERE lb2.book_id = s.id
+                 AND lb2.deleted_at IS NULL AND lb2.library_id = ANY(%s))`, arg(sel.Libraries))
+	}
+	if len(sel.ReadStatus) > 0 {
+		mStatus = fmt.Sprintf(`COALESCE(x.read_status, 'unread') = ANY(%s)`, arg(sel.ReadStatus))
+	}
+	if len(sel.MediaTypes) > 0 {
+		mType = fmt.Sprintf(
+			`EXISTS (SELECT 1 FROM media_types mt2 WHERE mt2.id = s.media_type_id AND mt2.name = ANY(%s))`,
+			arg(sel.MediaTypes))
+	}
+	if len(sel.Genres) > 0 {
+		mGenre = fmt.Sprintf(`EXISTS (SELECT 1 FROM book_genres bg2 JOIN genres g2 ON g2.id = bg2.genre_id
+                 WHERE bg2.book_id = s.id AND g2.name = ANY(%s))`, arg(sel.Genres))
+	}
+	if len(sel.Tags) > 0 {
+		mTag = fmt.Sprintf(`EXISTS (SELECT 1 FROM book_tags bt2 JOIN tags t2 ON t2.id = bt2.tag_id
+                 WHERE bt2.book_id = s.id AND bt2.deleted_at IS NULL AND t2.name = ANY(%s))`, arg(sel.Tags))
+	}
+	if len(sel.Ratings) > 0 {
+		mRating = fmt.Sprintf(`x.rating = ANY(%s)`, arg(sel.Ratings))
+	}
+
+	// Every flag except the dimension's own.
+	others := func(skip string) string {
+		all := map[string]string{
+			"lib": "f.m_lib", "status": "f.m_status", "type": "f.m_type",
+			"genre": "f.m_genre", "tag": "f.m_tag", "rating": "f.m_rating",
+		}
+		parts := make([]string, 0, 5)
+		for k, v := range all {
+			if k != skip {
+				parts = append(parts, v)
+			}
+		}
+		insertionSort(parts) // deterministic SQL, so it diffs cleanly in logs
+		return strings.Join(parts, " AND ")
+	}
+
+	q := fmt.Sprintf(`
 WITH scope AS (
     SELECT DISTINCT b.id, b.media_type_id
     FROM books b
-    JOIN media_types mt ON mt.id = b.media_type_id
-    %s
-    %s
+    JOIN (SELECT DISTINCT book_id FROM library_books
+          WHERE library_id = ANY($1) AND deleted_at IS NULL) lb ON lb.book_id = b.id
+    WHERE TRUE %s
 ),
 inter AS (%s),
-joined AS (
+f AS (
     SELECT s.id, s.media_type_id,
            COALESCE(x.read_status, 'unread') AS read_status,
-           x.rating
-    FROM scope s
-    LEFT JOIN inter x ON x.book_id = s.id
+           x.rating,
+           %s AS m_lib, %s AS m_status, %s AS m_type,
+           %s AS m_genre, %s AS m_tag, %s AS m_rating
+    FROM scope s LEFT JOIN inter x ON x.book_id = s.id
 )
-SELECT 'read_status' AS dim, read_status AS value, read_status AS label, count(*) AS n
-FROM joined GROUP BY 2, 3
+SELECT 'library' AS dim, l.id::text AS value, l.name AS label, COUNT(DISTINCT f.id) AS n
+FROM f JOIN library_books lb3 ON lb3.book_id = f.id AND lb3.deleted_at IS NULL
+       JOIN libraries l ON l.id = lb3.library_id
+WHERE lb3.library_id = ANY($1) AND %s
+GROUP BY l.id, l.name
 UNION ALL
-SELECT 'media_type', mt.name, mt.display_name, count(*)
-FROM joined j JOIN media_types mt ON mt.id = j.media_type_id GROUP BY 2, 3
+SELECT 'read_status', f.read_status, f.read_status, COUNT(*)
+FROM f WHERE %s GROUP BY f.read_status
 UNION ALL
-SELECT 'genre', g.name, g.name, count(*)
-FROM joined j JOIN book_genres bg ON bg.book_id = j.id JOIN genres g ON g.id = bg.genre_id
-GROUP BY 2, 3
+SELECT 'media_type', mt.name, mt.display_name, COUNT(*)
+FROM f JOIN media_types mt ON mt.id = f.media_type_id
+WHERE %s GROUP BY mt.name, mt.display_name
 UNION ALL
-SELECT 'tag', t.name, t.name, count(*)
-FROM joined j JOIN book_tags bt ON bt.book_id = j.id AND bt.deleted_at IS NULL
-              JOIN tags t ON t.id = bt.tag_id AND t.deleted_at IS NULL
-GROUP BY 2, 3
+SELECT 'genre', g.name, g.name, COUNT(*)
+FROM f JOIN book_genres bg ON bg.book_id = f.id JOIN genres g ON g.id = bg.genre_id
+WHERE %s GROUP BY g.name
 UNION ALL
-SELECT 'rating', rating::text, rating::text, count(*)
-FROM joined WHERE rating IS NOT NULL GROUP BY 2, 3
-ORDER BY 1, 4 DESC, 2`, f.scopeJoin, f.where, interJoin)
+SELECT 'tag', t.name, t.name, COUNT(*)
+FROM f JOIN book_tags bt ON bt.book_id = f.id AND bt.deleted_at IS NULL
+       JOIN tags t ON t.id = bt.tag_id AND t.deleted_at IS NULL
+WHERE %s GROUP BY t.name
+UNION ALL
+SELECT 'rating', f.rating::text, f.rating::text, COUNT(*)
+FROM f WHERE f.rating IS NOT NULL AND %s GROUP BY f.rating
+ORDER BY 1, 4 DESC, 3`,
+		textWhere, interCTE,
+		mLib, mStatus, mType, mGenre, mTag, mRating,
+		others("lib"), others("status"), others("type"),
+		others("genre"), others("tag"), others("rating"))
 
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("counting book facets: %w", err)
 	}
 	defer rows.Close()
 
-	out := &BookFacets{
-		ReadStatus: []FacetValue{},
-		MediaType:  []FacetValue{},
-		Genre:      []FacetValue{},
-		Tag:        []FacetValue{},
-		Rating:     []FacetValue{},
-	}
+	out := emptyFacets()
 	for rows.Next() {
 		var dim string
 		var fv FacetValue
@@ -135,6 +222,8 @@ ORDER BY 1, 4 DESC, 2`, f.scopeJoin, f.where, interJoin)
 			return nil, fmt.Errorf("scanning facet row: %w", err)
 		}
 		switch dim {
+		case "library":
+			out.Library = append(out.Library, fv)
 		case "read_status":
 			out.ReadStatus = append(out.ReadStatus, fv)
 		case "media_type":
@@ -147,55 +236,16 @@ ORDER BY 1, 4 DESC, 2`, f.scopeJoin, f.where, interJoin)
 			out.Rating = append(out.Rating, fv)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading facet rows: %w", err)
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
-// LibraryFacet counts the filtered books per library.
-//
-// Kept out of Facets because it only means anything across several libraries:
-// on a per-library route it would return one value whose count equals the
-// total, which is noise rather than a filter.
-func (r *BookRepo) LibraryFacet(ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts) ([]FacetValue, error) {
-	if len(libraryIDs) == 0 {
-		return []FacetValue{}, nil
-	}
-	f := r.buildBookFilter(libraryIDs, opts)
-
-	// COUNT(DISTINCT b.id): a work held by two libraries is one book in each,
-	// not two, and the junction would otherwise multiply it.
-	// Unlike every other facet this one wants a row per (book, library), so it
-	// joins the junction directly instead of the deduping scope join and
-	// reapplies the library predicate itself. COUNT(DISTINCT b.id) still
-	// guards against a book appearing twice within one library.
-	query := fmt.Sprintf(`
-		SELECT l.id::text, l.name, COUNT(DISTINCT b.id)
-		FROM books b
-		JOIN media_types mt ON mt.id = b.media_type_id
-		JOIN library_books lbx ON lbx.book_id = b.id AND lbx.deleted_at IS NULL
-		JOIN libraries l ON l.id = lbx.library_id
-		%s
-		AND lbx.library_id = ANY($1)
-		GROUP BY l.id, l.name
-		ORDER BY 3 DESC, 2`, f.where)
-
-	rows, err := r.db.Query(ctx, query, f.args...)
-	if err != nil {
-		return nil, fmt.Errorf("counting library facet: %w", err)
-	}
-	defer rows.Close()
-
-	out := []FacetValue{}
-	for rows.Next() {
-		var fv FacetValue
-		if err := rows.Scan(&fv.Value, &fv.Label, &fv.Count); err != nil {
-			return nil, fmt.Errorf("scanning library facet: %w", err)
+// insertionSort keeps a six-element slice ordered without reaching for sort.
+func insertionSort(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
 		}
-		out = append(out, fv)
 	}
-	return out, rows.Err()
 }
 
 // ListAcross lists books spanning several libraries, deduplicated: a work held
