@@ -454,7 +454,27 @@ type ListBooksOpts struct {
 	IsRegex    bool             // if true, use b.title ~* $query instead of ILIKE
 	Groups     []ConditionGroup // from query language parser; groups are ANDed together
 	CallerID   uuid.UUID        // when non-zero, includes user_read_status for this user
+
+	// Selection is the faceted filter behind the Books rail. It is structured
+	// rather than folded into Groups because the query language has no field for
+	// read status, rating, or library, and because Facets has to count each
+	// dimension with its own selection removed, which is impossible once the
+	// conditions have been flattened into one WHERE string.
+	Selection FacetSelection
 }
+
+// bestReadStatusExpr collapses a user's per-edition statuses to one per work:
+// read beats reading beats did_not_finish beats unread. It aggregates, so it
+// belongs under a GROUP BY or in a scalar subquery.
+//
+// Declared once because the list filter and the facet counts both need it, and
+// any disagreement between them surfaces as a facet count that does not match
+// the rows sitting next to it.
+const bestReadStatusExpr = `CASE min(CASE i.read_status
+            WHEN 'read' THEN 1 WHEN 'reading' THEN 2
+            WHEN 'did_not_finish' THEN 3 ELSE 4 END)
+        WHEN 1 THEN 'read' WHEN 2 THEN 'reading'
+        WHEN 3 THEN 'did_not_finish' ELSE 'unread' END`
 
 // bookFilter is the WHERE clause for a book query, plus the args it binds.
 // List and Facets must build this identically: a facet count that disagrees
@@ -707,6 +727,75 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 				joined = "(" + joined + ")"
 			}
 			conditions = append(conditions, joined)
+		}
+	}
+
+	// Faceted selection. Values within a dimension are OR (ANY), dimensions are
+	// AND, which is what the rail's checkboxes mean: ticking two genres widens,
+	// ticking a genre and a tag narrows.
+	//
+	// sel.Libraries is deliberately absent: the library facet narrows libraryIDs
+	// at the caller instead, so it already lives in the scope join. Filtering on
+	// it here as well would apply the same restriction twice.
+	sel := opts.Selection
+
+	if len(sel.MediaTypes) > 0 {
+		conditions = append(conditions, fmt.Sprintf("mt.name = ANY($%d)", argIdx))
+		args = append(args, sel.MediaTypes)
+		argIdx++
+	}
+
+	if len(sel.Genres) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM book_genres bg2 JOIN genres g2 ON g2.id = bg2.genre_id
+            WHERE bg2.book_id = b.id AND g2.name = ANY($%d)
+        )`, argIdx))
+		args = append(args, sel.Genres)
+		argIdx++
+	}
+
+	if len(sel.Tags) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM book_tags bt3 JOIN tags t3 ON t3.id = bt3.tag_id
+            WHERE bt3.book_id = b.id AND bt3.deleted_at IS NULL AND t3.name = ANY($%d)
+        )`, argIdx))
+		args = append(args, sel.Tags)
+		argIdx++
+	}
+
+	// Read status and rating live on user_book_interactions, which is keyed on
+	// book_edition_id. A correlated scalar subquery per book, rather than a
+	// join: joining editions directly would multiply a work with three editions
+	// into three rows and inflate the count.
+	if len(sel.ReadStatus) > 0 {
+		if opts.CallerID == uuid.Nil {
+			// No caller means no interactions, so every book reads as unread.
+			// Say that in SQL rather than silently dropping the filter.
+			conditions = append(conditions, fmt.Sprintf("'unread' = ANY($%d)", argIdx))
+			args = append(args, sel.ReadStatus)
+			argIdx++
+		} else {
+			conditions = append(conditions, fmt.Sprintf(`COALESCE((
+            SELECT %s
+            FROM user_book_interactions i JOIN book_editions e ON e.id = i.book_edition_id
+            WHERE i.user_id = $%d AND i.deleted_at IS NULL AND e.book_id = b.id
+        ), 'unread') = ANY($%d)`, bestReadStatusExpr, argIdx, argIdx+1))
+			args = append(args, opts.CallerID, sel.ReadStatus)
+			argIdx += 2
+		}
+	}
+
+	if len(sel.Ratings) > 0 {
+		if opts.CallerID == uuid.Nil {
+			conditions = append(conditions, "FALSE") // nobody's ratings to match
+		} else {
+			conditions = append(conditions, fmt.Sprintf(`(
+            SELECT max(i.rating)
+            FROM user_book_interactions i JOIN book_editions e ON e.id = i.book_edition_id
+            WHERE i.user_id = $%d AND i.deleted_at IS NULL AND e.book_id = b.id
+        ) = ANY($%d)`, argIdx, argIdx+1))
+			args = append(args, opts.CallerID, sel.Ratings)
+			argIdx += 2
 		}
 	}
 

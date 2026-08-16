@@ -68,6 +68,12 @@ func (h *BookHandler) readableLibraryIDs(r *http.Request) ([]uuid.UUID, error) {
 // @Param       page      query int    false "Page number"
 // @Param       per_page  query int    false "Results per page"
 // @Param       filter    query string false "Structured filter JSON"
+// @Param       lib       query string false "Library ids, comma separated"
+// @Param       status    query string false "Read statuses, comma separated"
+// @Param       type      query string false "Media type names, comma separated"
+// @Param       genre     query string false "Genre names, comma separated"
+// @Param       tag       query string false "Tag names, comma separated"
+// @Param       rating    query string false "Ratings 0-5, comma separated"
 // @Success     200  {object}  object{items=[]object,total=int,page=int,per_page=int}
 // @Failure     401  {object}  object{error=string}
 // @Router      /me/books [get]
@@ -78,10 +84,33 @@ func (h *BookHandler) ListMyBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The list takes the same facet parameters as the counts beside it. One wire
+	// format, one selection struct: a rail that says "Reading 29" and a list
+	// that ignores the tick is the failure this prevents.
+	sel := parseFacetSelection(r)
+	opts.Selection = sel
+
 	libraryIDs, err := h.readableLibraryIDs(r)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
+	}
+
+	// The library facet narrows the scope rather than adding a WHERE clause,
+	// and it narrows by intersection so a library id the caller cannot read
+	// cannot widen the result no matter what the client sends.
+	if len(sel.Libraries) > 0 {
+		readable := make(map[uuid.UUID]bool, len(libraryIDs))
+		for _, id := range libraryIDs {
+			readable[id] = true
+		}
+		picked := make([]uuid.UUID, 0, len(sel.Libraries))
+		for _, id := range sel.Libraries {
+			if readable[id] {
+				picked = append(picked, id)
+			}
+		}
+		libraryIDs = picked
 	}
 	if len(libraryIDs) == 0 {
 		// Not an error. A new user, or one whose only membership was revoked,

@@ -101,11 +101,7 @@ func (r *BookRepo) Facets(
 		p := arg(callerID)
 		interCTE = fmt.Sprintf(`
             SELECT e.book_id,
-                   CASE min(CASE i.read_status
-                                WHEN 'read' THEN 1 WHEN 'reading' THEN 2
-                                WHEN 'did_not_finish' THEN 3 ELSE 4 END)
-                        WHEN 1 THEN 'read' WHEN 2 THEN 'reading'
-                        WHEN 3 THEN 'did_not_finish' ELSE 'unread' END AS read_status,
+                   `+bestReadStatusExpr+` AS read_status,
                    max(i.rating) AS rating
             FROM user_book_interactions i
             JOIN book_editions e ON e.id = i.book_edition_id
