@@ -4,6 +4,7 @@
 package imports
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -175,5 +176,73 @@ func TestBool(t *testing.T) {
 	got, ok := Bool("maybe")
 	if ok || got {
 		t.Errorf("Bool(\"maybe\") = (%v, %v), want (false, false)", got, ok)
+	}
+}
+
+func TestProgressParsesEachField(t *testing.T) {
+	raw, ok := Progress("142", "45", "chapter 9")
+	if !ok {
+		t.Fatal("expected a progress blob")
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["pages_read"] != float64(142) {
+		t.Errorf("pages_read = %v, want 142", got["pages_read"])
+	}
+	if got["percent"] != float64(45) {
+		t.Errorf("percent = %v, want 45", got["percent"])
+	}
+	if got["position"] != "chapter 9" {
+		t.Errorf("position = %v, want chapter 9", got["position"])
+	}
+}
+
+// A stray percent sign should not cost someone their reading position.
+func TestProgressTolerantOfPercentSign(t *testing.T) {
+	raw, ok := Progress("", "62.5%", "")
+	if !ok {
+		t.Fatal("expected a progress blob")
+	}
+	var got map[string]any
+	_ = json.Unmarshal(raw, &got)
+	if got["percent"] != 62.5 {
+		t.Errorf("percent = %v, want 62.5", got["percent"])
+	}
+}
+
+// Empty means "no data", not "reset to zero". Returning a blob here
+// would overwrite a real position on the server with an empty one.
+func TestProgressEmptyReturnsNothing(t *testing.T) {
+	if raw, ok := Progress("", "", ""); ok || raw != nil {
+		t.Errorf("Progress(empty) = (%s, %v), want (nil, false)", raw, ok)
+	}
+}
+
+func TestProgressRejectsNonsense(t *testing.T) {
+	cases := [][3]string{
+		{"0", "", ""},   // page zero is not progress
+		{"-5", "", ""},  // negative pages
+		{"abc", "", ""}, // unparseable
+		{"", "0", ""},   // zero percent is not progress
+		{"", "140", ""}, // over 100
+		{"", "not a number", ""},
+	}
+	for _, c := range cases {
+		if raw, ok := Progress(c[0], c[1], c[2]); ok {
+			t.Errorf("Progress(%q, %q, %q) = %s, want rejected", c[0], c[1], c[2], raw)
+		}
+	}
+}
+
+// Partial input is still worth keeping: a percent with no page count is
+// exactly what an ebook or audiobook row looks like.
+func TestProgressAcceptsPartialInput(t *testing.T) {
+	if _, ok := Progress("", "", "03:14:22"); !ok {
+		t.Error("expected an audiobook position alone to be accepted")
+	}
+	if _, ok := Progress("88", "", ""); !ok {
+		t.Error("expected a page count alone to be accepted")
 	}
 }

@@ -15,7 +15,9 @@
 package imports
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -140,4 +142,48 @@ func Bool(raw string) (bool, bool) {
 		return false, true
 	}
 	return false, false
+}
+
+// Progress builds the `{pages_read?, percent?, position?}` JSON blob a
+// `user_book_interactions.progress` column holds, from up to three CSV
+// columns. Returns (nil, false) when nothing usable is present, which
+// the caller passes straight through to MergeInteraction to leave an
+// existing value alone.
+//
+// This exists because a Lite library carries reading positions that had
+// no import column: migrating a shelf to a server used to silently drop
+// every part-read book back to page zero.
+func Progress(pagesRead, percent, position string) ([]byte, bool) {
+	out := map[string]any{}
+
+	if v := strings.TrimSpace(pagesRead); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			out["pages_read"] = n
+		}
+	}
+
+	if v := strings.TrimSpace(percent); v != "" {
+		// Accept "45", "45%", and "45.5" — trackers are inconsistent and
+		// a stray percent sign should not cost someone their place.
+		v = strings.TrimSuffix(v, "%")
+		v = strings.TrimSpace(v)
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 && f <= 100 {
+			out["percent"] = f
+		}
+	}
+
+	// Free text: an audiobook timestamp, a chapter, a Kindle location.
+	// No shape to validate beyond it being present.
+	if v := strings.TrimSpace(position); v != "" {
+		out["position"] = v
+	}
+
+	if len(out) == 0 {
+		return nil, false
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return nil, false
+	}
+	return encoded, true
 }

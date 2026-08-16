@@ -544,11 +544,14 @@ func (w *ImportWorker) applyInteraction(ctx context.Context, editionID, userID u
 	startedAt, hasStarted := imports.Date(row["date_started"])
 	finishedAt, hasFinished := imports.Date(row["date_finished"])
 	isFavorite, hasFavorite := imports.Bool(row["is_favorite"])
+	progress, hasProgress := imports.Progress(
+		row["pages_read"], row["progress_percent"], row["progress_position"],
+	)
 
 	// Bail when nothing interaction-shaped is present — most generic
 	// CSVs won't carry any of these and we don't want to touch the row.
 	if readStatus == "" && !hasRating && review == "" && notes == "" &&
-		!hasStarted && !hasFinished && !hasFavorite {
+		!hasStarted && !hasFinished && !hasFavorite && !hasProgress {
 		return
 	}
 
@@ -597,7 +600,7 @@ func (w *ImportWorker) applyInteraction(ctx context.Context, editionID, userID u
 		readStatusArg, ratingArg,
 		notesArg, reviewArg,
 		startedArg, finishedArg,
-		favoriteArg, nil, // progress not imported from CSV
+		favoriteArg, progress, // nil when the row carried no position
 	); err != nil {
 		slog.Warn("import: merging user interaction failed",
 			"user_id", userID, "edition_id", editionID, "error", err)
