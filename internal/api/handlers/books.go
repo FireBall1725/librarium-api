@@ -199,19 +199,20 @@ func (h *BookHandler) GetBookFingerprint(w http.ResponseWriter, r *http.Request)
 // @Success     200  {object}  responses.PagedBooksResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
-// @Router      /libraries/{library_id}/books [get]
-func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
-	libraryID, err := uuid.Parse(r.PathValue("library_id"))
-	if err != nil {
-		respond.Error(w, http.StatusBadRequest, "invalid library id")
-		return
-	}
+// parseListBooksOpts turns a request's query string into the repository's
+// filter options. Shared by ListBooks and Facets: the counts have to be built
+// from exactly the same filter as the results, and the only way to guarantee
+// that is to parse it once.
+//
+// Returns the raw search text alongside the opts because ListBooks records it
+// for search suggestions and Facets does not.
+var errQueryTooLong = errors.New("query too long")
 
+func parseListBooksOpts(r *http.Request) (repository.ListBooksOpts, string, error) {
 	q := r.URL.Query().Get("q")
 	rawSearchQuery := q
 	if len(q) > 500 {
-		respond.Error(w, http.StatusBadRequest, "query too long")
-		return
+		return repository.ListBooksOpts{}, "", errQueryTooLong
 	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
@@ -275,7 +276,7 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 		callerID = claims.UserID
 	}
 
-	books, total, err := h.svc.ListBooks(r.Context(), libraryID, repository.ListBooksOpts{
+	return repository.ListBooksOpts{
 		Query:      q,
 		Page:       page,
 		PerPage:    perPage,
@@ -287,7 +288,23 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 		IsRegex:    isRegex,
 		Groups:     filterGroups,
 		CallerID:   callerID,
-	})
+	}, rawSearchQuery, nil
+}
+
+// @Router      /libraries/{library_id}/books [get]
+func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+
+	opts, rawSearchQuery, err := parseListBooksOpts(r)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	books, total, err := h.svc.ListBooks(r.Context(), libraryID, opts)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -300,8 +317,8 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"items":    items,
 		"total":    total,
-		"page":     max(page, 1),
-		"per_page": perPage,
+		"page":     max(opts.Page, 1),
+		"per_page": opts.PerPage,
 	}
 	// "Did you mean…" — when the literal query found nothing, run a
 	// pg_trgm similarity match and include up to 5 suggestions. Skipped
@@ -1011,4 +1028,41 @@ func (h *BookHandler) createBatchItems(ctx context.Context, batchID uuid.UUID, b
 		}
 	}
 	return h.enrichmentBatches.CreateItems(ctx, items)
+}
+
+// Facets godoc
+//
+// @Summary     Facet counts for a book search
+// @Description Counts books per facet value across the whole filtered set, not
+// @Description the returned page, so a client can render a filter rail without
+// @Description a request per value. Takes the same query parameters as the list
+// @Description endpoint and applies exactly the same filter.
+// @Tags        books
+// @Produce     json
+// @Param       library_id  path  string  true  "Library ID"
+// @Param       q           query string  false "Search query"
+// @Param       filter      query string  false "Structured filter JSON"
+// @Success     200  {object}  object{data=repository.BookFacets}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /libraries/{library_id}/books/facets [get]
+func (h *BookHandler) Facets(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+
+	opts, _, err := parseListBooksOpts(r)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	facets, err := h.books.Facets(r.Context(), libraryID, opts)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"data": facets})
 }

@@ -317,6 +317,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("POST /api/v1/libraries/{library_id}/books/bulk/enrich", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.BulkEnrich)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/books/bulk/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.BulkRefreshCovers)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/books", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.ListBooks)))
+	mux.Handle("GET /api/v1/libraries/{library_id}/books/facets", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.Facets)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/books", requireLibraryPerm("books:create", http.HandlerFunc(bookHandler.CreateBook)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/books/{book_id}", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.GetBook)))
 	mux.Handle("PUT /api/v1/libraries/{library_id}/books/{book_id}", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.UpdateBook)))

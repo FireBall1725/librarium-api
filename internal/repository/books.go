@@ -443,43 +443,20 @@ type ListBooksOpts struct {
 	CallerID   uuid.UUID        // when non-zero, includes user_read_status for this user
 }
 
-func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooksOpts) ([]*models.Book, int, error) {
-	if opts.PerPage <= 0 || opts.PerPage > 200 {
-		opts.PerPage = 25
-	}
-	if opts.Page <= 0 {
-		opts.Page = 1
-	}
-	offset := (opts.Page - 1) * opts.PerPage
+// bookFilter is the WHERE clause for a book query, plus the args it binds.
+// List and Facets must build this identically: a facet count that disagrees
+// with the list beside it is worse than no count at all.
+type bookFilter struct {
+	where     string
+	scopeJoin string
+	args      []any
+	nextArg   int // next free positional parameter, for callers appending their own
+}
 
-	// Validate sort — title sort uses natural_sort_key() which strips leading articles,
-	// lowercases, and pads digit sequences so #2 sorts before #10.
-	sortCol := "natural_sort_key(b.title)"
-	switch opts.Sort {
-	case "created_at":
-		sortCol = "b.created_at"
-	case "media_type":
-		sortCol = "lower(mt.display_name)"
-	case "publish_date":
-		sortCol = "(SELECT be.publish_date FROM book_editions be WHERE be.book_id = b.id AND be.is_primary = true AND be.publish_date IS NOT NULL LIMIT 1)"
-	case "author":
-		// Sort by the first contributor's lowercased name (display
-		// order ascending so the "primary" credit wins). Books with
-		// no contributors fall to the end via NULLS LAST below.
-		sortCol = `(
-			SELECT lower(c.name)
-			FROM book_contributors bc
-			JOIN contributors c ON c.id = bc.contributor_id
-			WHERE bc.book_id = b.id
-			ORDER BY bc.display_order, c.name
-			LIMIT 1
-		)`
-	}
-	sortDir := "ASC"
-	if opts.SortDir == "desc" {
-		sortDir = "DESC"
-	}
-
+// buildBookFilter assembles the library scope and every active filter from
+// opts. Extracted from List so Facets can reuse it verbatim rather than
+// reimplementing the same conditions and drifting.
+func (r *BookRepo) buildBookFilter(libraryID uuid.UUID, opts ListBooksOpts) bookFilter {
 	args := []any{libraryID} // $1
 	argIdx := 2
 
@@ -723,6 +700,49 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 		where += " AND " + c
 	}
 	scopeJoin := " JOIN library_books lb ON lb.book_id = b.id "
+
+	return bookFilter{where: where, scopeJoin: scopeJoin, args: args, nextArg: argIdx}
+}
+
+func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooksOpts) ([]*models.Book, int, error) {
+	if opts.PerPage <= 0 || opts.PerPage > 200 {
+		opts.PerPage = 25
+	}
+	if opts.Page <= 0 {
+		opts.Page = 1
+	}
+	offset := (opts.Page - 1) * opts.PerPage
+
+	// Validate sort — title sort uses natural_sort_key() which strips leading articles,
+	// lowercases, and pads digit sequences so #2 sorts before #10.
+	sortCol := "natural_sort_key(b.title)"
+	switch opts.Sort {
+	case "created_at":
+		sortCol = "b.created_at"
+	case "media_type":
+		sortCol = "lower(mt.display_name)"
+	case "publish_date":
+		sortCol = "(SELECT be.publish_date FROM book_editions be WHERE be.book_id = b.id AND be.is_primary = true AND be.publish_date IS NOT NULL LIMIT 1)"
+	case "author":
+		// Sort by the first contributor's lowercased name (display
+		// order ascending so the "primary" credit wins). Books with
+		// no contributors fall to the end via NULLS LAST below.
+		sortCol = `(
+			SELECT lower(c.name)
+			FROM book_contributors bc
+			JOIN contributors c ON c.id = bc.contributor_id
+			WHERE bc.book_id = b.id
+			ORDER BY bc.display_order, c.name
+			LIMIT 1
+		)`
+	}
+	sortDir := "ASC"
+	if opts.SortDir == "desc" {
+		sortDir = "DESC"
+	}
+
+	f := r.buildBookFilter(libraryID, opts)
+	where, scopeJoin, args, argIdx := f.where, f.scopeJoin, f.args, f.nextArg
 
 	// Count
 	var total int
