@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fireball1725/librarium-api/internal/providers"
@@ -45,12 +46,37 @@ func (p *HardcoverProvider) Info() providers.ProviderInfo {
 }
 
 func (p *HardcoverProvider) Configure(cfg map[string]string) {
-	p.apiKey = cfg["api_key"]
+	p.apiKey = normalizeHardcoverKey(cfg["api_key"])
 	if v, ok := cfg["enabled"]; ok {
 		p.enabled = v == "true" && p.apiKey != ""
 	} else {
 		p.enabled = p.apiKey != ""
 	}
+}
+
+// normalizeHardcoverKey strips a "Bearer " prefix the admin may have
+// pasted along with the token.
+//
+// hardcover.app/account/api presents the key already prefixed, so
+// copying it verbatim is the obvious thing to do. Every request here
+// then adds its own prefix and the header goes out as
+// "Bearer Bearer eyJ...", which Hardcover rejects with "Malformed
+// Authorization header" — an error that reads like a bad key rather
+// than a doubled prefix. Normalising once here covers all seven call
+// sites across this file and hardcover_contributors.go.
+// Splitting on whitespace rather than trimming a literal prefix handles
+// every paste shape in one pass: any casing, a tab or newline instead of
+// a space, a doubled prefix, and the case where the value is the word
+// "bearer" and nothing else (which must come back empty, or Configure
+// would enable the provider with no token). Hardcover keys are JWTs and
+// never contain whitespace, so rejoining what is left is safe.
+func normalizeHardcoverKey(key string) string {
+	fields := strings.Fields(key)
+	i := 0
+	for i < len(fields) && strings.EqualFold(fields[i], "bearer") {
+		i++
+	}
+	return strings.Join(fields[i:], " ")
 }
 
 const hardcoverEndpoint = "https://api.hardcover.app/v1/graphql"

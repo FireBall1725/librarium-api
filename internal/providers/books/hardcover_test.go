@@ -88,3 +88,59 @@ func TestFetchSeriesVolumes_BookSeriesKey(t *testing.T) {
 		t.Errorf("volume 1 = %+v, want title=The Naked Sun cover set", got[1])
 	}
 }
+
+func TestNormalizeHardcoverKeyStripsBearerPrefix(t *testing.T) {
+	const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig"
+
+	cases := map[string]string{
+		"bare token":         token,
+		"prefixed":           "Bearer " + token,
+		"lowercase prefix":   "bearer " + token,
+		"mixed case prefix":  "BeArEr " + token,
+		"surrounding spaces": "  Bearer " + token + "  ",
+		"doubled prefix":     "Bearer Bearer " + token,
+		"newline from paste": "Bearer " + token + "\n",
+	}
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := normalizeHardcoverKey(input); got != token {
+				t.Errorf("normalizeHardcoverKey(%q) = %q, want %q", input, got, token)
+			}
+		})
+	}
+}
+
+// An empty or whitespace-only key must stay empty: Configure keys the
+// provider's enabled flag off it, so returning anything non-empty would
+// enable a provider with no credentials.
+func TestNormalizeHardcoverKeyEmpty(t *testing.T) {
+	for _, input := range []string{"", "   ", "Bearer ", "bearer   "} {
+		if got := normalizeHardcoverKey(input); got != "" {
+			t.Errorf("normalizeHardcoverKey(%q) = %q, want empty", input, got)
+		}
+	}
+}
+
+// Configure is the only place the key is normalised, so the doubled
+// prefix must be gone by the time any request builds its header.
+func TestConfigureNormalizesKey(t *testing.T) {
+	p := NewHardcoverProvider()
+	p.Configure(map[string]string{"api_key": "Bearer abc123"})
+	if p.apiKey != "abc123" {
+		t.Errorf("apiKey = %q, want %q", p.apiKey, "abc123")
+	}
+	if !p.enabled {
+		t.Error("expected provider to be enabled with a key present")
+	}
+}
+
+func TestConfigureLeavesProviderDisabledWithoutKey(t *testing.T) {
+	p := NewHardcoverProvider()
+	p.Configure(map[string]string{"api_key": "Bearer "})
+	if p.apiKey != "" {
+		t.Errorf("apiKey = %q, want empty", p.apiKey)
+	}
+	if p.enabled {
+		t.Error("expected provider to stay disabled when the key is only a prefix")
+	}
+}
