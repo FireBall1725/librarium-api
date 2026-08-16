@@ -444,3 +444,30 @@ func memberBody(m *models.LibraryMember) map[string]any {
 	}
 	return body
 }
+
+// ListMyAccess godoc
+//
+// @Summary     Libraries the caller can reach, with effective permissions
+// @Description Returns every library the authenticated user can see and the
+// @Description permission names they hold in each, already capped by the
+// @Description token's scope. A client fetches this once and gates each row by
+// @Description the library the row came from, rather than checking per book.
+// @Tags        libraries
+// @Produce     json
+// @Success     200  {object}  object{data=[]repository.LibraryAccess}
+// @Failure     401  {object}  object{error=string}
+// @Router      /me/libraries [get]
+func (h *LibraryHandler) ListMyAccess(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	access, err := h.svc.ListMyAccess(r.Context(), claims.UserID, claims.IsInstanceAdmin, claims.ScopeAllows)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"data": access})
+}

@@ -207,3 +207,36 @@ func (s *LibraryService) RemoveMember(ctx context.Context, libraryID, targetUser
 
 	return s.memberships.Remove(ctx, libraryID, targetUserID)
 }
+
+// ListMyAccess returns the libraries the caller can reach with the permissions
+// they hold in each, capped by the token's scope.
+//
+// The scope cap matters: a personal access token can be minted with a narrower
+// set than the user holds, and RequireLibraryPermission enforces that on every
+// request. Reporting the user's full role here would have the client render
+// controls that the API then rejects, which reads as a bug rather than as a
+// deliberately limited token.
+func (s *LibraryService) ListMyAccess(
+	ctx context.Context,
+	userID uuid.UUID,
+	isInstanceAdmin bool,
+	scopeAllows func(string) bool,
+) ([]*repository.LibraryAccess, error) {
+	access, err := s.libraries.ListAccessForUser(ctx, userID, isInstanceAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if scopeAllows == nil {
+		return access, nil
+	}
+	for _, a := range access {
+		allowed := make([]string, 0, len(a.Permissions))
+		for _, p := range a.Permissions {
+			if scopeAllows(p) {
+				allowed = append(allowed, p)
+			}
+		}
+		a.Permissions = allowed
+	}
+	return access, nil
+}

@@ -181,6 +181,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("PUT /api/v1/auth/me", requireAuth(http.HandlerFunc(authHandler.UpdateMe)))
 	mux.Handle("PUT /api/v1/auth/me/password", requireAuth(http.HandlerFunc(authHandler.UpdatePassword)))
 	mux.Handle("GET /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.GetPreferences)))
+	mux.Handle("GET /api/v1/me/libraries", requireAuth(http.HandlerFunc(libraryHandler.ListMyAccess)))
 	mux.Handle("PATCH /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.PatchPreferences)))
 
 	// Personal access tokens
