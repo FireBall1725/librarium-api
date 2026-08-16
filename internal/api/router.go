@@ -112,7 +112,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	setupHandler := handlers.NewSetupHandler(authSvc, userRepo)
 	adminHandler := handlers.NewAdminHandler(authSvc)
 	libraryHandler := handlers.NewLibraryHandler(libSvc)
-	bookHandler := handlers.NewBookHandler(bookSvc, bookRepo, loanRepo, riverClient, enrichmentBatchRepo, editionFileSvc)
+	bookHandler := handlers.NewBookHandler(bookSvc, bookRepo, loanRepo, riverClient, enrichmentBatchRepo, editionFileSvc, libraryRepo)
 	shelfHandler := handlers.NewShelfHandler(shelfSvc)
 	loanHandler := handlers.NewLoanHandler(loanSvc)
 	seriesHandler := handlers.NewSeriesHandler(seriesSvc, releaseSyncSvc)
@@ -182,6 +182,8 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("PUT /api/v1/auth/me/password", requireAuth(http.HandlerFunc(authHandler.UpdatePassword)))
 	mux.Handle("GET /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.GetPreferences)))
 	mux.Handle("GET /api/v1/me/libraries", requireAuth(http.HandlerFunc(libraryHandler.ListMyAccess)))
+	mux.Handle("GET /api/v1/me/books", requireAuth(http.HandlerFunc(bookHandler.ListMyBooks)))
+	mux.Handle("GET /api/v1/me/books/facets", requireAuth(http.HandlerFunc(bookHandler.MyBookFacets)))
 	mux.Handle("PATCH /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.PatchPreferences)))
 
 	// Personal access tokens

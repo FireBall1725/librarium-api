@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/google/uuid"
 )
 
@@ -41,8 +42,19 @@ type BookFacets struct {
 //
 // Best status wins, read > reading > did_not_finish > unread, because "have I
 // read this" is a question about the work rather than about one printing.
-func (r *BookRepo) Facets(ctx context.Context, libraryID uuid.UUID, opts ListBooksOpts) (*BookFacets, error) {
-	f := r.buildBookFilter(libraryID, opts)
+// libraryIDs scopes the counts. A single entry serves the per-library route;
+// the caller's whole membership set serves the cross-library Books surface.
+func (r *BookRepo) Facets(ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts) (*BookFacets, error) {
+	if len(libraryIDs) == 0 {
+		// No accessible libraries is a legitimate state, not an error: a new
+		// user, or one whose only membership was revoked. Empty facets let the
+		// client render its own empty state instead of a failure.
+		return &BookFacets{
+			ReadStatus: []FacetValue{}, MediaType: []FacetValue{}, Genre: []FacetValue{},
+			Tag: []FacetValue{}, Rating: []FacetValue{},
+		}, nil
+	}
+	f := r.buildBookFilter(libraryIDs, opts)
 
 	args := f.args
 	callerArg := 0
@@ -139,4 +151,58 @@ ORDER BY 1, 4 DESC, 2`, f.scopeJoin, f.where, interJoin)
 		return nil, fmt.Errorf("reading facet rows: %w", err)
 	}
 	return out, nil
+}
+
+// LibraryFacet counts the filtered books per library.
+//
+// Kept out of Facets because it only means anything across several libraries:
+// on a per-library route it would return one value whose count equals the
+// total, which is noise rather than a filter.
+func (r *BookRepo) LibraryFacet(ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts) ([]FacetValue, error) {
+	if len(libraryIDs) == 0 {
+		return []FacetValue{}, nil
+	}
+	f := r.buildBookFilter(libraryIDs, opts)
+
+	// COUNT(DISTINCT b.id): a work held by two libraries is one book in each,
+	// not two, and the junction would otherwise multiply it.
+	// Unlike every other facet this one wants a row per (book, library), so it
+	// joins the junction directly instead of the deduping scope join and
+	// reapplies the library predicate itself. COUNT(DISTINCT b.id) still
+	// guards against a book appearing twice within one library.
+	query := fmt.Sprintf(`
+		SELECT l.id::text, l.name, COUNT(DISTINCT b.id)
+		FROM books b
+		JOIN media_types mt ON mt.id = b.media_type_id
+		JOIN library_books lbx ON lbx.book_id = b.id AND lbx.deleted_at IS NULL
+		JOIN libraries l ON l.id = lbx.library_id
+		%s
+		AND lbx.library_id = ANY($1)
+		GROUP BY l.id, l.name
+		ORDER BY 3 DESC, 2`, f.where)
+
+	rows, err := r.db.Query(ctx, query, f.args...)
+	if err != nil {
+		return nil, fmt.Errorf("counting library facet: %w", err)
+	}
+	defer rows.Close()
+
+	out := []FacetValue{}
+	for rows.Next() {
+		var fv FacetValue
+		if err := rows.Scan(&fv.Value, &fv.Label, &fv.Count); err != nil {
+			return nil, fmt.Errorf("scanning library facet: %w", err)
+		}
+		out = append(out, fv)
+	}
+	return out, rows.Err()
+}
+
+// ListAcross lists books spanning several libraries, deduplicated: a work held
+// by two libraries appears once, not twice.
+func (r *BookRepo) ListAcross(ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts) ([]*models.Book, int, error) {
+	if len(libraryIDs) == 0 {
+		return []*models.Book{}, 0, nil
+	}
+	return r.listScoped(ctx, libraryIDs, opts)
 }

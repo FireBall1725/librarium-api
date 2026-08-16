@@ -456,8 +456,11 @@ type bookFilter struct {
 // buildBookFilter assembles the library scope and every active filter from
 // opts. Extracted from List so Facets can reuse it verbatim rather than
 // reimplementing the same conditions and drifting.
-func (r *BookRepo) buildBookFilter(libraryID uuid.UUID, opts ListBooksOpts) bookFilter {
-	args := []any{libraryID} // $1
+// libraryIDs is the scope: one entry for a per-library route, the caller's
+// whole membership set for the cross-library Books surface. Passing a set
+// rather than a single id keeps both on one filter implementation.
+func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) bookFilter {
+	args := []any{libraryIDs} // $1
 	argIdx := 2
 
 	// Build WHERE conditions
@@ -695,16 +698,37 @@ func (r *BookRepo) buildBookFilter(libraryID uuid.UUID, opts ListBooksOpts) book
 	}
 
 	// Library scope routes through the library_books junction.
-	where := "WHERE lb.library_id = $1"
-	for _, c := range conditions {
-		where += " AND " + c
+	// The scope join deduplicates. Under the book/library junction a work held
+	// by two libraries has two junction rows, so a plain join would list it
+	// twice and inflate every count. Selecting distinct book_ids inside the
+	// join fixes both at once, and it carries the library predicate because the
+	// subquery is the only place library_id is still in scope.
+	scopeJoin := " JOIN (SELECT DISTINCT book_id FROM library_books WHERE library_id = ANY($1) AND deleted_at IS NULL) lb ON lb.book_id = b.id "
+
+	where := ""
+	for i, c := range conditions {
+		if i == 0 {
+			where = "WHERE " + c
+		} else {
+			where += " AND " + c
+		}
 	}
-	scopeJoin := " JOIN library_books lb ON lb.book_id = b.id "
+
+	// A join with no WHERE still needs valid SQL downstream.
+	if where == "" {
+		where = "WHERE TRUE"
+	}
 
 	return bookFilter{where: where, scopeJoin: scopeJoin, args: args, nextArg: argIdx}
 }
 
+// List is the per-library entry point. Both it and ListAcross delegate to
+// listScoped so the filter, sort, paging and scan logic exist once.
 func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooksOpts) ([]*models.Book, int, error) {
+	return r.listScoped(ctx, []uuid.UUID{libraryID}, opts)
+}
+
+func (r *BookRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts) ([]*models.Book, int, error) {
 	if opts.PerPage <= 0 || opts.PerPage > 200 {
 		opts.PerPage = 25
 	}
@@ -741,7 +765,7 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 		sortDir = "DESC"
 	}
 
-	f := r.buildBookFilter(libraryID, opts)
+	f := r.buildBookFilter(libraryIDs, opts)
 	where, scopeJoin, args, argIdx := f.where, f.scopeJoin, f.args, f.nextArg
 
 	// Count

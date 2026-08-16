@@ -32,10 +32,11 @@ type BookHandler struct {
 	riverClient       *river.Client[pgx.Tx]           // may be nil; used for enrichment batch jobs
 	enrichmentBatches *repository.EnrichmentBatchRepo // may be nil; required for bulk enrich/cover
 	editionFiles      *service.EditionFileService
+	libraries         *repository.LibraryRepo // resolves the caller's readable libraries for the cross-library routes
 }
 
-func NewBookHandler(svc *service.BookService, books *repository.BookRepo, loans *repository.LoanRepo, riverClient *river.Client[pgx.Tx], enrichmentBatches *repository.EnrichmentBatchRepo, editionFiles *service.EditionFileService) *BookHandler {
-	return &BookHandler{svc: svc, books: books, loans: loans, riverClient: riverClient, enrichmentBatches: enrichmentBatches, editionFiles: editionFiles}
+func NewBookHandler(svc *service.BookService, books *repository.BookRepo, loans *repository.LoanRepo, riverClient *river.Client[pgx.Tx], enrichmentBatches *repository.EnrichmentBatchRepo, editionFiles *service.EditionFileService, libraries *repository.LibraryRepo) *BookHandler {
+	return &BookHandler{svc: svc, books: books, loans: loans, riverClient: riverClient, enrichmentBatches: enrichmentBatches, editionFiles: editionFiles, libraries: libraries}
 }
 
 // ─── Media types ──────────────────────────────────────────────────────────────
@@ -1059,7 +1060,7 @@ func (h *BookHandler) Facets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	facets, err := h.books.Facets(r.Context(), libraryID, opts)
+	facets, err := h.books.Facets(r.Context(), []uuid.UUID{libraryID}, opts)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
