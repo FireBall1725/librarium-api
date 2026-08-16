@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/google/uuid"
@@ -74,9 +75,38 @@ func readStateSubqueries(callerArg int) string {
 
 // ─── Series CRUD ──────────────────────────────────────────────────────────────
 
+// List is the per-library entry point.
 func (r *SeriesRepo) List(ctx context.Context, libraryID, callerID uuid.UUID, search, tagFilter string) ([]*models.Series, error) {
-	args := []any{libraryID}
-	where := `WHERE s.library_id = $1`
+	return r.listScoped(ctx, []uuid.UUID{libraryID}, callerID, search, tagFilter, defaultPreviewBooks)
+}
+
+// ListAcross lists series spanning several libraries, for the cross-library
+// Series surface. Series are a per-library record, so a series held by two
+// libraries is genuinely two rows and appears twice rather than being merged:
+// the counts on each row describe that library's copies, and collapsing them
+// would report a total nobody owns.
+//
+// previewBooks caps the volumes returned per series. The index draws a strip of
+// every volume it can, so it asks for far more than the four a detail panel
+// needs, but still a bounded number: a series with a thousand entries must not
+// become a thousand-element payload per row.
+func (r *SeriesRepo) ListAcross(ctx context.Context, libraryIDs []uuid.UUID, callerID uuid.UUID, search string, previewBooks int) ([]*models.Series, error) {
+	if len(libraryIDs) == 0 {
+		return []*models.Series{}, nil
+	}
+	return r.listScoped(ctx, libraryIDs, callerID, search, "", previewBooks)
+}
+
+// defaultPreviewBooks is what a series card shows: enough to suggest the run
+// without paying for the whole thing.
+const defaultPreviewBooks = 4
+
+func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, callerID uuid.UUID, search, tagFilter string, previewBooks int) ([]*models.Series, error) {
+	if previewBooks <= 0 {
+		previewBooks = defaultPreviewBooks
+	}
+	args := []any{libraryIDs}
+	where := `WHERE s.library_id = ANY($1)`
 	if search != "" {
 		args = append(args, "%"+search+"%")
 		where += fmt.Sprintf(` AND lower(s.name) LIKE lower($%d)`, len(args))
@@ -115,7 +145,7 @@ func (r *SeriesRepo) List(ctx context.Context, libraryID, callerID uuid.UUID, se
 		               FROM book_series bs2 JOIN books b ON b.id = bs2.book_id
 		               WHERE bs2.series_id = s.id
 		               ORDER BY bs2.position
-		               LIMIT 4
+		               LIMIT ` + strconv.Itoa(previewBooks) + `
 		           ) t
 		       ) AS preview_books,
 		       s.created_at, s.updated_at,

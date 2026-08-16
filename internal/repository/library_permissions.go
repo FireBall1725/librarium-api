@@ -92,3 +92,42 @@ func (r *LibraryRepo) ListAccessForUser(ctx context.Context, userID uuid.UUID, i
 	}
 	return out, nil
 }
+
+// CollectionCounts is what the navigation shows beside Books, Series and
+// Authors.
+type CollectionCounts struct {
+	Books   int `json:"books"`
+	Series  int `json:"series"`
+	Authors int `json:"authors"`
+}
+
+// CountsForLibraries totals the collection across a set of libraries.
+//
+// One round trip with three scalar subqueries rather than three queries: the
+// navigation needs all three together on every page, and they are cheap counts
+// against indexed columns.
+//
+// Books counts DISTINCT book ids, not junction rows. A work held by two
+// libraries is one book on the shelf, and counting the junction would report a
+// number the Books page then contradicts.
+func (r *LibraryRepo) CountsForLibraries(ctx context.Context, libraryIDs []uuid.UUID) (*CollectionCounts, error) {
+	out := &CollectionCounts{}
+	if len(libraryIDs) == 0 {
+		return out, nil
+	}
+
+	const q = `
+SELECT
+  (SELECT COUNT(DISTINCT lb.book_id) FROM library_books lb
+    WHERE lb.library_id = ANY($1) AND lb.deleted_at IS NULL),
+  (SELECT COUNT(*) FROM series s WHERE s.library_id = ANY($1)),
+  (SELECT COUNT(DISTINCT bc.contributor_id)
+     FROM book_contributors bc
+     JOIN library_books lb2 ON lb2.book_id = bc.book_id AND lb2.deleted_at IS NULL
+    WHERE lb2.library_id = ANY($1) AND bc.role = 'author')`
+
+	if err := r.db.QueryRow(ctx, q, libraryIDs).Scan(&out.Books, &out.Series, &out.Authors); err != nil {
+		return nil, fmt.Errorf("counting collection: %w", err)
+	}
+	return out, nil
+}

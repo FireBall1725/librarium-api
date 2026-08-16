@@ -29,7 +29,11 @@ import (
 // readableLibraryIDs returns the libraries the caller may read books in.
 // Instance admins get every library, matching RequireLibraryPermission, which
 // lets them past the per-library membership check.
-func (h *BookHandler) readableLibraryIDs(r *http.Request) ([]uuid.UUID, error) {
+//
+// A free function rather than a method because every cross-library surface
+// needs the same answer, and the one thing that must not drift between them is
+// what the caller is allowed to see.
+func readableLibraryIDs(r *http.Request, libraries *repository.LibraryRepo) ([]uuid.UUID, error) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		return nil, nil
@@ -40,7 +44,7 @@ func (h *BookHandler) readableLibraryIDs(r *http.Request) ([]uuid.UUID, error) {
 		return []uuid.UUID{}, nil
 	}
 
-	access, err := h.libraries.ListAccessForUser(r.Context(), claims.UserID, claims.IsInstanceAdmin)
+	access, err := libraries.ListAccessForUser(r.Context(), claims.UserID, claims.IsInstanceAdmin)
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +58,10 @@ func (h *BookHandler) readableLibraryIDs(r *http.Request) ([]uuid.UUID, error) {
 		}
 	}
 	return ids, nil
+}
+
+func (h *BookHandler) readableLibraryIDs(r *http.Request) ([]uuid.UUID, error) {
+	return readableLibraryIDs(r, h.libraries)
 }
 
 // ListMyBooks godoc

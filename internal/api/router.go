@@ -129,6 +129,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	contributorHandler := handlers.NewContributorHandler(contributorSvc)
 	dashboardHandler := handlers.NewDashboardHandler(bookRepo)
 	meLookupHandler := handlers.NewMeLookupHandler(libSvc, seriesRepo, tagRepo)
+	meBrowseHandler := handlers.NewMeBrowseHandler(libraryRepo, seriesRepo, contributorRepo)
 
 	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
 	go releaseChecker.Start(ctx)
@@ -253,6 +254,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 
 	// User-scoped lookup endpoints (aggregated across the caller's libraries)
 	mux.Handle("GET /api/v1/me/series", requireAuth(http.HandlerFunc(meLookupHandler.SearchSeries)))
+	mux.Handle("GET /api/v1/me/series/index", requireAuth(http.HandlerFunc(meBrowseHandler.SeriesIndex)))
+	mux.Handle("GET /api/v1/me/authors/index", requireAuth(http.HandlerFunc(meBrowseHandler.AuthorsIndex)))
+	mux.Handle("GET /api/v1/me/counts", requireAuth(http.HandlerFunc(meBrowseHandler.Counts)))
 	mux.Handle("GET /api/v1/me/tags", requireAuth(http.HandlerFunc(meLookupHandler.SearchTags)))
 
 	// User-scoped AI suggestions
