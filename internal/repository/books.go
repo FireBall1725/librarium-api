@@ -799,13 +799,33 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 		}
 	}
 
-	// Library scope routes through the library_books junction.
-	// The scope join deduplicates. Under the book/library junction a work held
-	// by two libraries has two junction rows, so a plain join would list it
-	// twice and inflate every count. Selecting distinct book_ids inside the
-	// join fixes both at once, and it carries the library predicate because the
-	// subquery is the only place library_id is still in scope.
-	scopeJoin := " JOIN (SELECT DISTINCT book_id FROM library_books WHERE library_id = ANY($1) AND deleted_at IS NULL) lb ON lb.book_id = b.id "
+	// Scope is a union over the places a book can be yours to see, one row per
+	// book carrying the ownership state that won. It replaces the plain
+	// library_books join, which could only ever express "on the shelf" and so
+	// made every other ownership state unrepresentable.
+	//
+	// It still deduplicates, which the join needed too: under the m2m junction
+	// a work held by two libraries has two rows, and a plain join would list it
+	// twice and inflate every count.
+	//
+	// The caller argument is passed only when there is one. Go evaluates
+	// arguments eagerly, so building the personal arms unconditionally would
+	// bind a parameter whose placeholder never reaches the SQL.
+	callerArg := 0
+	if opts.CallerID != uuid.Nil {
+		args = append(args, opts.CallerID)
+		callerArg = len(args)
+		argIdx = len(args) + 1
+	}
+	scopeJoin := " JOIN (" + bookScopeCTE(1, callerArg) + ") lb ON lb.book_id = b.id "
+
+	// Ownership filters against the scope's own column rather than re-deriving
+	// it, so the list and the counts cannot disagree about what a book is.
+	if len(sel.Ownership) > 0 {
+		conditions = append(conditions, fmt.Sprintf("lb.ownership = ANY($%d)", argIdx))
+		args = append(args, sel.Ownership)
+		argIdx++
+	}
 
 	where := ""
 	for i, c := range conditions {

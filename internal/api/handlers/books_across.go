@@ -205,6 +205,7 @@ func parseFacetSelection(r *http.Request) repository.FacetSelection {
 	}
 
 	sel := repository.FacetSelection{
+		Ownership:  split("own"),
 		ReadStatus: split("status"),
 		MediaTypes: split("type"),
 		Genres:     split("genre"),

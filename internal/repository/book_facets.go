@@ -23,6 +23,7 @@ type FacetValue struct {
 // BookFacets is the counts block returned alongside a book search, so a client
 // can render a filter rail without a request per value.
 type BookFacets struct {
+	Ownership  []FacetValue `json:"ownership"`
 	Library    []FacetValue `json:"library"`
 	ReadStatus []FacetValue `json:"read_status"`
 	MediaType  []FacetValue `json:"media_type"`
@@ -38,6 +39,9 @@ type BookFacets struct {
 // dimension has to be counted with its OWN selection removed, which is
 // impossible once the conditions have been flattened into one WHERE string.
 type FacetSelection struct {
+	// Ownership is where a book stands in relation to the caller: on the
+	// shelf, wishlisted, suggested, or a gap in a series. See book_ownership.go.
+	Ownership  []string
 	Libraries  []uuid.UUID
 	ReadStatus []string
 	MediaTypes []string // media_types.name
@@ -48,7 +52,8 @@ type FacetSelection struct {
 
 func emptyFacets() *BookFacets {
 	return &BookFacets{
-		Library: []FacetValue{}, ReadStatus: []FacetValue{}, MediaType: []FacetValue{},
+		Ownership: []FacetValue{},
+		Library:   []FacetValue{}, ReadStatus: []FacetValue{}, MediaType: []FacetValue{},
 		Genre: []FacetValue{}, Tag: []FacetValue{}, Rating: []FacetValue{},
 	}
 }
@@ -86,6 +91,20 @@ func (r *BookRepo) Facets(
 		return fmt.Sprintf("$%d", len(args))
 	}
 
+	// Scope first, because it binds the caller's own placeholder and the
+	// numbering follows the order arg() is called in, not the order the pieces
+	// appear in the format string.
+	//
+	// The caller is bound once here and again for the interaction CTE below.
+	// Two binds of the same value is cheaper than threading one placeholder
+	// through both and getting the numbering wrong.
+	scopeCallerArg := 0
+	if callerID != uuid.Nil {
+		arg(callerID)
+		scopeCallerArg = len(args)
+	}
+	scopeSQL := bookScopeCTE(1, scopeCallerArg)
+
 	// Text search is not a facet, so it narrows every dimension including the
 	// one being counted, and belongs in the base scope.
 	textWhere := ""
@@ -114,8 +133,13 @@ func (r *BookRepo) Facets(
 	// arguments eagerly, so building the expression unconditionally would append
 	// an arg whose placeholder never reaches the SQL, and Postgres then fails
 	// with "could not determine data type of parameter $N".
+	mOwn := "TRUE"
 	mLib, mStatus, mType := "TRUE", "TRUE", "TRUE"
 	mGenre, mTag, mRating := "TRUE", "TRUE", "TRUE"
+
+	if len(sel.Ownership) > 0 {
+		mOwn = fmt.Sprintf("s.ownership = ANY(%s)", arg(sel.Ownership))
+	}
 
 	if len(sel.Libraries) > 0 {
 		mLib = fmt.Sprintf(`EXISTS (SELECT 1 FROM library_books lb2 WHERE lb2.book_id = s.id
@@ -144,10 +168,11 @@ func (r *BookRepo) Facets(
 	// Every flag except the dimension's own.
 	others := func(skip string) string {
 		all := map[string]string{
+			"own": "f.m_own",
 			"lib": "f.m_lib", "status": "f.m_status", "type": "f.m_type",
 			"genre": "f.m_genre", "tag": "f.m_tag", "rating": "f.m_rating",
 		}
-		parts := make([]string, 0, 5)
+		parts := make([]string, 0, 6)
 		for k, v := range all {
 			if k != skip {
 				parts = append(parts, v)
@@ -159,22 +184,24 @@ func (r *BookRepo) Facets(
 
 	q := fmt.Sprintf(`
 WITH scope AS (
-    SELECT DISTINCT b.id, b.media_type_id
+    SELECT DISTINCT b.id, b.media_type_id, lb.ownership
     FROM books b
-    JOIN (SELECT DISTINCT book_id FROM library_books
-          WHERE library_id = ANY($1) AND deleted_at IS NULL) lb ON lb.book_id = b.id
+    JOIN (%s) lb ON lb.book_id = b.id
     WHERE TRUE %s
 ),
 inter AS (%s),
 f AS (
-    SELECT s.id, s.media_type_id,
+    SELECT s.id, s.media_type_id, s.ownership,
            COALESCE(x.read_status, 'unread') AS read_status,
            x.rating,
-           %s AS m_lib, %s AS m_status, %s AS m_type,
+           %s AS m_own, %s AS m_lib, %s AS m_status, %s AS m_type,
            %s AS m_genre, %s AS m_tag, %s AS m_rating
     FROM scope s LEFT JOIN inter x ON x.book_id = s.id
 )
-SELECT 'library' AS dim, l.id::text AS value, l.name AS label, COUNT(DISTINCT f.id) AS n
+SELECT 'ownership' AS dim, f.ownership AS value, f.ownership AS label, COUNT(*) AS n
+FROM f WHERE %s GROUP BY f.ownership
+UNION ALL
+SELECT 'library', l.id::text, l.name, COUNT(DISTINCT f.id)
 FROM f JOIN library_books lb3 ON lb3.book_id = f.id AND lb3.deleted_at IS NULL
        JOIN libraries l ON l.id = lb3.library_id
 WHERE lb3.library_id = ANY($1) AND %s
@@ -199,8 +226,11 @@ UNION ALL
 SELECT 'rating', f.rating::text, f.rating::text, COUNT(*)
 FROM f WHERE f.rating IS NOT NULL AND %s GROUP BY f.rating
 ORDER BY 1, 4 DESC, 3`,
-		textWhere, interCTE,
-		mLib, mStatus, mType, mGenre, mTag, mRating,
+		// The scope CTE comes first now: it holds the caller's own placeholder,
+		// so it has to be built before the text filter's is counted.
+		scopeSQL, textWhere, interCTE,
+		mOwn, mLib, mStatus, mType, mGenre, mTag, mRating,
+		others("own"),
 		others("lib"), others("status"), others("type"),
 		others("genre"), others("tag"), others("rating"))
 
@@ -218,6 +248,8 @@ ORDER BY 1, 4 DESC, 3`,
 			return nil, fmt.Errorf("scanning facet row: %w", err)
 		}
 		switch dim {
+		case "ownership":
+			out.Ownership = append(out.Ownership, fv)
 		case "library":
 			out.Library = append(out.Library, fv)
 		case "read_status":
