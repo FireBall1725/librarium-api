@@ -296,7 +296,56 @@ ORDER BY 1, 4 DESC, 3`,
 			out.Rating = append(out.Rating, fv)
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Closed vocabularies come back complete, zero-filled and in their own
+	// order.
+	//
+	// A GROUP BY only emits values something matched, which is right for
+	// genres and tags — nobody wants every unused tag listed at nought. It is
+	// wrong for a fixed set, because the filter then disappears from the rail
+	// exactly when the reader wants to know the answer is none. A collection
+	// with nothing on a wishlist offered no Wishlist filter at all, so "how
+	// many am I missing" had no way to be asked, and the same omission left
+	// every saved view built on a status with no number beside it.
+	out.Ownership = fillClosed(out.Ownership, OwnershipValues)
+	out.ReadStatus = fillClosed(out.ReadStatus, ReadStatusValues)
+
+	return out, nil
+}
+
+// ReadStatusValues is the read-status vocabulary, in the order a reader moves
+// through it. Mirrors the priority in bestReadStatusExpr, which is about which
+// status wins for a book with several editions rather than about display.
+var ReadStatusValues = []string{"unread", "reading", "read", "did_not_finish"}
+
+// fillClosed returns the facet in vocabulary order with every missing value
+// present at zero, and anything unexpected kept on the end rather than dropped:
+// a value the database holds but this list has not heard of is a schema change,
+// and silently hiding it would make that change invisible.
+func fillClosed(got []FacetValue, vocab []string) []FacetValue {
+	byValue := make(map[string]FacetValue, len(got))
+	for _, fv := range got {
+		byValue[fv.Value] = fv
+	}
+	out := make([]FacetValue, 0, len(vocab)+len(got))
+	for _, v := range vocab {
+		if fv, ok := byValue[v]; ok {
+			out = append(out, fv)
+			delete(byValue, v)
+			continue
+		}
+		out = append(out, FacetValue{Value: v, Label: v, Count: 0})
+	}
+	for _, fv := range got {
+		if _, unseen := byValue[fv.Value]; unseen {
+			out = append(out, fv)
+			delete(byValue, fv.Value)
+		}
+	}
+	return out
 }
 
 // insertionSort keeps a six-element slice ordered without reaching for sort.

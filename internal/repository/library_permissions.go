@@ -105,6 +105,15 @@ type CollectionCounts struct {
 	// LoansOverdue is the subset worth reacting to, so the rail can say which
 	// of those outstanding loans is late without a second request.
 	LoansOverdue int `json:"loans_overdue"`
+	// Suggestions is the caller's undismissed suggestions, which is what the
+	// Suggestions page lists.
+	//
+	// Deliberately not the ownership facet's "suggested" tally. That one ranks
+	// a book by the strongest claim on it, so a suggestion for something
+	// already on the shelf counts as shelf and drops out — the facet answers
+	// "how many books are only ever suggestions", which is a smaller number and
+	// the wrong one to put beside a page listing all of them.
+	Suggestions int `json:"suggestions"`
 }
 
 // CountsForLibraries totals the collection across a set of libraries.
@@ -116,13 +125,25 @@ type CollectionCounts struct {
 // Books counts DISTINCT book ids, not junction rows. A work held by two
 // libraries is one book on the shelf, and counting the junction would report a
 // number the Books page then contradicts.
-func (r *LibraryRepo) CountsForLibraries(ctx context.Context, libraryIDs []uuid.UUID) (*CollectionCounts, error) {
+// callerID may be uuid.Nil, in which case Suggestions comes back 0: suggestions
+// belong to a user rather than to a library, so there is nothing to count
+// without one.
+func (r *LibraryRepo) CountsForLibraries(ctx context.Context, libraryIDs []uuid.UUID, callerID uuid.UUID) (*CollectionCounts, error) {
 	out := &CollectionCounts{}
 	if len(libraryIDs) == 0 {
 		return out, nil
 	}
 
-	const q = `
+	args := []any{libraryIDs}
+	suggestions := "0"
+	if callerID != uuid.Nil {
+		args = append(args, callerID)
+		suggestions = fmt.Sprintf(
+			`(SELECT COUNT(*) FROM ai_suggestions s WHERE s.user_id = $%d AND s.status = 'new')`,
+			len(args))
+	}
+
+	q := `
 SELECT
   (SELECT COUNT(DISTINCT lb.book_id) FROM library_books lb
     WHERE lb.library_id = ANY($1) AND lb.deleted_at IS NULL),
@@ -135,10 +156,11 @@ SELECT
     WHERE l.library_id = ANY($1) AND l.returned_at IS NULL),
   (SELECT COUNT(*) FROM loans l
     WHERE l.library_id = ANY($1) AND l.returned_at IS NULL
-      AND l.due_date IS NOT NULL AND l.due_date < CURRENT_DATE)`
+      AND l.due_date IS NOT NULL AND l.due_date < CURRENT_DATE),
+  ` + suggestions
 
-	if err := r.db.QueryRow(ctx, q, libraryIDs).Scan(
-		&out.Books, &out.Series, &out.Authors, &out.Loans, &out.LoansOverdue,
+	if err := r.db.QueryRow(ctx, q, args...).Scan(
+		&out.Books, &out.Series, &out.Authors, &out.Loans, &out.LoansOverdue, &out.Suggestions,
 	); err != nil {
 		return nil, fmt.Errorf("counting collection: %w", err)
 	}
