@@ -174,3 +174,79 @@ func scanLoan(s scanner) (*models.Loan, error) {
 	}
 	return &l, nil
 }
+
+// ListAcross returns loans from every library the caller can read.
+//
+// A loan is a book, a person and some dates; the library is where the book
+// happens to live, not what the loan is about. "Who has my stuff" is not a
+// question anyone asks one library at a time, so this is the shape the Loans
+// page actually wants, and the per-library List stays for the routes that are
+// already scoped.
+//
+// Overdue is computed here rather than filtered in the client: a client that
+// only has the current page cannot tell you how many overdue loans exist.
+func (r *LoanRepo) ListAcross(
+	ctx context.Context,
+	libraryIDs []uuid.UUID,
+	includeReturned bool,
+	overdueOnly bool,
+	search string,
+) ([]*models.Loan, error) {
+	if len(libraryIDs) == 0 {
+		return []*models.Loan{}, nil
+	}
+
+	args := []any{libraryIDs, includeReturned}
+	where := `WHERE l.library_id = ANY($1) AND ($2 OR l.returned_at IS NULL)`
+	if search != "" {
+		args = append(args, "%"+search+"%")
+		where += fmt.Sprintf(` AND lower(l.loaned_to || ' ' || b.title) LIKE lower($%d)`, len(args))
+	}
+	if overdueOnly {
+		where += ` AND l.returned_at IS NULL AND l.due_date IS NOT NULL AND l.due_date < CURRENT_DATE`
+	}
+
+	q := `
+	SELECT l.id, l.library_id, l.book_id, b.title, lib.name,
+	       l.loaned_to, l.loaned_at, l.due_date, l.returned_at,
+	       COALESCE(l.notes, ''),
+	       l.created_at, l.updated_at
+	FROM loans l
+	JOIN books b ON b.id = l.book_id
+	JOIN libraries lib ON lib.id = l.library_id
+	` + where + `
+	-- Outstanding first, then the most pressing due date, so the top of the
+	-- list is what needs chasing rather than what happened most recently.
+	ORDER BY (l.returned_at IS NOT NULL),
+	         l.due_date ASC NULLS LAST,
+	         l.loaned_at DESC`
+
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing loans across libraries: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*models.Loan, 0)
+	for rows.Next() {
+		var l models.Loan
+		var due, returned pgtype.Date
+		if err := rows.Scan(
+			&l.ID, &l.LibraryID, &l.BookID, &l.BookTitle, &l.LibraryName,
+			&l.LoanedTo, &l.LoanedAt, &due, &returned, &l.Notes,
+			&l.CreatedAt, &l.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if due.Valid {
+			d := due.Time
+			l.DueDate = &d
+		}
+		if returned.Valid {
+			d := returned.Time
+			l.ReturnedAt = &d
+		}
+		out = append(out, &l)
+	}
+	return out, rows.Err()
+}

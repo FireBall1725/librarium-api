@@ -30,14 +30,21 @@ type MeBrowseHandler struct {
 	libraries    *repository.LibraryRepo
 	series       *repository.SeriesRepo
 	contributors *repository.ContributorRepo
+	shelves      *repository.ShelfRepo
+	loans        *repository.LoanRepo
 }
 
 func NewMeBrowseHandler(
 	libraries *repository.LibraryRepo,
 	series *repository.SeriesRepo,
 	contributors *repository.ContributorRepo,
+	shelves *repository.ShelfRepo,
+	loans *repository.LoanRepo,
 ) *MeBrowseHandler {
-	return &MeBrowseHandler{libraries: libraries, series: series, contributors: contributors}
+	return &MeBrowseHandler{
+		libraries: libraries, series: series,
+		contributors: contributors, shelves: shelves, loans: loans,
+	}
 }
 
 // seriesIndexVolumes caps the volume strip on a series row.
@@ -65,7 +72,7 @@ func callerID(r *http.Request) uuid.UUID {
 //	@Produce     json
 //	@Security    BearerAuth
 //	@Param       q  query  string  false  "Name substring"
-//	@Success     200  {object}  object{items=[]models.Series,total=int}
+//	@Success     200  {object}  object{items=[]github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse,total=int}
 //	@Failure     401  {object}  object{error=string}
 //	@Router      /me/series/index [get]
 func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +169,7 @@ func authorBody(a *repository.AuthorIndexEntry) map[string]any {
 //	@Produce     json
 //	@Security    BearerAuth
 //	@Param       role  query  string  false  "Contributor roles, comma separated. Defaults to author."
+//	@Param       lib   query  string  false  "Library UUIDs, comma separated. Narrows the scope; cannot widen it."
 //	@Success     200  {object}  object{items=[]repository.AuthorIndexEntry,total=int}
 //	@Failure     401  {object}  object{error=string}
 //	@Router      /me/authors/index [get]
@@ -169,6 +177,15 @@ func (h *MeBrowseHandler) AuthorsIndex(w http.ResponseWriter, r *http.Request) {
 	libraryIDs, err := readableLibraryIDs(r, h.libraries)
 	if err != nil {
 		respond.ServerError(w, r, err)
+		return
+	}
+
+	// The per-library Contributors page redirects here carrying its library, so
+	// this parameter is what keeps that redirect honest. Without it the reader
+	// asks for one library's authors and silently gets every library's.
+	libraryIDs = narrowToReadable(libraryIDsFromQuery(r), libraryIDs)
+	if len(libraryIDs) == 0 {
+		respond.JSON(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0})
 		return
 	}
 
@@ -190,4 +207,80 @@ func (h *MeBrowseHandler) AuthorsIndex(w http.ResponseWriter, r *http.Request) {
 		bodies = append(bodies, authorBody(a))
 	}
 	respond.JSON(w, http.StatusOK, map[string]any{"items": bodies, "total": len(bodies)})
+}
+
+// MyShelves godoc
+//
+//	@Summary     Shelves across every library the caller can read
+//	@Description The rail lists shelves beside libraries and views, so it needs
+//	@Description them across the whole readable scope rather than one library at
+//	@Description a time. Each carries its library, colour and icon.
+//	@Tags        me
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Success     200  {object}  object{items=[]github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse,total=int}
+//	@Failure     401  {object}  object{error=string}
+//	@Router      /me/shelves [get]
+func (h *MeBrowseHandler) MyShelves(w http.ResponseWriter, r *http.Request) {
+	libraryIDs, err := readableLibraryIDs(r, h.libraries)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	items, err := h.shelves.ListAcross(r.Context(), libraryIDs)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	// Through shelfBody, not the model. models.Shelf carries no json tags, so
+	// serialising it directly emits PascalCase and every field the client reads
+	// comes back undefined.
+	bodies := make([]map[string]any, 0, len(items))
+	for _, sh := range items {
+		bodies = append(bodies, shelfBody(sh))
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": bodies, "total": len(bodies)})
+}
+
+// MyLoans godoc
+//
+//	@Summary     Loans across every library the caller can read
+//	@Description A loan is a book, a person and some dates; the library is where
+//	@Description the book happens to live. "Who has my stuff" is not a question
+//	@Description anyone asks one library at a time, so this is the whole set,
+//	@Description each row carrying the library it belongs to.
+//	@Tags        me
+//	@Produce     json
+//	@Security    BearerAuth
+//	@Param       lib               query  string  false  "Library UUIDs, comma separated. Narrows the scope; cannot widen it."
+//	@Param       q                 query  string  false  "Match against borrower or book title"
+//	@Param       include_returned  query  bool    false  "Include loans already returned"
+//	@Param       overdue           query  bool    false  "Only loans past their due date"
+//	@Success     200  {object}  object{items=[]github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse,total=int}
+//	@Failure     401  {object}  object{error=string}
+//	@Router      /me/loans [get]
+func (h *MeBrowseHandler) MyLoans(w http.ResponseWriter, r *http.Request) {
+	libraryIDs, err := readableLibraryIDs(r, h.libraries)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	libraryIDs = narrowToReadable(libraryIDsFromQuery(r), libraryIDs)
+	if len(libraryIDs) == 0 {
+		respond.JSON(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0})
+		return
+	}
+
+	q := r.URL.Query()
+	items, err := h.loans.ListAcross(
+		r.Context(), libraryIDs,
+		q.Get("include_returned") == "true",
+		q.Get("overdue") == "true",
+		strings.TrimSpace(q.Get("q")),
+	)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
 }

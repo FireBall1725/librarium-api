@@ -10,15 +10,19 @@ import (
 )
 
 type Loan struct {
-	ID         uuid.UUID  `json:"id"`
-	LibraryID  uuid.UUID  `json:"library_id"`
-	BookID     uuid.UUID  `json:"book_id"`
-	BookTitle  string     `json:"book_title"`
-	LoanedTo   string     `json:"loaned_to"`
-	LoanedAt   time.Time  `json:"loaned_at"`
-	DueDate    *time.Time `json:"due_date"`
-	ReturnedAt *time.Time `json:"returned_at"`
-	Notes      string     `json:"notes"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID        uuid.UUID `json:"id"`
+	LibraryID uuid.UUID `json:"library_id"`
+	BookID    uuid.UUID `json:"book_id"`
+	BookTitle string    `json:"book_title"`
+	// LibraryName is populated by the cross-library list only. A loans list
+	// spanning libraries has to say which one each row belongs to; a
+	// per-library list already knows and leaves this empty.
+	LibraryName string     `json:"library_name,omitempty"`
+	LoanedTo    string     `json:"loaned_to"`
+	LoanedAt    time.Time  `json:"loaned_at"`
+	DueDate     *time.Time `json:"due_date"`
+	ReturnedAt  *time.Time `json:"returned_at"`
+	Notes       string     `json:"notes"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }

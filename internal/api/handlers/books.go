@@ -68,7 +68,7 @@ func (h *BookHandler) ListMediaTypes(w http.ResponseWriter, r *http.Request) {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       q    query     string  true  "Search query (min 2 chars)"
-// @Success     200  {array}   responses.ContributorItem
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem
 // @Failure     401  {object}  object{error=string}
 // @Router      /contributors [get]
 func (h *BookHandler) SearchContributors(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +98,7 @@ func (h *BookHandler) SearchContributors(w http.ResponseWriter, r *http.Request)
 // @Produce     json
 // @Security    BearerAuth
 // @Param       body  body      object{name=string}  true  "Contributor name"
-// @Success     201   {object}  responses.ContributorItem
+// @Success     201   {object}  github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem
 // @Failure     400   {object}  object{error=string}
 // @Failure     401   {object}  object{error=string}
 // @Router      /contributors [post]
@@ -197,7 +197,7 @@ func (h *BookHandler) GetBookFingerprint(w http.ResponseWriter, r *http.Request)
 // @Param       tag          query     string   false  "Filter by tag name"
 // @Param       type_filter  query     string   false  "Filter by media type"
 // @Param       regex        query     boolean  false  "Treat q as regex"
-// @Success     200  {object}  responses.PagedBooksResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.PagedBooksResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // parseListBooksOpts turns a request's query string into the repository's
@@ -279,6 +279,8 @@ func parseListBooksOpts(r *http.Request) (repository.ListBooksOpts, string, erro
 
 	return repository.ListBooksOpts{
 		Query:      q,
+		SeriesIDs:  seriesIDsFromQuery(r),
+		ShelfIDs:   parseFacetSelection(r).Shelves,
 		Page:       page,
 		PerPage:    perPage,
 		Sort:       sort,
@@ -342,7 +344,7 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       body        body      object{title=string,subtitle=string,media_type_id=string,description=string,contributors=[]object,tag_ids=[]string,genre_ids=[]string,edition=object}  true  "Book details"
-// @Success     201  {object}  responses.BookResponse
+// @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books [post]
@@ -377,7 +379,7 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       book_id     path      string  true  "Book UUID"
-// @Success     200  {object}  responses.BookResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -388,10 +390,21 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, "invalid book id")
 		return
 	}
-	libraryID, err := uuid.Parse(r.PathValue("library_id"))
-	if err != nil {
-		respond.Error(w, http.StatusBadRequest, "invalid library id")
-		return
+	// This handler serves two routes: the library-scoped one, and the bare
+	// /books/{book_id} the work-level detail page uses for a book that may sit
+	// in no library at all. On that route library_id is not a path value, so
+	// demanding one made the whole endpoint a 400 — and the Series index links
+	// every volume tick at it, so each of those was a dead link to a raw
+	// "invalid library id". Nil is the repository's own "no particular
+	// library", which it already handles; an id that is present but malformed
+	// is still the caller's mistake and still fails.
+	var libraryID uuid.UUID
+	if raw := r.PathValue("library_id"); raw != "" {
+		libraryID, err = uuid.Parse(raw)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid library id")
+			return
+		}
 	}
 	// Caller-scope the user_read_status / user_rating / user_progress_pct
 	// + per-library active_loan_count columns so the per-book GET emits
@@ -431,7 +444,7 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       book_id     path      string  true  "Book UUID"
 // @Param       body        body      object{title=string,subtitle=string,media_type_id=string,description=string,contributors=[]object,tag_ids=[]string,genre_ids=[]string}  true  "Updated book"
-// @Success     200  {object}  responses.BookResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -470,7 +483,7 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       isbn        path      string  true  "ISBN-10 or ISBN-13"
-// @Success     200  {object}  responses.BookResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -1061,7 +1074,7 @@ func (h *BookHandler) Facets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	facets, err := h.books.Facets(r.Context(), []uuid.UUID{libraryID},
-		parseFacetSelection(r), r.URL.Query().Get("q"), callerID)
+		parseFacetSelection(r), r.URL.Query().Get("q"), seriesIDsFromQuery(r), callerID)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return

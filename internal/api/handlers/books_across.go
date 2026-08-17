@@ -64,6 +64,52 @@ func (h *BookHandler) readableLibraryIDs(r *http.Request) ([]uuid.UUID, error) {
 	return readableLibraryIDs(r, h.libraries)
 }
 
+// narrowToReadable intersects a requested set of libraries with the readable
+// set, so a library filter can only ever shrink the scope.
+//
+// Intersection rather than substitution is the whole point: the requested ids
+// arrive from the client, and any code path that let them replace the readable
+// set would turn a query parameter into a way to read someone else's library.
+// An empty request means "no filter" and leaves the scope alone.
+func narrowToReadable(requested, readable []uuid.UUID) []uuid.UUID {
+	if len(requested) == 0 {
+		return readable
+	}
+	allowed := make(map[uuid.UUID]bool, len(readable))
+	for _, id := range readable {
+		allowed[id] = true
+	}
+	picked := make([]uuid.UUID, 0, len(requested))
+	for _, id := range requested {
+		if allowed[id] {
+			picked = append(picked, id)
+		}
+	}
+	return picked
+}
+
+// libraryIDsFromQuery reads a comma-separated `lib` parameter. Unparseable ids
+// are dropped rather than rejected: the parameter is a filter, and a stale
+// bookmark holding a deleted library should show nothing, not an error page.
+func libraryIDsFromQuery(r *http.Request) []uuid.UUID {
+	raw := r.URL.Query().Get("lib")
+	if raw == "" {
+		return nil
+	}
+	var ids []uuid.UUID
+	for _, part := range strings.Split(raw, ",") {
+		if id, err := uuid.Parse(strings.TrimSpace(part)); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	// Every id was junk. That is a filter matching nothing, not an absent
+	// filter, so it must not fall back to the whole readable set.
+	if len(ids) == 0 {
+		return []uuid.UUID{uuid.Nil}
+	}
+	return ids
+}
+
 // ListMyBooks godoc
 //
 // @Summary     Books across every library the caller can read
@@ -107,19 +153,7 @@ func (h *BookHandler) ListMyBooks(w http.ResponseWriter, r *http.Request) {
 	// The library facet narrows the scope rather than adding a WHERE clause,
 	// and it narrows by intersection so a library id the caller cannot read
 	// cannot widen the result no matter what the client sends.
-	if len(sel.Libraries) > 0 {
-		readable := make(map[uuid.UUID]bool, len(libraryIDs))
-		for _, id := range libraryIDs {
-			readable[id] = true
-		}
-		picked := make([]uuid.UUID, 0, len(sel.Libraries))
-		for _, id := range sel.Libraries {
-			if readable[id] {
-				picked = append(picked, id)
-			}
-		}
-		libraryIDs = picked
-	}
+	libraryIDs = narrowToReadable(sel.Libraries, libraryIDs)
 	if len(libraryIDs) == 0 {
 		// Not an error. A new user, or one whose only membership was revoked,
 		// has an empty shelf and the client renders its own empty state.
@@ -173,7 +207,8 @@ func (h *BookHandler) MyBookFacets(w http.ResponseWriter, r *http.Request) {
 		callerID = claims.UserID
 	}
 
-	facets, err := h.books.Facets(r.Context(), libraryIDs, parseFacetSelection(r), r.URL.Query().Get("q"), callerID)
+	facets, err := h.books.Facets(r.Context(), libraryIDs, parseFacetSelection(r),
+		r.URL.Query().Get("q"), seriesIDsFromQuery(r), callerID)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -211,6 +246,13 @@ func parseFacetSelection(r *http.Request) repository.FacetSelection {
 		Genres:     split("genre"),
 		Tags:       split("tag"),
 	}
+	// Shelves come through by id for the same reason libraries do: the name is
+	// only unique within one library.
+	for _, s := range split("shelf") {
+		if id, err := uuid.Parse(s); err == nil {
+			sel.Shelves = append(sel.Shelves, id)
+		}
+	}
 	for _, s := range split("lib") {
 		if id, err := uuid.Parse(s); err == nil {
 			sel.Libraries = append(sel.Libraries, id)
@@ -222,4 +264,113 @@ func parseFacetSelection(r *http.Request) repository.FacetSelection {
 		}
 	}
 	return sel
+}
+
+// ListMyBooksGrouped godoc
+//
+// @Summary     Books across every readable library, series collapsed
+// @Description Same filters as /me/books, but each series becomes one entry so
+// @Description a run and a standalone book are peers. Paging is over entries;
+// @Description book_total reports how many books those entries stand for,
+// @Description because the facet rail still counts books.
+// @Tags        books
+// @Produce     json
+// @Security    BearerAuth
+// @Param       q         query string false "Search query"
+// @Param       lib       query string false "Library UUIDs, comma separated"
+// @Param       own       query string false "Ownership states, comma separated"
+// @Param       status    query string false "Read statuses, comma separated"
+// @Param       page      query int    false "Page, 1-based"
+// @Param       per_page  query int    false "Entries per page"
+// @Success     200  {object}  object{items=[]object,total=int,book_total=int,page=int,per_page=int}
+// @Failure     401  {object}  object{error=string}
+// @Router      /me/books/grouped [get]
+func (h *BookHandler) ListMyBooksGrouped(w http.ResponseWriter, r *http.Request) {
+	opts, _, err := parseListBooksOpts(r)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	opts.Selection = parseFacetSelection(r)
+
+	libraryIDs, err := h.readableLibraryIDs(r)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	libraryIDs = narrowToReadable(opts.Selection.Libraries, libraryIDs)
+	if len(libraryIDs) == 0 {
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"items": []any{}, "total": 0, "book_total": 0,
+			"page": 1, "per_page": opts.PerPage,
+		})
+		return
+	}
+
+	entries, total, bookTotal, err := h.books.ListGroupedBySeries(r.Context(), libraryIDs, opts)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	items := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		if e.Series != nil {
+			items = append(items, seriesGroupBody(e.Series))
+			continue
+		}
+		if e.Book != nil {
+			// The same body the ungrouped list sends, so a standalone entry and
+			// a row on /me/books are the same shape and the client renders one.
+			items = append(items, map[string]any{"kind": "book", "book": bookBody(e.Book)})
+		}
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"items":      items,
+		"total":      total,
+		"book_total": bookTotal,
+		"page":       max(opts.Page, 1),
+		"per_page":   opts.PerPage,
+	})
+}
+
+func seriesGroupBody(g *repository.SeriesGroup) map[string]any {
+	var coverURL any
+	if g.CoverBookID != nil {
+		coverURL = "/api/v1/books/" + g.CoverBookID.String() + "/cover"
+	}
+	return map[string]any{
+		"kind":        "series",
+		"series_id":   g.ID,
+		"series_name": g.Name,
+		"matched":     g.Matched,
+		"owned":       g.Owned,
+		"read":        g.Read,
+		"total_count": g.TotalCount,
+		"cover_url":   coverURL,
+	}
+}
+
+// seriesIDsFromQuery reads a comma-separated `series` parameter.
+//
+// Several ids rather than one because selecting a page of collapsed groups asks
+// for every book in every series on that page, and one request beats one per
+// row. Unparseable ids are dropped for the same reason they are in
+// libraryIDsFromQuery: a stale link should show nothing, not an error page.
+func seriesIDsFromQuery(r *http.Request) []uuid.UUID {
+	raw := r.URL.Query().Get("series")
+	if raw == "" {
+		return nil
+	}
+	var ids []uuid.UUID
+	for _, part := range strings.Split(raw, ",") {
+		if id, err := uuid.Parse(strings.TrimSpace(part)); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return []uuid.UUID{uuid.Nil}
+	}
+	return ids
 }

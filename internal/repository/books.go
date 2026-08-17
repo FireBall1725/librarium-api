@@ -138,6 +138,49 @@ func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) strin
 	) AS active_loan_count`
 	}
 
+	// A book's tags, scoped to the libraries in play.
+	//
+	// Tags are a per-library vocabulary (UNIQUE (library_id, name)) but
+	// book_tags is work-level, so an unfiltered subquery returns the tags every
+	// library has put on the book, including libraries the caller cannot read.
+	// Invisible while no book is held by two libraries, and a disclosure the
+	// moment one is. Scoped like the loan count beside it.
+	tagsScope := ""
+	if loanLibraryArg > 0 {
+		match := " AND t.library_id = $%d"
+		if loanLibraryIsSet {
+			match = " AND t.library_id = ANY($%d)"
+		}
+		tagsScope = fmt.Sprintf(match, loanLibraryArg)
+	}
+
+	// Which libraries hold this book.
+	//
+	// The list used to send none, so every row on the cross-library Books
+	// surface arrived with library_id null: book detail linked to a route that
+	// does not exist, and a bulk edit had no library to make the request
+	// through. The per-library grid never noticed because it knew the library
+	// from the URL.
+	//
+	// Constrained to the caller's scope for the same reason the loan count is:
+	// a book the caller reaches through one library must not disclose the name
+	// of another library holding it.
+	librariesExpr := `(
+		SELECT COALESCE(json_agg(json_build_object('id', l.id, 'name', l.name)
+			ORDER BY lower(l.name)), '[]'::json)
+		FROM library_books lb_h
+		JOIN libraries l ON l.id = lb_h.library_id
+		WHERE lb_h.book_id = b.id`
+	if loanLibraryArg > 0 {
+		match := " AND lb_h.library_id = $%d"
+		if loanLibraryIsSet {
+			match = " AND lb_h.library_id = ANY($%d)"
+		}
+		librariesExpr += fmt.Sprintf(match, loanLibraryArg)
+	}
+	librariesExpr += `
+	) AS holding_libraries`
+
 	return `
 	SELECT
 		b.id, b.title, b.subtitle,
@@ -169,7 +212,7 @@ func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) strin
 			)
 			FROM book_tags bt
 			JOIN tags t ON t.id = bt.tag_id
-			WHERE bt.book_id = b.id
+			WHERE bt.book_id = b.id` + tagsScope + `
 		) AS tags,
 		(
 			SELECT COALESCE(
@@ -232,7 +275,8 @@ func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) strin
 		` + userReadStatusExpr + `,
 		` + userRatingExpr + `,
 		` + userProgressExpr + `,
-		` + activeLoanExpr + `
+		` + activeLoanExpr + `,
+		` + librariesExpr + `
 	FROM books b
 	JOIN media_types mt ON mt.id = b.media_type_id`
 }
@@ -450,6 +494,8 @@ type ListBooksOpts struct {
 	SortDir    string           // "asc" | "desc"; default "asc"
 	Letter     string           // single char: 'a'-'z' matches LIKE 'letter%'
 	TagFilter  string           // filter to books that have a tag with this exact name (case-insensitive)
+	SeriesIDs  []uuid.UUID      // filter to books in any of these series; how a collapsed series group is opened
+	ShelfIDs   []uuid.UUID      // filter to books on any of these shelves
 	TypeFilter string           // filter by media type display name (case-insensitive), e.g. "Novel"
 	IsRegex    bool             // if true, use b.title ~* $query instead of ILIKE
 	Groups     []ConditionGroup // from query language parser; groups are ANDed together
@@ -526,6 +572,30 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 	}
 
 	// Tag filter
+	// Opening a series group from the grouped list. In buildBookFilter rather
+	// than bolted onto the list query, so the facet counts narrow with it: drill
+	// into a 34-volume run and the rail describes those 34 books.
+	if len(opts.SeriesIDs) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM book_series bs2
+            WHERE bs2.book_id = b.id AND bs2.series_id = ANY($%d)
+        )`, argIdx))
+		args = append(args, opts.SeriesIDs)
+		argIdx++
+	}
+
+	// A shelf is a hand-picked set rather than a property of the book, but it
+	// narrows the list the same way a tag does, so it lives with the rest of
+	// the conditions and the facet counts pick it up for free.
+	if len(opts.ShelfIDs) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM book_shelves bsh
+            WHERE bsh.book_id = b.id AND bsh.shelf_id = ANY($%d)
+        )`, argIdx))
+		args = append(args, opts.ShelfIDs)
+		argIdx++
+	}
+
 	if opts.TagFilter != "" {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
             SELECT 1 FROM book_tags bt2
@@ -1048,6 +1118,7 @@ func scanBook(s scanner) (*models.Book, error) {
 		userRating     int
 		userProgress   pgtype.Numeric
 		activeLoans    int
+		librariesJSON  []byte
 		b              models.Book
 	)
 
@@ -1058,6 +1129,7 @@ func scanBook(s scanner) (*models.Book, error) {
 		&contribJSON, &tagsJSON, &genresJSON, &b.HasCover,
 		&seriesJSON, &shelvesJSON, &publisher, &publishYear, &language,
 		&userReadStatus, &userRating, &userProgress, &activeLoans,
+		&librariesJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -1114,6 +1186,15 @@ func scanBook(s scanner) (*models.Book, error) {
 	if len(shelvesJSON) > 0 {
 		if err := json.Unmarshal(shelvesJSON, &b.Shelves); err != nil {
 			return nil, fmt.Errorf("unmarshaling shelves: %w", err)
+		}
+	}
+
+	// Empty rather than nil: a floating book genuinely holds no library, and a
+	// nil slice marshals to null, which the React client does not survive.
+	b.Libraries = []models.BookLibraryRef{}
+	if len(librariesJSON) > 0 {
+		if err := json.Unmarshal(librariesJSON, &b.Libraries); err != nil {
+			return nil, fmt.Errorf("unmarshaling libraries: %w", err)
 		}
 	}
 

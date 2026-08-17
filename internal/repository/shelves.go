@@ -72,6 +72,46 @@ func (r *ShelfRepo) List(ctx context.Context, libraryID uuid.UUID, search, tagFi
 	return out, rows.Err()
 }
 
+// ListAcross returns every shelf in the given libraries, for the rail.
+//
+// The rail lists shelves the way it lists libraries and views, so it needs them
+// across the caller's whole scope rather than one library at a time. Ordered by
+// library first so the rows group by the library they belong to without the
+// rail having to sort them itself.
+func (r *ShelfRepo) ListAcross(ctx context.Context, libraryIDs []uuid.UUID) ([]*models.Shelf, error) {
+	if len(libraryIDs) == 0 {
+		return []*models.Shelf{}, nil
+	}
+	q := `
+		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
+		       COALESCE(s.color,''), COALESCE(s.icon,''), s.display_order,
+		       COUNT(bs.book_id) AS book_count,
+		       s.created_at, s.updated_at,
+		       ` + shelfTagsSubquery + ` AS tags
+		FROM shelves s
+		LEFT JOIN book_shelves bs ON bs.shelf_id = s.id
+		JOIN libraries l ON l.id = s.library_id
+		WHERE s.library_id = ANY($1)
+		GROUP BY s.id, l.name
+		ORDER BY lower(l.name), s.display_order, s.name`
+
+	rows, err := r.db.Query(ctx, q, libraryIDs)
+	if err != nil {
+		return nil, fmt.Errorf("listing shelves across libraries: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*models.Shelf, 0)
+	for rows.Next() {
+		sh, err := scanShelf(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sh)
+	}
+	return out, rows.Err()
+}
+
 func (r *ShelfRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Shelf, error) {
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),

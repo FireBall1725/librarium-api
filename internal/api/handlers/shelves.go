@@ -36,7 +36,7 @@ func NewShelfHandler(svc *service.ShelfService) *ShelfHandler {
 // @Param       library_id  path      string  true   "Library UUID"
 // @Param       search      query     string  false  "Filter by shelf name"
 // @Param       tag         query     string  false  "Filter by tag name"
-// @Success     200  {array}   responses.ShelfResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/shelves [get]
@@ -70,7 +70,7 @@ func (h *ShelfHandler) ListShelves(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       body        body      object{name=string,description=string,color=string,icon=string,display_order=integer,tag_ids=[]string}  true  "Shelf details"
-// @Success     201  {object}  responses.ShelfResponse
+// @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/shelves [post]
@@ -106,7 +106,7 @@ func (h *ShelfHandler) CreateShelf(w http.ResponseWriter, r *http.Request) {
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       shelf_id    path      string  true  "Shelf UUID"
 // @Param       body        body      object{name=string,description=string,color=string,icon=string,display_order=integer,tag_ids=[]string}  true  "Updated shelf"
-// @Success     200  {object}  responses.ShelfResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -173,7 +173,7 @@ func (h *ShelfHandler) DeleteShelf(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       book_id     path      string  true  "Book UUID"
-// @Success     200  {array}   responses.ShelfResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books/{book_id}/shelves [get]
@@ -209,7 +209,7 @@ func (h *ShelfHandler) ListBookShelves(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       shelf_id    path      string  true  "Shelf UUID"
-// @Success     200  {array}   responses.BookResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/shelves/{shelf_id}/books [get]
@@ -317,7 +317,7 @@ func (h *ShelfHandler) RemoveBookFromShelf(w http.ResponseWriter, r *http.Reques
 // @Produce     json
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
-// @Success     200  {array}   responses.TagResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.TagResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/tags [get]
@@ -349,7 +349,7 @@ func (h *ShelfHandler) ListTags(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       body        body      object{name=string,color=string}  true  "Tag details"
-// @Success     201  {object}  responses.TagResponse
+// @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.TagResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/tags [post]
@@ -388,7 +388,7 @@ func (h *ShelfHandler) CreateTag(w http.ResponseWriter, r *http.Request) {
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       tag_id      path      string  true  "Tag UUID"
 // @Param       body        body      object{name=string,color=string}  true  "Updated tag"
-// @Success     200  {object}  responses.TagResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.TagResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}

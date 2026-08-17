@@ -29,6 +29,7 @@ type BookFacets struct {
 	MediaType  []FacetValue `json:"media_type"`
 	Genre      []FacetValue `json:"genre"`
 	Tag        []FacetValue `json:"tag"`
+	Shelf      []FacetValue `json:"shelf"`
 	Rating     []FacetValue `json:"rating"`
 }
 
@@ -47,14 +48,18 @@ type FacetSelection struct {
 	MediaTypes []string // media_types.name
 	Genres     []string
 	Tags       []string
-	Ratings    []int32
+	// Shelves are hand-picked sets rather than a property of a book, but they
+	// narrow the list exactly like a tag does, so they are a facet dimension.
+	Shelves []uuid.UUID
+	Ratings []int32
 }
 
 func emptyFacets() *BookFacets {
 	return &BookFacets{
 		Ownership: []FacetValue{},
 		Library:   []FacetValue{}, ReadStatus: []FacetValue{}, MediaType: []FacetValue{},
-		Genre: []FacetValue{}, Tag: []FacetValue{}, Rating: []FacetValue{},
+		Genre: []FacetValue{}, Tag: []FacetValue{}, Shelf: []FacetValue{},
+		Rating: []FacetValue{},
 	}
 }
 
@@ -79,6 +84,7 @@ func (r *BookRepo) Facets(
 	accessible []uuid.UUID,
 	sel FacetSelection,
 	query string,
+	seriesIDs []uuid.UUID,
 	callerID uuid.UUID,
 ) (*BookFacets, error) {
 	if len(accessible) == 0 {
@@ -115,6 +121,16 @@ func (r *BookRepo) Facets(
             WHERE bc.book_id = b.id AND c.name ILIKE %[1]s))`, p)
 	}
 
+	// Drilling into a series narrows every dimension, for the same reason the
+	// text search does: it is not one of the facets, so no dimension owns it and
+	// none may count around it. Without this the rail reported the whole shelf
+	// beside a list showing one run.
+	if len(seriesIDs) > 0 {
+		p := arg(seriesIDs)
+		textWhere += fmt.Sprintf(` AND EXISTS (
+            SELECT 1 FROM book_series bs_f WHERE bs_f.book_id = b.id AND bs_f.series_id = ANY(%s))`, p)
+	}
+
 	interCTE := "SELECT NULL::uuid AS book_id, NULL::text AS read_status, NULL::int AS rating WHERE false"
 	if callerID != uuid.Nil {
 		p := arg(callerID)
@@ -136,6 +152,7 @@ func (r *BookRepo) Facets(
 	mOwn := "TRUE"
 	mLib, mStatus, mType := "TRUE", "TRUE", "TRUE"
 	mGenre, mTag, mRating := "TRUE", "TRUE", "TRUE"
+	mShelf := "TRUE"
 
 	if len(sel.Ownership) > 0 {
 		mOwn = fmt.Sprintf("s.ownership = ANY(%s)", arg(sel.Ownership))
@@ -161,6 +178,12 @@ func (r *BookRepo) Facets(
 		mTag = fmt.Sprintf(`EXISTS (SELECT 1 FROM book_tags bt2 JOIN tags t2 ON t2.id = bt2.tag_id
                  WHERE bt2.book_id = s.id AND bt2.deleted_at IS NULL AND t2.name = ANY(%s))`, arg(sel.Tags))
 	}
+	// By id, not name: a shelf name is only unique within its library, so two
+	// libraries can both have "Favourites" and they are different shelves.
+	if len(sel.Shelves) > 0 {
+		mShelf = fmt.Sprintf(`EXISTS (SELECT 1 FROM book_shelves bsh2
+                 WHERE bsh2.book_id = s.id AND bsh2.shelf_id = ANY(%s))`, arg(sel.Shelves))
+	}
 	if len(sel.Ratings) > 0 {
 		mRating = fmt.Sprintf(`x.rating = ANY(%s)`, arg(sel.Ratings))
 	}
@@ -170,9 +193,10 @@ func (r *BookRepo) Facets(
 		all := map[string]string{
 			"own": "f.m_own",
 			"lib": "f.m_lib", "status": "f.m_status", "type": "f.m_type",
-			"genre": "f.m_genre", "tag": "f.m_tag", "rating": "f.m_rating",
+			"genre": "f.m_genre", "tag": "f.m_tag", "shelf": "f.m_shelf",
+			"rating": "f.m_rating",
 		}
-		parts := make([]string, 0, 6)
+		parts := make([]string, 0, 7)
 		for k, v := range all {
 			if k != skip {
 				parts = append(parts, v)
@@ -195,7 +219,7 @@ f AS (
            COALESCE(x.read_status, 'unread') AS read_status,
            x.rating,
            %s AS m_own, %s AS m_lib, %s AS m_status, %s AS m_type,
-           %s AS m_genre, %s AS m_tag, %s AS m_rating
+           %s AS m_genre, %s AS m_tag, %s AS m_shelf, %s AS m_rating
     FROM scope s LEFT JOIN inter x ON x.book_id = s.id
 )
 SELECT 'ownership' AS dim, f.ownership AS value, f.ownership AS label, COUNT(*) AS n
@@ -223,16 +247,22 @@ FROM f JOIN book_tags bt ON bt.book_id = f.id AND bt.deleted_at IS NULL
        JOIN tags t ON t.id = bt.tag_id AND t.deleted_at IS NULL
 WHERE %s GROUP BY t.name
 UNION ALL
+SELECT 'shelf', sh.id::text, sh.name, COUNT(DISTINCT f.id)
+FROM f JOIN book_shelves bsh ON bsh.book_id = f.id
+       JOIN shelves sh ON sh.id = bsh.shelf_id
+WHERE sh.library_id = ANY($1) AND %s
+GROUP BY sh.id, sh.name
+UNION ALL
 SELECT 'rating', f.rating::text, f.rating::text, COUNT(*)
 FROM f WHERE f.rating IS NOT NULL AND %s GROUP BY f.rating
 ORDER BY 1, 4 DESC, 3`,
 		// The scope CTE comes first now: it holds the caller's own placeholder,
 		// so it has to be built before the text filter's is counted.
 		scopeSQL, textWhere, interCTE,
-		mOwn, mLib, mStatus, mType, mGenre, mTag, mRating,
+		mOwn, mLib, mStatus, mType, mGenre, mTag, mShelf, mRating,
 		others("own"),
 		others("lib"), others("status"), others("type"),
-		others("genre"), others("tag"), others("rating"))
+		others("genre"), others("tag"), others("shelf"), others("rating"))
 
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -260,6 +290,8 @@ ORDER BY 1, 4 DESC, 3`,
 			out.Genre = append(out.Genre, fv)
 		case "tag":
 			out.Tag = append(out.Tag, fv)
+		case "shelf":
+			out.Shelf = append(out.Shelf, fv)
 		case "rating":
 			out.Rating = append(out.Rating, fv)
 		}

@@ -99,12 +99,18 @@ type CollectionCounts struct {
 	Books   int `json:"books"`
 	Series  int `json:"series"`
 	Authors int `json:"authors"`
+	// Loans is what is still out, not every loan ever recorded. A nav count of
+	// every loan in history would climb forever and never mean anything.
+	Loans int `json:"loans"`
+	// LoansOverdue is the subset worth reacting to, so the rail can say which
+	// of those outstanding loans is late without a second request.
+	LoansOverdue int `json:"loans_overdue"`
 }
 
 // CountsForLibraries totals the collection across a set of libraries.
 //
-// One round trip with three scalar subqueries rather than three queries: the
-// navigation needs all three together on every page, and they are cheap counts
+// One round trip with a scalar subquery each rather than a query apiece: the
+// navigation needs them all together on every page, and they are cheap counts
 // against indexed columns.
 //
 // Books counts DISTINCT book ids, not junction rows. A work held by two
@@ -124,9 +130,16 @@ SELECT
   (SELECT COUNT(DISTINCT bc.contributor_id)
      FROM book_contributors bc
      JOIN library_books lb2 ON lb2.book_id = bc.book_id AND lb2.deleted_at IS NULL
-    WHERE lb2.library_id = ANY($1) AND bc.role = 'author')`
+    WHERE lb2.library_id = ANY($1) AND bc.role = 'author'),
+  (SELECT COUNT(*) FROM loans l
+    WHERE l.library_id = ANY($1) AND l.returned_at IS NULL),
+  (SELECT COUNT(*) FROM loans l
+    WHERE l.library_id = ANY($1) AND l.returned_at IS NULL
+      AND l.due_date IS NOT NULL AND l.due_date < CURRENT_DATE)`
 
-	if err := r.db.QueryRow(ctx, q, libraryIDs).Scan(&out.Books, &out.Series, &out.Authors); err != nil {
+	if err := r.db.QueryRow(ctx, q, libraryIDs).Scan(
+		&out.Books, &out.Series, &out.Authors, &out.Loans, &out.LoansOverdue,
+	); err != nil {
 		return nil, fmt.Errorf("counting collection: %w", err)
 	}
 	return out, nil
