@@ -102,6 +102,12 @@ type MetadataProvider interface {
 }
 
 // BookISBNProvider can look up a book by ISBN-10 or ISBN-13.
+//
+// Same bound as BookSearchProvider: implementations must bound their own call
+// via an http.Client Timeout or equivalent. Registry.LookupISBN starts its
+// deadline once some provider has answered, so before the first result the
+// only things that end the wait are a provider returning and the context being
+// cancelled.
 type BookISBNProvider interface {
 	MetadataProvider
 	LookupByISBN(ctx context.Context, isbn string) (*BookResult, error)

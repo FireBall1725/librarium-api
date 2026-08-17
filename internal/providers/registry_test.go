@@ -85,3 +85,70 @@ func TestSearchBooks_DropsStragglerPastGracePeriodAfterFirstResult(t *testing.T)
 		t.Fatalf("got %+v, want exactly the fast provider's result — the straggler should have been dropped", out)
 	}
 }
+
+// fakeISBNProvider is a BookISBNProvider whose lookup blocks for `delay`
+// before returning a single result named after the provider.
+type fakeISBNProvider struct {
+	name  string
+	delay time.Duration
+}
+
+func (p *fakeISBNProvider) Info() ProviderInfo {
+	return ProviderInfo{Name: p.name, DisplayName: p.name, Capabilities: []string{CapBookISBN}}
+}
+func (p *fakeISBNProvider) Configure(map[string]string) {}
+func (p *fakeISBNProvider) Enabled() bool               { return true }
+func (p *fakeISBNProvider) LookupByISBN(ctx context.Context, isbn string) (*BookResult, error) {
+	select {
+	case <-time.After(p.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return &BookResult{Provider: p.name, Title: p.name}, nil
+}
+
+func withISBNDeadline(t *testing.T, d time.Duration) {
+	t.Helper()
+	orig := isbnDeadline
+	isbnDeadline = d
+	t.Cleanup(func() { isbnDeadline = orig })
+}
+
+// Regression test for the bug reported 2026-08-17: LookupISBN waited for every
+// provider with no aggregate deadline, so one unreachable provider cost every
+// scan its full HTTP timeout even when another had already returned the book.
+// Reported as scan timeouts on iOS and web during an Open Library outage,
+// where Open Library hung rather than refusing.
+func TestLookupISBN_DoesNotWaitForAHungProviderOnceOneAnswered(t *testing.T) {
+	withISBNDeadline(t, 50*time.Millisecond)
+
+	r := NewRegistry()
+	r.Register(&fakeISBNProvider{name: "fast", delay: 0})
+	// Stands in for a provider that hangs until its own HTTP timeout.
+	r.Register(&fakeISBNProvider{name: "hung", delay: 10 * time.Second})
+
+	start := time.Now()
+	out := r.LookupISBN(context.Background(), "9780441172719")
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("waited %v for a hung provider; the scan should return once a fast one answered", elapsed)
+	}
+	if len(out) != 1 || out[0].Provider != "fast" {
+		t.Fatalf("want the fast provider's result, got %+v", out)
+	}
+}
+
+// The deadline must not start before anything has answered, or a lookup where
+// every provider is merely slow returns nothing at all.
+func TestLookupISBN_DeadlineStartsAfterFirstResult(t *testing.T) {
+	withISBNDeadline(t, 50*time.Millisecond)
+
+	r := NewRegistry()
+	r.Register(&fakeISBNProvider{name: "slow", delay: 200 * time.Millisecond})
+
+	out := r.LookupISBN(context.Background(), "9780441172719")
+	if len(out) != 1 {
+		t.Fatalf("want the slow provider's result once it arrives, got %d results", len(out))
+	}
+}

@@ -90,30 +90,71 @@ func (r *Registry) LookupISBN(ctx context.Context, isbn string) []*BookResult {
 	}
 
 	type result struct {
+		name string
 		book *BookResult
 	}
 
 	ch := make(chan result, len(providers))
 	for _, p := range providers {
 		go func(bp BookISBNProvider) {
+			name := bp.Info().Name
 			book, err := bp.LookupByISBN(ctx, isbn)
-			if err != nil || book == nil {
-				ch <- result{}
+			if err != nil {
+				slog.WarnContext(ctx, "isbn lookup provider error", "provider", name, "isbn", isbn, "error", err)
+				ch <- result{name: name}
 				return
 			}
-			ch <- result{book: book}
+			ch <- result{name: name, book: book}
 		}(p)
 	}
 
+	// Same shape as SearchBooks: once one provider has answered, the rest get
+	// isbnDeadline and then we return what we have.
+	//
+	// Without this the lookup took as long as the slowest provider, so a
+	// single unreachable one cost every scan its full HTTP timeout even when
+	// another provider had already returned the book. Reported by a user on
+	// 2026-08-17 as scan timeouts on both iOS and web during an Open Library
+	// outage; Open Library was hanging rather than refusing, so it burned its
+	// whole 15s on every scan.
+	var deadlineC <-chan time.Time
+
 	var out []*BookResult
-	for range providers {
-		res := <-ch
-		if res.book != nil {
-			out = append(out, res.book)
+	remaining := len(providers)
+	for remaining > 0 {
+		select {
+		case res := <-ch:
+			if res.book != nil {
+				out = append(out, res.book)
+			}
+			remaining--
+			if deadlineC == nil {
+				deadline := time.NewTimer(isbnDeadline)
+				defer deadline.Stop()
+				deadlineC = deadline.C
+			}
+		case <-deadlineC:
+			slog.InfoContext(ctx, "isbn lookup deadline reached, returning partial results",
+				"isbn", isbn, "waiting_on", remaining, "results_so_far", len(out))
+			return out
+		case <-ctx.Done():
+			return out
 		}
 	}
 	return out
 }
+
+// isbnDeadline is how long LookupISBN waits for lagging providers once at
+// least one has answered.
+//
+// Tighter than searchDeadline because the two are not the same act. A search
+// produces a list to browse, and a wider net is worth a wait. An ISBN lookup
+// is someone standing at a shelf with a book in their hand and a scanner
+// pointed at it, where a second provider's extra fields are worth much less
+// than answering promptly.
+//
+// var, not const, so tests can shrink it rather than sleeping real seconds.
+var isbnDeadline = 3 * time.Second
 
 // BookSearchProviders returns all enabled providers with the book_search capability.
 func (r *Registry) BookSearchProviders() []BookSearchProvider {
@@ -253,6 +294,8 @@ func (r *Registry) SearchSeries(ctx context.Context, query string) []SeriesResul
 		go func(sp SeriesSearchProvider) {
 			items, err := sp.SearchSeries(ctx, query)
 			if err != nil {
+				slog.WarnContext(ctx, "series search provider error",
+					"provider", sp.Info().Name, "error", err)
 				ch <- result{}
 				return
 			}
@@ -260,10 +303,31 @@ func (r *Registry) SearchSeries(ctx context.Context, query string) []SeriesResul
 		}(p)
 	}
 
+	// The third fan-out, and it had the same unbounded wait LookupISBN did:
+	// one provider that hangs holds up a search every other provider has
+	// already answered. searchDeadline rather than isbnDeadline because this
+	// is a search, and the wider net is worth the wait.
+	var deadlineC <-chan time.Time
+
 	var out []SeriesResult
-	for range providers {
-		res := <-ch
-		out = append(out, res.items...)
+	remaining := len(providers)
+	for remaining > 0 {
+		select {
+		case res := <-ch:
+			out = append(out, res.items...)
+			remaining--
+			if deadlineC == nil {
+				deadline := time.NewTimer(searchDeadline)
+				defer deadline.Stop()
+				deadlineC = deadline.C
+			}
+		case <-deadlineC:
+			slog.InfoContext(ctx, "series search deadline reached, returning partial results",
+				"query", query, "waiting_on", remaining, "results_so_far", len(out))
+			return out
+		case <-ctx.Done():
+			return out
+		}
 	}
 	return out
 }
