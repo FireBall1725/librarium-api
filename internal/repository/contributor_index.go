@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
 
@@ -202,17 +203,20 @@ ORDER BY lower(COALESCE(NULLIF(c.sort_name, ''), c.name)), c.name`, readCount, s
 // loses the names it was built to find. NFD splits an accented letter into its
 // base plus a combining mark, so the base is simply the first rune out.
 func indexLetter(sortName string) string {
-	for _, r := range strings.TrimSpace(sortName) {
-		for _, base := range norm.NFD.String(string(r)) {
-			switch {
-			case base >= 'a' && base <= 'z':
-				return string(base - 32)
-			case base >= 'A' && base <= 'Z':
-				return string(base)
-			}
-			break
-		}
+	trimmed := strings.TrimSpace(sortName)
+	if trimmed == "" {
 		return "#"
+	}
+	// Two "first rune of" steps, written as decodes rather than as range loops
+	// that break on their first iteration: staticcheck reads those as loops
+	// that cannot loop (SA4004), and it is right — nothing here repeats.
+	first, _ := utf8.DecodeRuneInString(trimmed)
+	base, _ := utf8.DecodeRuneInString(norm.NFD.String(string(first)))
+	switch {
+	case base >= 'a' && base <= 'z':
+		return string(base - 32)
+	case base >= 'A' && base <= 'Z':
+		return string(base)
 	}
 	return "#"
 }
