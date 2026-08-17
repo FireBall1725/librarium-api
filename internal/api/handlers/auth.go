@@ -245,7 +245,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       body  body      object{display_name=string,email=string}  true  "Update profile request"
-// @Success     200   {object}  responses.UserResponse
+// @Success     200   {object}  github_com_fireball1725_librarium-api_internal_api_responses.UserResponse
 // @Failure     400   {object}  object{error=string}
 // @Failure     401   {object}  object{error=string}
 // @Failure     409   {object}  object{error=string}
@@ -342,7 +342,7 @@ func (h *AuthHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 // @Tags        auth
 // @Produce     json
 // @Security    BearerAuth
-// @Success     200  {object}  responses.UserResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.UserResponse
 // @Failure     401  {object}  object{error=string}
 // @Router      /auth/me [get]
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {

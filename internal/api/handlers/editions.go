@@ -28,7 +28,7 @@ import (
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       book_id     path      string  true  "Book UUID"
-// @Success     200  {array}   responses.EditionResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books/{book_id}/editions [get]
@@ -81,7 +81,7 @@ func (h *BookHandler) ListEditions(w http.ResponseWriter, r *http.Request) {
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       book_id     path      string  true  "Book UUID"
 // @Param       body        body      object{format=string,language=string,edition_name=string,narrator=string,publisher=string,publish_date=string,isbn_10=string,isbn_13=string,description=string,duration_seconds=integer,page_count=integer,copy_count=integer,is_primary=boolean,acquired_at=string}  true  "Edition details"
-// @Success     201  {object}  responses.EditionResponse
+// @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books/{book_id}/editions [post]
@@ -116,7 +116,7 @@ func (h *BookHandler) CreateEdition(w http.ResponseWriter, r *http.Request) {
 // @Param       book_id      path      string  true  "Book UUID"
 // @Param       edition_id   path      string  true  "Edition UUID"
 // @Param       body         body      object{format=string,language=string,edition_name=string,narrator=string,publisher=string,publish_date=string,isbn_10=string,isbn_13=string,description=string,duration_seconds=integer,page_count=integer,copy_count=integer,is_primary=boolean,acquired_at=string}  true  "Edition details"
-// @Success     200  {object}  responses.EditionResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -186,7 +186,7 @@ func (h *BookHandler) DeleteEdition(w http.ResponseWriter, r *http.Request) {
 // @Param       library_id   path      string  true  "Library UUID"
 // @Param       book_id      path      string  true  "Book UUID"
 // @Param       edition_id   path      string  true  "Edition UUID"
-// @Success     200  {object}  responses.InteractionResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.InteractionResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books/{book_id}/editions/{edition_id}/my-interaction [get]
@@ -221,7 +221,7 @@ func (h *BookHandler) GetMyInteraction(w http.ResponseWriter, r *http.Request) {
 // @Param       book_id      path      string  true  "Book UUID"
 // @Param       edition_id   path      string  true  "Edition UUID"
 // @Param       body         body      object{read_status=string,rating=integer,notes=string,review=string,date_started=string,date_finished=string,is_favorite=boolean}  true  "Interaction data"
-// @Success     200  {object}  responses.InteractionResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.InteractionResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books/{book_id}/editions/{edition_id}/my-interaction [put]

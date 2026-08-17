@@ -1,14 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 FireBall1725 (Adaléa)
 
-// Package responses contains named structs used exclusively as swaggo/swag
-// annotation targets. They mirror the JSON shapes produced by the handler
-// body-helper functions so that the generated OpenAPI spec has proper schemas
+// Package responses contains named structs describing the JSON shapes the
+// handlers produce, so the generated OpenAPI spec carries proper schemas
 // instead of empty `{}` objects.
 //
-// These types are NOT used at runtime — handlers still build their responses
-// via the existing map[string]any helpers. Only the documentation annotations
-// reference this package.
+// Most are annotation targets only: the handler builds its response with the
+// existing map[string]any body helpers and the struct here mirrors the result.
+// The sync types are the exception and are marshalled directly by
+// handlers/sync.go, so a change to those is a change to the wire.
+//
+// # Referring to these types from an annotation
+//
+// Use the full mangled package path, not the short alias:
+//
+//	@Success 200 {object} github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
+//
+// swag resolves a short alias like `responses.BookResponse` against the imports
+// of the file the comment sits in, and a handler file has no reason to import a
+// package it only names in comments — so the short form fails with "cannot find
+// type definition" for every file except sync.go, which imports it for real.
+// One unresolvable annotation fails the whole `swag init` run, which is what
+// left `make docs` broken and the committed spec missing eleven routes.
+//
+// The mangled form is what swag calls the package internally, and it is already
+// how the spec names every cross-package type from internal/models.
 package responses
 
 import (

@@ -2140,7 +2140,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.UserResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.UserResponse"
                         }
                     },
                     "401": {
@@ -2196,7 +2196,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.UserResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.UserResponse"
                         }
                     },
                     "400": {
@@ -2682,6 +2682,53 @@ const docTemplate = `{
                 }
             }
         },
+        "/components": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every Go module linked into this API binary, with its version and SPDX licence identifier. Clients render this on their licences page so the notices cover the server as well as the client. A component whose licence is unknown is returned with an empty licence rather than omitted.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "List server components",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "components": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "licence": {
+                                                "type": "string"
+                                            },
+                                            "name": {
+                                                "type": "string"
+                                            },
+                                            "version": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                },
+                                "version": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/contributors": {
             "get": {
                 "security": [
@@ -2712,7 +2759,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.ContributorItem"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem"
                             }
                         }
                     },
@@ -2766,7 +2813,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.ContributorItem"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem"
                         }
                     },
                     "400": {
@@ -3431,7 +3478,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.GenreResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse"
                             }
                         }
                     },
@@ -3485,7 +3532,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.GenreResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse"
                         }
                     },
                     "400": {
@@ -3569,7 +3616,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.GenreResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse"
                         }
                     },
                     "400": {
@@ -3930,7 +3977,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.LibraryResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse"
                             }
                         }
                     },
@@ -3993,7 +4040,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.LibraryResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse"
                         }
                     },
                     "400": {
@@ -4060,7 +4107,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.LibraryResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse"
                         }
                     },
                     "400": {
@@ -4148,7 +4195,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.LibraryResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse"
                         }
                     },
                     "400": {
@@ -4281,7 +4328,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.BookResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse"
                         }
                     },
                     "400": {
@@ -4322,112 +4369,7 @@ const docTemplate = `{
         },
         "/libraries/{library_id}/books": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns a paginated, filtered, sorted list of books in the library.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "books"
-                ],
-                "summary": "List books in a library",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Library UUID",
-                        "name": "library_id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Search query or query-language expression",
-                        "name": "q",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Page number",
-                        "name": "page",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Items per page",
-                        "name": "per_page",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Sort field",
-                        "name": "sort",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Sort direction (asc/desc)",
-                        "name": "sort_dir",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by first letter",
-                        "name": "letter",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by tag name",
-                        "name": "tag",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by media type",
-                        "name": "type_filter",
-                        "in": "query"
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "Treat q as regex",
-                        "name": "regex",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/responses.PagedBooksResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "error": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "error": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    }
-                }
+                "responses": {}
             },
             "post": {
                 "security": [
@@ -4503,7 +4445,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.BookResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse"
                         }
                     },
                     "400": {
@@ -4710,6 +4652,74 @@ const docTemplate = `{
                 }
             }
         },
+        "/libraries/{library_id}/books/facets": {
+            "get": {
+                "description": "Counts books per facet value across the whole filtered set, not\nthe returned page, so a client can render a filter rail without\na request per value. Takes the same query parameters as the list\nendpoint and applies exactly the same filter.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Facet counts for a book search",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library ID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Structured filter JSON",
+                        "name": "filter",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "data": {
+                                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookFacets"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/libraries/{library_id}/books/fingerprint": {
             "get": {
                 "security": [
@@ -4860,7 +4870,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.BookResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse"
                         }
                     },
                     "400": {
@@ -4976,7 +4986,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.BookResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse"
                         }
                     },
                     "400": {
@@ -5430,7 +5440,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.EditionResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse"
                             }
                         }
                     },
@@ -5548,7 +5558,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.EditionResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse"
                         }
                     },
                     "400": {
@@ -5674,7 +5684,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.EditionResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse"
                         }
                     },
                     "400": {
@@ -6155,7 +6165,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.InteractionResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.InteractionResponse"
                         }
                     },
                     "400": {
@@ -6258,7 +6268,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.InteractionResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.InteractionResponse"
                         }
                     },
                     "400": {
@@ -6473,7 +6483,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.ShelfResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse"
                             }
                         }
                     },
@@ -7002,7 +7012,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.LoanResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse"
                             }
                         }
                     },
@@ -7086,7 +7096,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.LoanResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse"
                         }
                     },
                     "400": {
@@ -7241,7 +7251,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.LoanResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse"
                         }
                     },
                     "400": {
@@ -7322,7 +7332,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.MemberResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.MemberResponse"
                             }
                         }
                     },
@@ -7785,7 +7795,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.SeriesResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse"
                             }
                         }
                     },
@@ -7896,7 +7906,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.SeriesResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse"
                         }
                     },
                     "400": {
@@ -8113,7 +8123,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.SeriesResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse"
                         }
                     },
                     "400": {
@@ -8241,7 +8251,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.SeriesResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse"
                         }
                     },
                     "400": {
@@ -8788,7 +8798,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.SeriesEntryResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesEntryResponse"
                             }
                         }
                     },
@@ -9408,7 +9418,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.SeriesVolumeResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesVolumeResponse"
                             }
                         }
                     },
@@ -9474,7 +9484,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.SeriesVolumeResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesVolumeResponse"
                             }
                         }
                     },
@@ -9556,7 +9566,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.ShelfResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse"
                             }
                         }
                     },
@@ -9646,7 +9656,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.ShelfResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse"
                         }
                     },
                     "400": {
@@ -9744,7 +9754,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.ShelfResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse"
                         }
                     },
                     "400": {
@@ -9886,7 +9896,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.BookResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse"
                             }
                         }
                     },
@@ -10150,7 +10160,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.TagResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagResponse"
                             }
                         }
                     },
@@ -10225,7 +10235,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.TagResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagResponse"
                         }
                     },
                     "400": {
@@ -10308,7 +10318,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.TagResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagResponse"
                         }
                     },
                     "400": {
@@ -10881,6 +10891,480 @@ const docTemplate = `{
                 }
             }
         },
+        "/me/authors/index": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The cross-library Authors surface, with per-author book and\nread counts, cover thumbnails, and the letter each name files\nunder. Unpaged, for the same reason as the series index.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Authors across every library the caller can read",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Contributor roles, comma separated. Defaults to author.",
+                        "name": "role",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Library UUIDs, comma separated. Narrows the scope; cannot widen it.",
+                        "name": "lib",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.AuthorIndexEntry"
+                                    }
+                                },
+                                "total": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/books": {
+            "get": {
+                "description": "The default browse surface. Takes the same filters as the\nper-library list endpoint; library becomes one filter among\nseveral rather than part of the path.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Books across every library the caller can read",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Results per page",
+                        "name": "per_page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Structured filter JSON",
+                        "name": "filter",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Library ids, comma separated",
+                        "name": "lib",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Read statuses, comma separated",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Media type names, comma separated",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Genre names, comma separated",
+                        "name": "genre",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tag names, comma separated",
+                        "name": "tag",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ratings 0-5, comma separated",
+                        "name": "rating",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object"
+                                    }
+                                },
+                                "page": {
+                                    "type": "integer"
+                                },
+                                "per_page": {
+                                    "type": "integer"
+                                },
+                                "total": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/books/facets": {
+            "get": {
+                "description": "Counts per facet value over the whole filtered set, so the\nfilter rail can be rendered in one request rather than one per\nvalue. Same filters as /me/books.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Facet counts across every library the caller can read",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Structured filter JSON",
+                        "name": "filter",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "data": {
+                                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookFacets"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/books/grouped": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Same filters as /me/books, but each series becomes one entry so\na run and a standalone book are peers. Paging is over entries;\nbook_total reports how many books those entries stand for,\nbecause the facet rail still counts books.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Books across every readable library, series collapsed",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Library UUIDs, comma separated",
+                        "name": "lib",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ownership states, comma separated",
+                        "name": "own",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Read statuses, comma separated",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page, 1-based",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Entries per page",
+                        "name": "per_page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "book_total": {
+                                    "type": "integer"
+                                },
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object"
+                                    }
+                                },
+                                "page": {
+                                    "type": "integer"
+                                },
+                                "per_page": {
+                                    "type": "integer"
+                                },
+                                "total": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/counts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Book, series and author counts across every library the caller\ncan read. One endpoint rather than three, because the sidebar\nneeds all of them on every page and none of them individually.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Totals for the navigation",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "authors": {
+                                    "type": "integer"
+                                },
+                                "books": {
+                                    "type": "integer"
+                                },
+                                "series": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/libraries": {
+            "get": {
+                "description": "Returns every library the authenticated user can see and the\npermission names they hold in each, already capped by the\ntoken's scope. A client fetches this once and gates each row by\nthe library the row came from, rather than checking per book.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "libraries"
+                ],
+                "summary": "Libraries the caller can reach, with effective permissions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "data": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.LibraryAccess"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/loans": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A loan is a book, a person and some dates; the library is where\nthe book happens to live. \"Who has my stuff\" is not a question\nanyone asks one library at a time, so this is the whole set,\neach row carrying the library it belongs to.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Loans across every library the caller can read",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUIDs, comma separated. Narrows the scope; cannot widen it.",
+                        "name": "lib",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Match against borrower or book title",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include loans already returned",
+                        "name": "include_returned",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only loans past their due date",
+                        "name": "overdue",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse"
+                                    }
+                                },
+                                "total": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/me/series": {
             "get": {
                 "security": [
@@ -10911,6 +11395,108 @@ const docTemplate = `{
                             "type": "array",
                             "items": {
                                 "$ref": "#/definitions/internal_api_handlers.MeSeriesResult"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/series/index": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The cross-library Series surface. Unpaged: the A-Z bar has to\nknow which letters have series behind them, which means\ncounting the whole set anyway.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Series across every library the caller can read",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Name substring",
+                        "name": "q",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse"
+                                    }
+                                },
+                                "total": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/shelves": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The rail lists shelves beside libraries and views, so it needs\nthem across the whole readable scope rather than one library at\na time. Each carries its library, colour and icon.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Shelves across every library the caller can read",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse"
+                                    }
+                                },
+                                "total": {
+                                    "type": "integer"
+                                }
                             }
                         }
                     },
@@ -11499,7 +12085,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/responses.MediaTypeResponse"
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse"
                             }
                         }
                     },
@@ -11559,7 +12145,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/responses.MediaTypeResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse"
                         }
                     },
                     "400": {
@@ -11657,7 +12243,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/responses.MediaTypeResponse"
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse"
                         }
                     },
                     "400": {
@@ -11897,6 +12483,129 @@ const docTemplate = `{
                 }
             }
         },
+        "/sync/apply": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Applies client ops with per-field last-writer-wins. Every op comes back with its own status, so a partial success is normal and the client clears only the ops it sees applied. Update-only in v1: create new rows through the per-resource endpoints.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync"
+                ],
+                "summary": "Push a batch of client changes",
+                "parameters": [
+                    {
+                        "description": "Ops to apply, at most 1000",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/sync/changes": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the caller's data changed since ` + "`" + `since` + "`" + `, oldest first. Advance ` + "`" + `since` + "`" + ` to the newest updated_at you applied. When has_more is true the response hit ` + "`" + `limit` + "`" + ` and you should call again straight away.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sync"
+                ],
+                "summary": "Pull changes since a timestamp",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "RFC3339 timestamp; returns changes strictly newer than this",
+                        "name": "since",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Ops per response, 1 to 1000 (default 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncChangesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/users": {
             "get": {
                 "security": [
@@ -11961,6 +12670,765 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_fireball1725_librarium-api_internal_api_responses.BookResponse": {
+            "type": "object",
+            "properties": {
+                "active_loan_count": {
+                    "description": "ActiveLoanCount is the number of active (not yet returned) loans for\nthis book — scoped to the library when the read is library-scoped,\nglobal otherwise. Always populated.",
+                    "type": "integer"
+                },
+                "active_loans": {
+                    "description": "ActiveLoans is the full list of active loans for this book. Only\npopulated by single-book reads (GetBook); list endpoints omit it to\nkeep payloads lean — use active_loan_count there for the badge.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse"
+                    }
+                },
+                "added_by": {
+                    "type": "string"
+                },
+                "contributors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ContributorRef"
+                    }
+                },
+                "cover_url": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "genres": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.GenreRef"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "language": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "media_type": {
+                    "type": "string"
+                },
+                "media_type_id": {
+                    "type": "string"
+                },
+                "publish_year": {
+                    "type": "integer"
+                },
+                "publisher": {
+                    "type": "string"
+                },
+                "series": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesRef"
+                    }
+                },
+                "shelves": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfRef"
+                    }
+                },
+                "subtitle": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_progress_pct": {
+                    "description": "UserProgressPct is the caller's reading progress 0-100 (0 = none).",
+                    "type": "number"
+                },
+                "user_rating": {
+                    "description": "UserRating is the caller's rating (1-10 half-star integer; 0 = none).",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.ContributorRef": {
+            "type": "object",
+            "properties": {
+                "contributor_id": {
+                    "type": "string"
+                },
+                "display_order": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse": {
+            "type": "object",
+            "properties": {
+                "acquired_at": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "book_id": {
+                    "type": "string"
+                },
+                "copy_count": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "duration_seconds": {
+                    "type": "integer"
+                },
+                "edition_name": {
+                    "type": "string"
+                },
+                "format": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_primary": {
+                    "type": "boolean"
+                },
+                "isbn_10": {
+                    "type": "string"
+                },
+                "isbn_13": {
+                    "type": "string"
+                },
+                "language": {
+                    "type": "string"
+                },
+                "narrator": {
+                    "type": "string"
+                },
+                "page_count": {
+                    "type": "integer"
+                },
+                "publish_date": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "publisher": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.GenreRef": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.InteractionResponse": {
+            "type": "object",
+            "properties": {
+                "book_edition_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "date_finished": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "date_started": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_favorite": {
+                    "type": "boolean"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "rating": {
+                    "type": "integer"
+                },
+                "read_status": {
+                    "type": "string"
+                },
+                "reread_count": {
+                    "type": "integer"
+                },
+                "review": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse": {
+            "type": "object",
+            "properties": {
+                "book_count": {
+                    "description": "BookCount is the total number of books in the library. ReadingCount\nand ReadCount are caller-scoped — the calling user's reading + read\nbooks in this library. Always populated on list endpoints; on single-\nlibrary endpoints they fall back to 0 unless the path was scoped.",
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "read_count": {
+                    "type": "integer"
+                },
+                "reading_count": {
+                    "type": "integer"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse": {
+            "type": "object",
+            "properties": {
+                "book_id": {
+                    "type": "string"
+                },
+                "book_title": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "due_date": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "loaned_at": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "loaned_to": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "returned_at": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef"
+                    }
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse": {
+            "type": "object",
+            "properties": {
+                "book_count": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.MemberResponse": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "invited_by": {
+                    "type": "string"
+                },
+                "joined_at": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "role_id": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef"
+                    }
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SeriesEntryResponse": {
+            "type": "object",
+            "properties": {
+                "book_id": {
+                    "type": "string"
+                },
+                "contributors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ContributorRef"
+                    }
+                },
+                "media_type": {
+                    "type": "string"
+                },
+                "position": {
+                    "type": "number"
+                },
+                "subtitle": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SeriesRef": {
+            "type": "object",
+            "properties": {
+                "position": {
+                    "type": "number"
+                },
+                "series_id": {
+                    "type": "string"
+                },
+                "series_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse": {
+            "type": "object",
+            "properties": {
+                "book_count": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "demographic": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "external_source": {
+                    "type": "string"
+                },
+                "genres": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_complete": {
+                    "type": "boolean"
+                },
+                "last_release_date": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "next_release_date": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "original_language": {
+                    "type": "string"
+                },
+                "publication_year": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef"
+                    }
+                },
+                "total_count": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SeriesVolumeResponse": {
+            "type": "object",
+            "properties": {
+                "cover_url": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "position": {
+                    "type": "number"
+                },
+                "release_date": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                },
+                "series_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.ShelfRef": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse": {
+            "type": "object",
+            "properties": {
+                "book_count": {
+                    "type": "integer"
+                },
+                "color": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_order": {
+                    "type": "integer"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef"
+                    }
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyOp": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "type": "boolean"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "op_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "value": {}
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyRequest": {
+            "type": "object",
+            "properties": {
+                "client_id": {
+                    "type": "string"
+                },
+                "ops": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyOp"
+                    }
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyResponse": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyResult"
+                    }
+                },
+                "server_time": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyResult": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "op_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SyncChangesResponse": {
+            "type": "object",
+            "properties": {
+                "has_more": {
+                    "type": "boolean"
+                },
+                "ops": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncOp"
+                    }
+                },
+                "server_time": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.SyncOp": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "type": "boolean"
+                },
+                "entity_id": {
+                    "type": "string"
+                },
+                "entity_type": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "value": {}
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.TagRef": {
+            "type": "object",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.TagResponse": {
+            "type": "object",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_api_responses.UserResponse": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_instance_admin": {
+                    "type": "boolean"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_fireball1725_librarium-api_internal_models.AIMetadataProposal": {
             "type": "object",
             "properties": {
@@ -12366,6 +13834,30 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_fireball1725_librarium-api_internal_providers.ConfigField": {
+            "type": "object",
+            "properties": {
+                "help_text": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "placeholder": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "description": "\"password\" | \"text\" | \"url\"",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_fireball1725_librarium-api_internal_providers.CoverOption": {
             "type": "object",
             "properties": {
@@ -12521,6 +14013,126 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_fireball1725_librarium-api_internal_repository.AuthorIndexEntry": {
+            "type": "object",
+            "properties": {
+                "book_count": {
+                    "type": "integer"
+                },
+                "has_photo": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "letter": {
+                    "description": "Letter the index files this author under, taken from sort_name so\n\"Ursula K. Le Guin\" appears under L rather than U. '#' for anything\nthat does not start with a letter.",
+                    "type": "string"
+                },
+                "libraries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.AuthorLibraryRef"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "read_count": {
+                    "type": "integer"
+                },
+                "sort_name": {
+                    "type": "string"
+                },
+                "spines": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.AuthorSpine"
+                    }
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.AuthorLibraryRef": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.AuthorSpine": {
+            "type": "object",
+            "properties": {
+                "book_id": {
+                    "type": "string"
+                },
+                "has_cover": {
+                    "type": "boolean"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.BookFacets": {
+            "type": "object",
+            "properties": {
+                "genre": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
+                "library": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
+                "media_type": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
+                "ownership": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
+                "rating": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
+                "read_status": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
+                "shelf": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
+                "tag": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                }
+            }
+        },
         "github_com_fireball1725_librarium-api_internal_repository.BookFingerprint": {
             "type": "object",
             "properties": {
@@ -12530,6 +14142,46 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.FacetValue": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.LibraryAccess": {
+            "type": "object",
+            "properties": {
+                "book_count": {
+                    "type": "integer"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "role": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
                 }
             }
         },
@@ -12699,6 +14351,12 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {
                         "type": "string"
+                    }
+                },
+                "config_fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.ConfigField"
                     }
                 },
                 "description": {
@@ -13157,687 +14815,6 @@ const docTemplate = `{
                     }
                 },
                 "token_suffix": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.BookResponse": {
-            "type": "object",
-            "properties": {
-                "active_loan_count": {
-                    "description": "ActiveLoanCount is the number of active (not yet returned) loans for\nthis book — scoped to the library when the read is library-scoped,\nglobal otherwise. Always populated.",
-                    "type": "integer"
-                },
-                "active_loans": {
-                    "description": "ActiveLoans is the full list of active loans for this book. Only\npopulated by single-book reads (GetBook); list endpoints omit it to\nkeep payloads lean — use active_loan_count there for the badge.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.LoanResponse"
-                    }
-                },
-                "added_by": {
-                    "type": "string"
-                },
-                "contributors": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.ContributorRef"
-                    }
-                },
-                "cover_url": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "genres": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.GenreRef"
-                    }
-                },
-                "id": {
-                    "type": "string"
-                },
-                "language": {
-                    "type": "string"
-                },
-                "library_id": {
-                    "type": "string"
-                },
-                "media_type": {
-                    "type": "string"
-                },
-                "media_type_id": {
-                    "type": "string"
-                },
-                "publish_year": {
-                    "type": "integer"
-                },
-                "publisher": {
-                    "type": "string"
-                },
-                "series": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.SeriesRef"
-                    }
-                },
-                "shelves": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.ShelfRef"
-                    }
-                },
-                "subtitle": {
-                    "type": "string"
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.TagRef"
-                    }
-                },
-                "title": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "user_progress_pct": {
-                    "description": "UserProgressPct is the caller's reading progress 0-100 (0 = none).",
-                    "type": "number"
-                },
-                "user_rating": {
-                    "description": "UserRating is the caller's rating (1-10 half-star integer; 0 = none).",
-                    "type": "integer"
-                }
-            }
-        },
-        "responses.ContributorItem": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.ContributorRef": {
-            "type": "object",
-            "properties": {
-                "contributor_id": {
-                    "type": "string"
-                },
-                "display_order": {
-                    "type": "integer"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.EditionResponse": {
-            "type": "object",
-            "properties": {
-                "acquired_at": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "book_id": {
-                    "type": "string"
-                },
-                "copy_count": {
-                    "type": "integer"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "duration_seconds": {
-                    "type": "integer"
-                },
-                "edition_name": {
-                    "type": "string"
-                },
-                "format": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_primary": {
-                    "type": "boolean"
-                },
-                "isbn_10": {
-                    "type": "string"
-                },
-                "isbn_13": {
-                    "type": "string"
-                },
-                "language": {
-                    "type": "string"
-                },
-                "narrator": {
-                    "type": "string"
-                },
-                "page_count": {
-                    "type": "integer"
-                },
-                "publish_date": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "publisher": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.GenreRef": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.GenreResponse": {
-            "type": "object",
-            "properties": {
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.InteractionResponse": {
-            "type": "object",
-            "properties": {
-                "book_edition_id": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "date_finished": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "date_started": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_favorite": {
-                    "type": "boolean"
-                },
-                "notes": {
-                    "type": "string"
-                },
-                "rating": {
-                    "type": "integer"
-                },
-                "read_status": {
-                    "type": "string"
-                },
-                "reread_count": {
-                    "type": "integer"
-                },
-                "review": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "user_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.LibraryResponse": {
-            "type": "object",
-            "properties": {
-                "book_count": {
-                    "description": "BookCount is the total number of books in the library. ReadingCount\nand ReadCount are caller-scoped — the calling user's reading + read\nbooks in this library. Always populated on list endpoints; on single-\nlibrary endpoints they fall back to 0 unless the path was scoped.",
-                    "type": "integer"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_public": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "owner_id": {
-                    "type": "string"
-                },
-                "read_count": {
-                    "type": "integer"
-                },
-                "reading_count": {
-                    "type": "integer"
-                },
-                "slug": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.LoanResponse": {
-            "type": "object",
-            "properties": {
-                "book_id": {
-                    "type": "string"
-                },
-                "book_title": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "due_date": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "library_id": {
-                    "type": "string"
-                },
-                "loaned_at": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "loaned_to": {
-                    "type": "string"
-                },
-                "notes": {
-                    "type": "string"
-                },
-                "returned_at": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.TagRef"
-                    }
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.MediaTypeResponse": {
-            "type": "object",
-            "properties": {
-                "book_count": {
-                    "type": "integer"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "display_name": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.MemberResponse": {
-            "type": "object",
-            "properties": {
-                "display_name": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "invited_by": {
-                    "type": "string"
-                },
-                "joined_at": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "role_id": {
-                    "type": "string"
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.TagRef"
-                    }
-                },
-                "user_id": {
-                    "type": "string"
-                },
-                "username": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.PagedBooksResponse": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.BookResponse"
-                    }
-                },
-                "page": {
-                    "type": "integer"
-                },
-                "per_page": {
-                    "type": "integer"
-                },
-                "suggestions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "total": {
-                    "type": "integer"
-                }
-            }
-        },
-        "responses.SeriesEntryResponse": {
-            "type": "object",
-            "properties": {
-                "book_id": {
-                    "type": "string"
-                },
-                "contributors": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.ContributorRef"
-                    }
-                },
-                "media_type": {
-                    "type": "string"
-                },
-                "position": {
-                    "type": "number"
-                },
-                "subtitle": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.SeriesRef": {
-            "type": "object",
-            "properties": {
-                "position": {
-                    "type": "number"
-                },
-                "series_id": {
-                    "type": "string"
-                },
-                "series_name": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.SeriesResponse": {
-            "type": "object",
-            "properties": {
-                "book_count": {
-                    "type": "integer"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "demographic": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "external_id": {
-                    "type": "string"
-                },
-                "external_source": {
-                    "type": "string"
-                },
-                "genres": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_complete": {
-                    "type": "boolean"
-                },
-                "last_release_date": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "library_id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "next_release_date": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "original_language": {
-                    "type": "string"
-                },
-                "publication_year": {
-                    "type": "integer"
-                },
-                "status": {
-                    "type": "string"
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.TagRef"
-                    }
-                },
-                "total_count": {
-                    "type": "integer"
-                },
-                "updated_at": {
-                    "type": "string"
-                },
-                "url": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.SeriesVolumeResponse": {
-            "type": "object",
-            "properties": {
-                "cover_url": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "external_id": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "position": {
-                    "type": "number"
-                },
-                "release_date": {
-                    "description": "YYYY-MM-DD",
-                    "type": "string"
-                },
-                "series_id": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.ShelfRef": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.ShelfResponse": {
-            "type": "object",
-            "properties": {
-                "book_count": {
-                    "type": "integer"
-                },
-                "color": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "display_order": {
-                    "type": "integer"
-                },
-                "icon": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "library_id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/responses.TagRef"
-                    }
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.TagRef": {
-            "type": "object",
-            "properties": {
-                "color": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "library_id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.TagResponse": {
-            "type": "object",
-            "properties": {
-                "color": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "library_id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "responses.UserResponse": {
-            "type": "object",
-            "properties": {
-                "display_name": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_instance_admin": {
-                    "type": "boolean"
-                },
-                "username": {
                     "type": "string"
                 }
             }

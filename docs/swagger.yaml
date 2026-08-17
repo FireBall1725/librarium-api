@@ -1,5 +1,519 @@
 basePath: /api/v1
 definitions:
+  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse:
+    properties:
+      active_loan_count:
+        description: |-
+          ActiveLoanCount is the number of active (not yet returned) loans for
+          this book — scoped to the library when the read is library-scoped,
+          global otherwise. Always populated.
+        type: integer
+      active_loans:
+        description: |-
+          ActiveLoans is the full list of active loans for this book. Only
+          populated by single-book reads (GetBook); list endpoints omit it to
+          keep payloads lean — use active_loan_count there for the badge.
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse'
+        type: array
+      added_by:
+        type: string
+      contributors:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ContributorRef'
+        type: array
+      cover_url:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      genres:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.GenreRef'
+        type: array
+      id:
+        type: string
+      language:
+        type: string
+      library_id:
+        type: string
+      media_type:
+        type: string
+      media_type_id:
+        type: string
+      publish_year:
+        type: integer
+      publisher:
+        type: string
+      series:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesRef'
+        type: array
+      shelves:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfRef'
+        type: array
+      subtitle:
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef'
+        type: array
+      title:
+        type: string
+      updated_at:
+        type: string
+      user_progress_pct:
+        description: UserProgressPct is the caller's reading progress 0-100 (0 = none).
+        type: number
+      user_rating:
+        description: UserRating is the caller's rating (1-10 half-star integer; 0
+          = none).
+        type: integer
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.ContributorRef:
+    properties:
+      contributor_id:
+        type: string
+      display_order:
+        type: integer
+      name:
+        type: string
+      role:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse:
+    properties:
+      acquired_at:
+        description: YYYY-MM-DD
+        type: string
+      book_id:
+        type: string
+      copy_count:
+        type: integer
+      created_at:
+        type: string
+      description:
+        type: string
+      duration_seconds:
+        type: integer
+      edition_name:
+        type: string
+      format:
+        type: string
+      id:
+        type: string
+      is_primary:
+        type: boolean
+      isbn_10:
+        type: string
+      isbn_13:
+        type: string
+      language:
+        type: string
+      narrator:
+        type: string
+      page_count:
+        type: integer
+      publish_date:
+        description: YYYY-MM-DD
+        type: string
+      publisher:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.GenreRef:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.InteractionResponse:
+    properties:
+      book_edition_id:
+        type: string
+      created_at:
+        type: string
+      date_finished:
+        description: YYYY-MM-DD
+        type: string
+      date_started:
+        description: YYYY-MM-DD
+        type: string
+      id:
+        type: string
+      is_favorite:
+        type: boolean
+      notes:
+        type: string
+      rating:
+        type: integer
+      read_status:
+        type: string
+      reread_count:
+        type: integer
+      review:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse:
+    properties:
+      book_count:
+        description: |-
+          BookCount is the total number of books in the library. ReadingCount
+          and ReadCount are caller-scoped — the calling user's reading + read
+          books in this library. Always populated on list endpoints; on single-
+          library endpoints they fall back to 0 unless the path was scoped.
+        type: integer
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      is_public:
+        type: boolean
+      name:
+        type: string
+      owner_id:
+        type: string
+      read_count:
+        type: integer
+      reading_count:
+        type: integer
+      slug:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse:
+    properties:
+      book_id:
+        type: string
+      book_title:
+        type: string
+      created_at:
+        type: string
+      due_date:
+        description: YYYY-MM-DD
+        type: string
+      id:
+        type: string
+      library_id:
+        type: string
+      loaned_at:
+        description: YYYY-MM-DD
+        type: string
+      loaned_to:
+        type: string
+      notes:
+        type: string
+      returned_at:
+        description: YYYY-MM-DD
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef'
+        type: array
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse:
+    properties:
+      book_count:
+        type: integer
+      description:
+        type: string
+      display_name:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.MemberResponse:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      invited_by:
+        type: string
+      joined_at:
+        type: string
+      role:
+        type: string
+      role_id:
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef'
+        type: array
+      user_id:
+        type: string
+      username:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SeriesEntryResponse:
+    properties:
+      book_id:
+        type: string
+      contributors:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ContributorRef'
+        type: array
+      media_type:
+        type: string
+      position:
+        type: number
+      subtitle:
+        type: string
+      title:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SeriesRef:
+    properties:
+      position:
+        type: number
+      series_id:
+        type: string
+      series_name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse:
+    properties:
+      book_count:
+        type: integer
+      created_at:
+        type: string
+      demographic:
+        type: string
+      description:
+        type: string
+      external_id:
+        type: string
+      external_source:
+        type: string
+      genres:
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      is_complete:
+        type: boolean
+      last_release_date:
+        description: YYYY-MM-DD
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+      next_release_date:
+        description: YYYY-MM-DD
+        type: string
+      original_language:
+        type: string
+      publication_year:
+        type: integer
+      status:
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef'
+        type: array
+      total_count:
+        type: integer
+      updated_at:
+        type: string
+      url:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SeriesVolumeResponse:
+    properties:
+      cover_url:
+        type: string
+      created_at:
+        type: string
+      external_id:
+        type: string
+      id:
+        type: string
+      position:
+        type: number
+      release_date:
+        description: YYYY-MM-DD
+        type: string
+      series_id:
+        type: string
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.ShelfRef:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse:
+    properties:
+      book_count:
+        type: integer
+      color:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      display_order:
+        type: integer
+      icon:
+        type: string
+      id:
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+      tags:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagRef'
+        type: array
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyOp:
+    properties:
+      deleted:
+        type: boolean
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      field:
+        type: string
+      op_id:
+        type: string
+      updated_at:
+        type: string
+      value: {}
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyRequest:
+    properties:
+      client_id:
+        type: string
+      ops:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyOp'
+        type: array
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyResponse:
+    properties:
+      results:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyResult'
+        type: array
+      server_time:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyResult:
+    properties:
+      error:
+        type: string
+      op_id:
+        type: string
+      status:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SyncChangesResponse:
+    properties:
+      has_more:
+        type: boolean
+      ops:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncOp'
+        type: array
+      server_time:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.SyncOp:
+    properties:
+      deleted:
+        type: boolean
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      field:
+        type: string
+      updated_at:
+        type: string
+      value: {}
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.TagRef:
+    properties:
+      color:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.TagResponse:
+    properties:
+      color:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_api_responses.UserResponse:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      is_instance_admin:
+        type: boolean
+      username:
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_models.AIMetadataProposal:
     properties:
       applied_at:
@@ -283,6 +797,22 @@ definitions:
       title:
         type: string
     type: object
+  github_com_fireball1725_librarium-api_internal_providers.ConfigField:
+    properties:
+      help_text:
+        type: string
+      key:
+        type: string
+      label:
+        type: string
+      placeholder:
+        type: string
+      required:
+        type: boolean
+      type:
+        description: '"password" | "text" | "url"'
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_providers.CoverOption:
     properties:
       cover_url:
@@ -387,6 +917,88 @@ definitions:
       url:
         type: string
     type: object
+  github_com_fireball1725_librarium-api_internal_repository.AuthorIndexEntry:
+    properties:
+      book_count:
+        type: integer
+      has_photo:
+        type: boolean
+      id:
+        type: string
+      letter:
+        description: |-
+          Letter the index files this author under, taken from sort_name so
+          "Ursula K. Le Guin" appears under L rather than U. '#' for anything
+          that does not start with a letter.
+        type: string
+      libraries:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.AuthorLibraryRef'
+        type: array
+      name:
+        type: string
+      read_count:
+        type: integer
+      sort_name:
+        type: string
+      spines:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.AuthorSpine'
+        type: array
+    type: object
+  github_com_fireball1725_librarium-api_internal_repository.AuthorLibraryRef:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_repository.AuthorSpine:
+    properties:
+      book_id:
+        type: string
+      has_cover:
+        type: boolean
+      title:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_repository.BookFacets:
+    properties:
+      genre:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
+      library:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
+      media_type:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
+      ownership:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
+      rating:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
+      read_status:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
+      shelf:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
+      tag:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
+    type: object
   github_com_fireball1725_librarium-api_internal_repository.BookFingerprint:
     properties:
       max_updated_at:
@@ -394,6 +1006,32 @@ definitions:
         type: string
       total:
         type: integer
+    type: object
+  github_com_fireball1725_librarium-api_internal_repository.FacetValue:
+    properties:
+      count:
+        type: integer
+      label:
+        type: string
+      value:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_repository.LibraryAccess:
+    properties:
+      book_count:
+        type: integer
+      library_id:
+        type: string
+      name:
+        type: string
+      permissions:
+        items:
+          type: string
+        type: array
+      role:
+        type: string
+      slug:
+        type: string
     type: object
   github_com_fireball1725_librarium-api_internal_service.AIPermissions:
     properties:
@@ -515,6 +1153,10 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      config_fields:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.ConfigField'
+        type: array
       description:
         type: string
       display_name:
@@ -834,469 +1476,6 @@ definitions:
           type: string
         type: array
       token_suffix:
-        type: string
-    type: object
-  responses.BookResponse:
-    properties:
-      active_loan_count:
-        description: |-
-          ActiveLoanCount is the number of active (not yet returned) loans for
-          this book — scoped to the library when the read is library-scoped,
-          global otherwise. Always populated.
-        type: integer
-      active_loans:
-        description: |-
-          ActiveLoans is the full list of active loans for this book. Only
-          populated by single-book reads (GetBook); list endpoints omit it to
-          keep payloads lean — use active_loan_count there for the badge.
-        items:
-          $ref: '#/definitions/responses.LoanResponse'
-        type: array
-      added_by:
-        type: string
-      contributors:
-        items:
-          $ref: '#/definitions/responses.ContributorRef'
-        type: array
-      cover_url:
-        type: string
-      created_at:
-        type: string
-      description:
-        type: string
-      genres:
-        items:
-          $ref: '#/definitions/responses.GenreRef'
-        type: array
-      id:
-        type: string
-      language:
-        type: string
-      library_id:
-        type: string
-      media_type:
-        type: string
-      media_type_id:
-        type: string
-      publish_year:
-        type: integer
-      publisher:
-        type: string
-      series:
-        items:
-          $ref: '#/definitions/responses.SeriesRef'
-        type: array
-      shelves:
-        items:
-          $ref: '#/definitions/responses.ShelfRef'
-        type: array
-      subtitle:
-        type: string
-      tags:
-        items:
-          $ref: '#/definitions/responses.TagRef'
-        type: array
-      title:
-        type: string
-      updated_at:
-        type: string
-      user_progress_pct:
-        description: UserProgressPct is the caller's reading progress 0-100 (0 = none).
-        type: number
-      user_rating:
-        description: UserRating is the caller's rating (1-10 half-star integer; 0
-          = none).
-        type: integer
-    type: object
-  responses.ContributorItem:
-    properties:
-      id:
-        type: string
-      name:
-        type: string
-    type: object
-  responses.ContributorRef:
-    properties:
-      contributor_id:
-        type: string
-      display_order:
-        type: integer
-      name:
-        type: string
-      role:
-        type: string
-    type: object
-  responses.EditionResponse:
-    properties:
-      acquired_at:
-        description: YYYY-MM-DD
-        type: string
-      book_id:
-        type: string
-      copy_count:
-        type: integer
-      created_at:
-        type: string
-      description:
-        type: string
-      duration_seconds:
-        type: integer
-      edition_name:
-        type: string
-      format:
-        type: string
-      id:
-        type: string
-      is_primary:
-        type: boolean
-      isbn_10:
-        type: string
-      isbn_13:
-        type: string
-      language:
-        type: string
-      narrator:
-        type: string
-      page_count:
-        type: integer
-      publish_date:
-        description: YYYY-MM-DD
-        type: string
-      publisher:
-        type: string
-      updated_at:
-        type: string
-    type: object
-  responses.GenreRef:
-    properties:
-      id:
-        type: string
-      name:
-        type: string
-    type: object
-  responses.GenreResponse:
-    properties:
-      created_at:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-    type: object
-  responses.InteractionResponse:
-    properties:
-      book_edition_id:
-        type: string
-      created_at:
-        type: string
-      date_finished:
-        description: YYYY-MM-DD
-        type: string
-      date_started:
-        description: YYYY-MM-DD
-        type: string
-      id:
-        type: string
-      is_favorite:
-        type: boolean
-      notes:
-        type: string
-      rating:
-        type: integer
-      read_status:
-        type: string
-      reread_count:
-        type: integer
-      review:
-        type: string
-      updated_at:
-        type: string
-      user_id:
-        type: string
-    type: object
-  responses.LibraryResponse:
-    properties:
-      book_count:
-        description: |-
-          BookCount is the total number of books in the library. ReadingCount
-          and ReadCount are caller-scoped — the calling user's reading + read
-          books in this library. Always populated on list endpoints; on single-
-          library endpoints they fall back to 0 unless the path was scoped.
-        type: integer
-      created_at:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      is_public:
-        type: boolean
-      name:
-        type: string
-      owner_id:
-        type: string
-      read_count:
-        type: integer
-      reading_count:
-        type: integer
-      slug:
-        type: string
-      updated_at:
-        type: string
-    type: object
-  responses.LoanResponse:
-    properties:
-      book_id:
-        type: string
-      book_title:
-        type: string
-      created_at:
-        type: string
-      due_date:
-        description: YYYY-MM-DD
-        type: string
-      id:
-        type: string
-      library_id:
-        type: string
-      loaned_at:
-        description: YYYY-MM-DD
-        type: string
-      loaned_to:
-        type: string
-      notes:
-        type: string
-      returned_at:
-        description: YYYY-MM-DD
-        type: string
-      tags:
-        items:
-          $ref: '#/definitions/responses.TagRef'
-        type: array
-      updated_at:
-        type: string
-    type: object
-  responses.MediaTypeResponse:
-    properties:
-      book_count:
-        type: integer
-      description:
-        type: string
-      display_name:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-    type: object
-  responses.MemberResponse:
-    properties:
-      display_name:
-        type: string
-      email:
-        type: string
-      invited_by:
-        type: string
-      joined_at:
-        type: string
-      role:
-        type: string
-      role_id:
-        type: string
-      tags:
-        items:
-          $ref: '#/definitions/responses.TagRef'
-        type: array
-      user_id:
-        type: string
-      username:
-        type: string
-    type: object
-  responses.PagedBooksResponse:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/responses.BookResponse'
-        type: array
-      page:
-        type: integer
-      per_page:
-        type: integer
-      suggestions:
-        items:
-          type: string
-        type: array
-      total:
-        type: integer
-    type: object
-  responses.SeriesEntryResponse:
-    properties:
-      book_id:
-        type: string
-      contributors:
-        items:
-          $ref: '#/definitions/responses.ContributorRef'
-        type: array
-      media_type:
-        type: string
-      position:
-        type: number
-      subtitle:
-        type: string
-      title:
-        type: string
-    type: object
-  responses.SeriesRef:
-    properties:
-      position:
-        type: number
-      series_id:
-        type: string
-      series_name:
-        type: string
-    type: object
-  responses.SeriesResponse:
-    properties:
-      book_count:
-        type: integer
-      created_at:
-        type: string
-      demographic:
-        type: string
-      description:
-        type: string
-      external_id:
-        type: string
-      external_source:
-        type: string
-      genres:
-        items:
-          type: string
-        type: array
-      id:
-        type: string
-      is_complete:
-        type: boolean
-      last_release_date:
-        description: YYYY-MM-DD
-        type: string
-      library_id:
-        type: string
-      name:
-        type: string
-      next_release_date:
-        description: YYYY-MM-DD
-        type: string
-      original_language:
-        type: string
-      publication_year:
-        type: integer
-      status:
-        type: string
-      tags:
-        items:
-          $ref: '#/definitions/responses.TagRef'
-        type: array
-      total_count:
-        type: integer
-      updated_at:
-        type: string
-      url:
-        type: string
-    type: object
-  responses.SeriesVolumeResponse:
-    properties:
-      cover_url:
-        type: string
-      created_at:
-        type: string
-      external_id:
-        type: string
-      id:
-        type: string
-      position:
-        type: number
-      release_date:
-        description: YYYY-MM-DD
-        type: string
-      series_id:
-        type: string
-      title:
-        type: string
-      updated_at:
-        type: string
-    type: object
-  responses.ShelfRef:
-    properties:
-      id:
-        type: string
-      name:
-        type: string
-    type: object
-  responses.ShelfResponse:
-    properties:
-      book_count:
-        type: integer
-      color:
-        type: string
-      created_at:
-        type: string
-      description:
-        type: string
-      display_order:
-        type: integer
-      icon:
-        type: string
-      id:
-        type: string
-      library_id:
-        type: string
-      name:
-        type: string
-      tags:
-        items:
-          $ref: '#/definitions/responses.TagRef'
-        type: array
-      updated_at:
-        type: string
-    type: object
-  responses.TagRef:
-    properties:
-      color:
-        type: string
-      created_at:
-        type: string
-      id:
-        type: string
-      library_id:
-        type: string
-      name:
-        type: string
-    type: object
-  responses.TagResponse:
-    properties:
-      color:
-        type: string
-      created_at:
-        type: string
-      id:
-        type: string
-      library_id:
-        type: string
-      name:
-        type: string
-    type: object
-  responses.UserResponse:
-    properties:
-      display_name:
-        type: string
-      email:
-        type: string
-      id:
-        type: string
-      is_instance_admin:
-        type: boolean
-      username:
         type: string
     type: object
 host: localhost:8080
@@ -2681,7 +2860,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.UserResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.UserResponse'
         "401":
           description: Unauthorized
           schema:
@@ -2716,7 +2895,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.UserResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.UserResponse'
         "400":
           description: Bad Request
           schema:
@@ -3030,6 +3209,38 @@ paths:
       summary: Re-enrich metadata for a single book
       tags:
       - books
+  /components:
+    get:
+      description: Every Go module linked into this API binary, with its version and
+        SPDX licence identifier. Clients render this on their licences page so the
+        notices cover the server as well as the client. A component whose licence
+        is unknown is returned with an empty licence rather than omitted.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              components:
+                items:
+                  properties:
+                    licence:
+                      type: string
+                    name:
+                      type: string
+                    version:
+                      type: string
+                  type: object
+                type: array
+              version:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List server components
+      tags:
+      - health
   /contributors:
     get:
       description: Full-text search for contributors (authors, illustrators, etc.).
@@ -3047,7 +3258,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.ContributorItem'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem'
             type: array
         "401":
           description: Unauthorized
@@ -3081,7 +3292,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.ContributorItem'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem'
         "400":
           description: Bad Request
           schema:
@@ -3502,7 +3713,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.GenreResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse'
             type: array
         "401":
           description: Unauthorized
@@ -3536,7 +3747,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.GenreResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse'
         "400":
           description: Bad Request
           schema:
@@ -3633,7 +3844,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.GenreResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse'
         "400":
           description: Bad Request
           schema:
@@ -3815,7 +4026,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.LibraryResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse'
             type: array
         "401":
           description: Unauthorized
@@ -3855,7 +4066,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.LibraryResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse'
         "400":
           description: Bad Request
           schema:
@@ -3934,7 +4145,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.LibraryResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse'
         "400":
           description: Bad Request
           schema:
@@ -3990,7 +4201,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.LibraryResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse'
         "400":
           description: Bad Request
           schema:
@@ -4037,7 +4248,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.BookResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse'
         "400":
           description: Bad Request
           schema:
@@ -4066,75 +4277,7 @@ paths:
       - books
   /libraries/{library_id}/books:
     get:
-      description: Returns a paginated, filtered, sorted list of books in the library.
-      parameters:
-      - description: Library UUID
-        in: path
-        name: library_id
-        required: true
-        type: string
-      - description: Search query or query-language expression
-        in: query
-        name: q
-        type: string
-      - description: Page number
-        in: query
-        name: page
-        type: integer
-      - description: Items per page
-        in: query
-        name: per_page
-        type: integer
-      - description: Sort field
-        in: query
-        name: sort
-        type: string
-      - description: Sort direction (asc/desc)
-        in: query
-        name: sort_dir
-        type: string
-      - description: Filter by first letter
-        in: query
-        name: letter
-        type: string
-      - description: Filter by tag name
-        in: query
-        name: tag
-        type: string
-      - description: Filter by media type
-        in: query
-        name: type_filter
-        type: string
-      - description: Treat q as regex
-        in: query
-        name: regex
-        type: boolean
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/responses.PagedBooksResponse'
-        "400":
-          description: Bad Request
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: List books in a library
-      tags:
-      - books
+      responses: {}
     post:
       consumes:
       - application/json
@@ -4180,7 +4323,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.BookResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse'
         "400":
           description: Bad Request
           schema:
@@ -4267,7 +4410,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.BookResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse'
         "400":
           description: Bad Request
           schema:
@@ -4387,7 +4530,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.BookResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse'
         "400":
           description: Bad Request
           schema:
@@ -4594,7 +4737,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.EditionResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse'
             type: array
         "400":
           description: Bad Request
@@ -4671,7 +4814,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.EditionResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse'
         "400":
           description: Bad Request
           schema:
@@ -4800,7 +4943,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.EditionResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse'
         "400":
           description: Bad Request
           schema:
@@ -5114,7 +5257,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.InteractionResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.InteractionResponse'
         "400":
           description: Bad Request
           schema:
@@ -5182,7 +5325,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.InteractionResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.InteractionResponse'
         "400":
           description: Bad Request
           schema:
@@ -5272,7 +5415,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.ShelfResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse'
             type: array
         "400":
           description: Bad Request
@@ -5408,6 +5551,54 @@ paths:
       tags:
       - books
       - enrichment
+  /libraries/{library_id}/books/facets:
+    get:
+      description: |-
+        Counts books per facet value across the whole filtered set, not
+        the returned page, so a client can render a filter rail without
+        a request per value. Takes the same query parameters as the list
+        endpoint and applies exactly the same filter.
+      parameters:
+      - description: Library ID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Search query
+        in: query
+        name: q
+        type: string
+      - description: Structured filter JSON
+        in: query
+        name: filter
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              data:
+                $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookFacets'
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      summary: Facet counts for a book search
+      tags:
+      - books
   /libraries/{library_id}/books/fingerprint:
     get:
       description: |-
@@ -5804,7 +5995,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.LoanResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse'
             type: array
         "400":
           description: Bad Request
@@ -5858,7 +6049,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.LoanResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse'
         "400":
           description: Bad Request
           schema:
@@ -5957,7 +6148,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.LoanResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse'
         "400":
           description: Bad Request
           schema:
@@ -6008,7 +6199,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.MemberResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.MemberResponse'
             type: array
         "400":
           description: Bad Request
@@ -6307,7 +6498,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.SeriesResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse'
             type: array
         "400":
           description: Bad Request
@@ -6379,7 +6570,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.SeriesResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse'
         "400":
           description: Bad Request
           schema:
@@ -6461,7 +6652,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.SeriesResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse'
         "400":
           description: Bad Request
           schema:
@@ -6544,7 +6735,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.SeriesResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse'
         "400":
           description: Bad Request
           schema:
@@ -6854,7 +7045,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.SeriesEntryResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesEntryResponse'
             type: array
         "400":
           description: Bad Request
@@ -7265,7 +7456,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.SeriesVolumeResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesVolumeResponse'
             type: array
         "400":
           description: Bad Request
@@ -7308,7 +7499,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.SeriesVolumeResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesVolumeResponse'
             type: array
         "400":
           description: Bad Request
@@ -7461,7 +7652,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.ShelfResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse'
             type: array
         "400":
           description: Bad Request
@@ -7519,7 +7710,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.ShelfResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse'
         "400":
           description: Bad Request
           schema:
@@ -7624,7 +7815,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.ShelfResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse'
         "400":
           description: Bad Request
           schema:
@@ -7672,7 +7863,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.BookResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse'
             type: array
         "400":
           description: Bad Request
@@ -7841,7 +8032,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.TagResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagResponse'
             type: array
         "400":
           description: Bad Request
@@ -7889,7 +8080,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.TagResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagResponse'
         "400":
           description: Bad Request
           schema:
@@ -7984,7 +8175,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.TagResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.TagResponse'
         "400":
           description: Bad Request
           schema:
@@ -8310,6 +8501,334 @@ paths:
       tags:
       - me
       - api-tokens
+  /me/authors/index:
+    get:
+      description: |-
+        The cross-library Authors surface, with per-author book and
+        read counts, cover thumbnails, and the letter each name files
+        under. Unpaged, for the same reason as the series index.
+      parameters:
+      - description: Contributor roles, comma separated. Defaults to author.
+        in: query
+        name: role
+        type: string
+      - description: Library UUIDs, comma separated. Narrows the scope; cannot widen
+          it.
+        in: query
+        name: lib
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.AuthorIndexEntry'
+                type: array
+              total:
+                type: integer
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Authors across every library the caller can read
+      tags:
+      - me
+  /me/books:
+    get:
+      description: |-
+        The default browse surface. Takes the same filters as the
+        per-library list endpoint; library becomes one filter among
+        several rather than part of the path.
+      parameters:
+      - description: Search query
+        in: query
+        name: q
+        type: string
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Results per page
+        in: query
+        name: per_page
+        type: integer
+      - description: Structured filter JSON
+        in: query
+        name: filter
+        type: string
+      - description: Library ids, comma separated
+        in: query
+        name: lib
+        type: string
+      - description: Read statuses, comma separated
+        in: query
+        name: status
+        type: string
+      - description: Media type names, comma separated
+        in: query
+        name: type
+        type: string
+      - description: Genre names, comma separated
+        in: query
+        name: genre
+        type: string
+      - description: Tag names, comma separated
+        in: query
+        name: tag
+        type: string
+      - description: Ratings 0-5, comma separated
+        in: query
+        name: rating
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  type: object
+                type: array
+              page:
+                type: integer
+              per_page:
+                type: integer
+              total:
+                type: integer
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      summary: Books across every library the caller can read
+      tags:
+      - books
+  /me/books/facets:
+    get:
+      description: |-
+        Counts per facet value over the whole filtered set, so the
+        filter rail can be rendered in one request rather than one per
+        value. Same filters as /me/books.
+      parameters:
+      - description: Search query
+        in: query
+        name: q
+        type: string
+      - description: Structured filter JSON
+        in: query
+        name: filter
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              data:
+                $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookFacets'
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      summary: Facet counts across every library the caller can read
+      tags:
+      - books
+  /me/books/grouped:
+    get:
+      description: |-
+        Same filters as /me/books, but each series becomes one entry so
+        a run and a standalone book are peers. Paging is over entries;
+        book_total reports how many books those entries stand for,
+        because the facet rail still counts books.
+      parameters:
+      - description: Search query
+        in: query
+        name: q
+        type: string
+      - description: Library UUIDs, comma separated
+        in: query
+        name: lib
+        type: string
+      - description: Ownership states, comma separated
+        in: query
+        name: own
+        type: string
+      - description: Read statuses, comma separated
+        in: query
+        name: status
+        type: string
+      - description: Page, 1-based
+        in: query
+        name: page
+        type: integer
+      - description: Entries per page
+        in: query
+        name: per_page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              book_total:
+                type: integer
+              items:
+                items:
+                  type: object
+                type: array
+              page:
+                type: integer
+              per_page:
+                type: integer
+              total:
+                type: integer
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Books across every readable library, series collapsed
+      tags:
+      - books
+  /me/counts:
+    get:
+      description: |-
+        Book, series and author counts across every library the caller
+        can read. One endpoint rather than three, because the sidebar
+        needs all of them on every page and none of them individually.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              authors:
+                type: integer
+              books:
+                type: integer
+              series:
+                type: integer
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Totals for the navigation
+      tags:
+      - me
+  /me/libraries:
+    get:
+      description: |-
+        Returns every library the authenticated user can see and the
+        permission names they hold in each, already capped by the
+        token's scope. A client fetches this once and gates each row by
+        the library the row came from, rather than checking per book.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              data:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.LibraryAccess'
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      summary: Libraries the caller can reach, with effective permissions
+      tags:
+      - libraries
+  /me/loans:
+    get:
+      description: |-
+        A loan is a book, a person and some dates; the library is where
+        the book happens to live. "Who has my stuff" is not a question
+        anyone asks one library at a time, so this is the whole set,
+        each row carrying the library it belongs to.
+      parameters:
+      - description: Library UUIDs, comma separated. Narrows the scope; cannot widen
+          it.
+        in: query
+        name: lib
+        type: string
+      - description: Match against borrower or book title
+        in: query
+        name: q
+        type: string
+      - description: Include loans already returned
+        in: query
+        name: include_returned
+        type: boolean
+      - description: Only loans past their due date
+        in: query
+        name: overdue
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse'
+                type: array
+              total:
+                type: integer
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Loans across every library the caller can read
+      tags:
+      - me
   /me/series:
     get:
       description: Returns series from every library the caller can access, filtered
@@ -8338,6 +8857,75 @@ paths:
       security:
       - BearerAuth: []
       summary: Search series across my libraries
+      tags:
+      - me
+  /me/series/index:
+    get:
+      description: |-
+        The cross-library Series surface. Unpaged: the A-Z bar has to
+        know which letters have series behind them, which means
+        counting the whole set anyway.
+      parameters:
+      - description: Name substring
+        in: query
+        name: q
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse'
+                type: array
+              total:
+                type: integer
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Series across every library the caller can read
+      tags:
+      - me
+  /me/shelves:
+    get:
+      description: |-
+        The rail lists shelves beside libraries and views, so it needs
+        them across the whole readable scope rather than one library at
+        a time. Each carries its library, colour and icon.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.ShelfResponse'
+                type: array
+              total:
+                type: integer
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Shelves across every library the caller can read
       tags:
       - me
   /me/suggestions:
@@ -8714,7 +9302,7 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/responses.MediaTypeResponse'
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse'
             type: array
         "401":
           description: Unauthorized
@@ -8752,7 +9340,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/responses.MediaTypeResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse'
         "400":
           description: Bad Request
           schema:
@@ -8867,7 +9455,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/responses.MediaTypeResponse'
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse'
         "400":
           description: Bad Request
           schema:
@@ -8973,6 +9561,88 @@ paths:
       summary: Setup status
       tags:
       - setup
+  /sync/apply:
+    post:
+      consumes:
+      - application/json
+      description: 'Applies client ops with per-field last-writer-wins. Every op comes
+        back with its own status, so a partial success is normal and the client clears
+        only the ops it sees applied. Update-only in v1: create new rows through the
+        per-resource endpoints.'
+      parameters:
+      - description: Ops to apply, at most 1000
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Push a batch of client changes
+      tags:
+      - sync
+  /sync/changes:
+    get:
+      description: Returns the caller's data changed since `since`, oldest first.
+        Advance `since` to the newest updated_at you applied. When has_more is true
+        the response hit `limit` and you should call again straight away.
+      parameters:
+      - description: RFC3339 timestamp; returns changes strictly newer than this
+        in: query
+        name: since
+        required: true
+        type: string
+      - description: Ops per response, 1 to 1000 (default 500)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.SyncChangesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Pull changes since a timestamp
+      tags:
+      - sync
   /users:
     get:
       description: Full-text search across users; returns minimal profile data. Query

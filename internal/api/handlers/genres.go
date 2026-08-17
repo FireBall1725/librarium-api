@@ -28,7 +28,7 @@ func NewGenreHandler(genres *repository.GenreRepo) *GenreHandler {
 // @Tags        genres
 // @Produce     json
 // @Security    BearerAuth
-// @Success     200  {array}   responses.GenreResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse
 // @Failure     401  {object}  object{error=string}
 // @Router      /genres [get]
 func (h *GenreHandler) ListGenres(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +49,7 @@ func (h *GenreHandler) ListGenres(w http.ResponseWriter, r *http.Request) {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       body  body      object{name=string}  true  "Genre name"
-// @Success     201   {object}  responses.GenreResponse
+// @Success     201   {object}  github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse
 // @Failure     400   {object}  object{error=string}
 // @Failure     401   {object}  object{error=string}
 // @Failure     403   {object}  object{error=string}
@@ -84,7 +84,7 @@ func (h *GenreHandler) CreateGenre(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       genre_id  path      string  true  "Genre UUID"
 // @Param       body      body      object{name=string}  true  "Updated name"
-// @Success     200   {object}  responses.GenreResponse
+// @Success     200   {object}  github_com_fireball1725_librarium-api_internal_api_responses.GenreResponse
 // @Failure     400   {object}  object{error=string}
 // @Failure     401   {object}  object{error=string}
 // @Failure     403   {object}  object{error=string}
