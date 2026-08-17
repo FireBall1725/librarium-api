@@ -32,10 +32,11 @@ type BookHandler struct {
 	riverClient       *river.Client[pgx.Tx]           // may be nil; used for enrichment batch jobs
 	enrichmentBatches *repository.EnrichmentBatchRepo // may be nil; required for bulk enrich/cover
 	editionFiles      *service.EditionFileService
+	libraries         *repository.LibraryRepo // resolves the caller's readable libraries for the cross-library routes
 }
 
-func NewBookHandler(svc *service.BookService, books *repository.BookRepo, loans *repository.LoanRepo, riverClient *river.Client[pgx.Tx], enrichmentBatches *repository.EnrichmentBatchRepo, editionFiles *service.EditionFileService) *BookHandler {
-	return &BookHandler{svc: svc, books: books, loans: loans, riverClient: riverClient, enrichmentBatches: enrichmentBatches, editionFiles: editionFiles}
+func NewBookHandler(svc *service.BookService, books *repository.BookRepo, loans *repository.LoanRepo, riverClient *river.Client[pgx.Tx], enrichmentBatches *repository.EnrichmentBatchRepo, editionFiles *service.EditionFileService, libraries *repository.LibraryRepo) *BookHandler {
+	return &BookHandler{svc: svc, books: books, loans: loans, riverClient: riverClient, enrichmentBatches: enrichmentBatches, editionFiles: editionFiles, libraries: libraries}
 }
 
 // ─── Media types ──────────────────────────────────────────────────────────────
@@ -67,7 +68,7 @@ func (h *BookHandler) ListMediaTypes(w http.ResponseWriter, r *http.Request) {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       q    query     string  true  "Search query (min 2 chars)"
-// @Success     200  {array}   responses.ContributorItem
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem
 // @Failure     401  {object}  object{error=string}
 // @Router      /contributors [get]
 func (h *BookHandler) SearchContributors(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +98,7 @@ func (h *BookHandler) SearchContributors(w http.ResponseWriter, r *http.Request)
 // @Produce     json
 // @Security    BearerAuth
 // @Param       body  body      object{name=string}  true  "Contributor name"
-// @Success     201   {object}  responses.ContributorItem
+// @Success     201   {object}  github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem
 // @Failure     400   {object}  object{error=string}
 // @Failure     401   {object}  object{error=string}
 // @Router      /contributors [post]
@@ -196,22 +197,23 @@ func (h *BookHandler) GetBookFingerprint(w http.ResponseWriter, r *http.Request)
 // @Param       tag          query     string   false  "Filter by tag name"
 // @Param       type_filter  query     string   false  "Filter by media type"
 // @Param       regex        query     boolean  false  "Treat q as regex"
-// @Success     200  {object}  responses.PagedBooksResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.PagedBooksResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
-// @Router      /libraries/{library_id}/books [get]
-func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
-	libraryID, err := uuid.Parse(r.PathValue("library_id"))
-	if err != nil {
-		respond.Error(w, http.StatusBadRequest, "invalid library id")
-		return
-	}
+// parseListBooksOpts turns a request's query string into the repository's
+// filter options. Shared by ListBooks and Facets: the counts have to be built
+// from exactly the same filter as the results, and the only way to guarantee
+// that is to parse it once.
+//
+// Returns the raw search text alongside the opts because ListBooks records it
+// for search suggestions and Facets does not.
+var errQueryTooLong = errors.New("query too long")
 
+func parseListBooksOpts(r *http.Request) (repository.ListBooksOpts, string, error) {
 	q := r.URL.Query().Get("q")
 	rawSearchQuery := q
 	if len(q) > 500 {
-		respond.Error(w, http.StatusBadRequest, "query too long")
-		return
+		return repository.ListBooksOpts{}, "", errQueryTooLong
 	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
@@ -275,8 +277,10 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 		callerID = claims.UserID
 	}
 
-	books, total, err := h.svc.ListBooks(r.Context(), libraryID, repository.ListBooksOpts{
+	return repository.ListBooksOpts{
 		Query:      q,
+		SeriesIDs:  seriesIDsFromQuery(r),
+		ShelfIDs:   parseFacetSelection(r).Shelves,
 		Page:       page,
 		PerPage:    perPage,
 		Sort:       sort,
@@ -287,7 +291,23 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 		IsRegex:    isRegex,
 		Groups:     filterGroups,
 		CallerID:   callerID,
-	})
+	}, rawSearchQuery, nil
+}
+
+// @Router      /libraries/{library_id}/books [get]
+func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+
+	opts, rawSearchQuery, err := parseListBooksOpts(r)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	books, total, err := h.svc.ListBooks(r.Context(), libraryID, opts)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -300,8 +320,8 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"items":    items,
 		"total":    total,
-		"page":     max(page, 1),
-		"per_page": perPage,
+		"page":     max(opts.Page, 1),
+		"per_page": opts.PerPage,
 	}
 	// "Did you mean…" — when the literal query found nothing, run a
 	// pg_trgm similarity match and include up to 5 suggestions. Skipped
@@ -324,7 +344,7 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       body        body      object{title=string,subtitle=string,media_type_id=string,description=string,contributors=[]object,tag_ids=[]string,genre_ids=[]string,edition=object}  true  "Book details"
-// @Success     201  {object}  responses.BookResponse
+// @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books [post]
@@ -359,7 +379,7 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       book_id     path      string  true  "Book UUID"
-// @Success     200  {object}  responses.BookResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -370,10 +390,21 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, "invalid book id")
 		return
 	}
-	libraryID, err := uuid.Parse(r.PathValue("library_id"))
-	if err != nil {
-		respond.Error(w, http.StatusBadRequest, "invalid library id")
-		return
+	// This handler serves two routes: the library-scoped one, and the bare
+	// /books/{book_id} the work-level detail page uses for a book that may sit
+	// in no library at all. On that route library_id is not a path value, so
+	// demanding one made the whole endpoint a 400 — and the Series index links
+	// every volume tick at it, so each of those was a dead link to a raw
+	// "invalid library id". Nil is the repository's own "no particular
+	// library", which it already handles; an id that is present but malformed
+	// is still the caller's mistake and still fails.
+	var libraryID uuid.UUID
+	if raw := r.PathValue("library_id"); raw != "" {
+		libraryID, err = uuid.Parse(raw)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid library id")
+			return
+		}
 	}
 	// Caller-scope the user_read_status / user_rating / user_progress_pct
 	// + per-library active_loan_count columns so the per-book GET emits
@@ -413,7 +444,7 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       book_id     path      string  true  "Book UUID"
 // @Param       body        body      object{title=string,subtitle=string,media_type_id=string,description=string,contributors=[]object,tag_ids=[]string,genre_ids=[]string}  true  "Updated book"
-// @Success     200  {object}  responses.BookResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -452,7 +483,7 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       isbn        path      string  true  "ISBN-10 or ISBN-13"
-// @Success     200  {object}  responses.BookResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -1011,4 +1042,42 @@ func (h *BookHandler) createBatchItems(ctx context.Context, batchID uuid.UUID, b
 		}
 	}
 	return h.enrichmentBatches.CreateItems(ctx, items)
+}
+
+// Facets godoc
+//
+// @Summary     Facet counts for a book search
+// @Description Counts books per facet value across the whole filtered set, not
+// @Description the returned page, so a client can render a filter rail without
+// @Description a request per value. Takes the same query parameters as the list
+// @Description endpoint and applies exactly the same filter.
+// @Tags        books
+// @Produce     json
+// @Param       library_id  path  string  true  "Library ID"
+// @Param       q           query string  false "Search query"
+// @Param       filter      query string  false "Structured filter JSON"
+// @Success     200  {object}  object{data=repository.BookFacets}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /libraries/{library_id}/books/facets [get]
+func (h *BookHandler) Facets(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+
+	claims := middleware.ClaimsFromContext(r.Context())
+	var callerID uuid.UUID
+	if claims != nil {
+		callerID = claims.UserID
+	}
+
+	facets, err := h.books.Facets(r.Context(), []uuid.UUID{libraryID},
+		parseFacetSelection(r), r.URL.Query().Get("q"), seriesIDsFromQuery(r), callerID)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"data": facets})
 }

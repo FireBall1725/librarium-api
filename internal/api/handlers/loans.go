@@ -6,6 +6,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -36,7 +37,7 @@ func NewLoanHandler(svc *service.LoanService) *LoanHandler {
 // @Param       include_returned  query     boolean  false  "Include returned loans"
 // @Param       search            query     string   false  "Filter by borrower name"
 // @Param       book_id           query     string   false  "Filter to loans of a specific book"
-// @Success     200  {array}   responses.LoanResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/loans [get]
@@ -78,7 +79,7 @@ func (h *LoanHandler) ListLoans(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       body        body      object{book_id=string,loaned_to=string,loaned_at=string,due_date=string,notes=string}  true  "Loan details"
-// @Success     201  {object}  responses.LoanResponse
+// @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/loans [post]
@@ -113,7 +114,7 @@ func (h *LoanHandler) CreateLoan(w http.ResponseWriter, r *http.Request) {
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       loan_id     path      string  true  "Loan UUID"
 // @Param       body        body      object{loaned_to=string,due_date=string,returned_at=string,notes=string}  true  "Updated loan"
-// @Success     200  {object}  responses.LoanResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.LoanResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -172,6 +173,33 @@ func (h *LoanHandler) DeleteLoan(w http.ResponseWriter, r *http.Request) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// parseLoanDate reads a date a client sent for a loan.
+//
+// Accepts YYYY-MM-DD, which is what the API documents, and RFC3339, which is
+// what the API itself emits: loan dates are DATE columns but marshal as full
+// timestamps, so a client that reads a loan and writes it back sends
+// "2026-07-06T00:00:00Z". Rejecting that is defensible; silently treating it as
+// "no date" is not, and that is what this used to do. Marking a loan returned
+// echoed its due_date back and quietly erased it.
+//
+// Empty or absent means no date. Anything else that will not parse is an error,
+// so a client sending nonsense hears about it instead of losing a field.
+func parseLoanDate(s string) (*time.Time, error) {
+	if s == "" {
+		return nil, nil
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return &t, nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		// The date part only. These columns are DATE, so carrying a time here
+		// would depend on the sender's zone for a value that has no time.
+		d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		return &d, nil
+	}
+	return nil, fmt.Errorf("invalid date %q, expected YYYY-MM-DD", s)
+}
+
 func decodeLoanCreateRequest(r *http.Request) (*service.LoanRequest, error) {
 	var body struct {
 		BookID   string `json:"book_id"`
@@ -192,17 +220,15 @@ func decodeLoanCreateRequest(r *http.Request) (*service.LoanRequest, error) {
 	}
 
 	loanedAt := time.Now()
-	if body.LoanedAt != "" {
-		if t, err := time.Parse("2006-01-02", body.LoanedAt); err == nil {
-			loanedAt = t
-		}
+	if at, err := parseLoanDate(body.LoanedAt); err != nil {
+		return nil, err
+	} else if at != nil {
+		loanedAt = *at
 	}
 
-	var dueDate *time.Time
-	if body.DueDate != "" {
-		if t, err := time.Parse("2006-01-02", body.DueDate); err == nil {
-			dueDate = &t
-		}
+	dueDate, err := parseLoanDate(body.DueDate)
+	if err != nil {
+		return nil, err
 	}
 
 	return &service.LoanRequest{
@@ -228,21 +254,26 @@ func decodeLoanUpdateRequest(r *http.Request) (*service.LoanUpdateRequest, error
 		return nil, errors.New("loaned_to is required")
 	}
 
-	parseDate := func(s *string) *time.Time {
-		if s == nil || *s == "" {
-			return nil
+	optional := func(s *string) string {
+		if s == nil {
+			return ""
 		}
-		t, err := time.Parse("2006-01-02", *s)
-		if err != nil {
-			return nil
-		}
-		return &t
+		return *s
+	}
+
+	due, err := parseLoanDate(optional(body.DueDate))
+	if err != nil {
+		return nil, err
+	}
+	returned, err := parseLoanDate(optional(body.ReturnedAt))
+	if err != nil {
+		return nil, err
 	}
 
 	return &service.LoanUpdateRequest{
 		LoanedTo:   body.LoanedTo,
-		DueDate:    parseDate(body.DueDate),
-		ReturnedAt: parseDate(body.ReturnedAt),
+		DueDate:    due,
+		ReturnedAt: returned,
 		Notes:      body.Notes,
 	}, nil
 }

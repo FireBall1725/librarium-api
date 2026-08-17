@@ -31,19 +31,31 @@ func NewSyncHandler(repo *repository.SyncRepo) *SyncHandler {
 
 // GetChanges returns the caller's data that has changed since the given timestamp.
 //
-// Query params: since (RFC3339, required), limit (1..1000, default 500).
-//
-// Response shape (responses.SyncChangesResponse): { ops, server_time, has_more }.
 // Clients advance `since` to max(updated_at) of returned ops; when has_more is
 // true, call again immediately to keep draining the queue.
 //
 // v1 scope is user_book_interactions only. Other synced tables (loans, shelves,
 // memberships, etc.) follow one at a time.
 //
-// TODO: add swag annotations. The current swag 1.16.4 hits a parser bug when
-// this handler references responses.SyncChangesResponse, which corrupts type
-// resolution for unrelated handlers (auth.go's UserResponse fails to resolve).
-// Tracked separately; the endpoint is documented inline above for now.
+// This carried a TODO saying swag hit a parser bug here that broke type
+// resolution in unrelated handlers, auth.go among them. It did not. auth.go
+// failed on its own because it names responses.UserResponse in a comment while
+// importing no such package, and one unresolvable annotation fails the whole
+// run — so every file looked broken and this one, being the file under edit at
+// the time, got the blame. sync.go is in fact the only handler that imports the
+// package for real.
+//
+// @Summary     Pull changes since a timestamp
+// @Description Returns the caller's data changed since `since`, oldest first. Advance `since` to the newest updated_at you applied. When has_more is true the response hit `limit` and you should call again straight away.
+// @Tags        sync
+// @Produce     json
+// @Security    BearerAuth
+// @Param       since  query     string   true   "RFC3339 timestamp; returns changes strictly newer than this"
+// @Param       limit  query     integer  false  "Ops per response, 1 to 1000 (default 500)"
+// @Success     200    {object}  github_com_fireball1725_librarium-api_internal_api_responses.SyncChangesResponse
+// @Failure     400    {object}  object{error=string}
+// @Failure     401    {object}  object{error=string}
+// @Router      /sync/changes [get]
 func (h *SyncHandler) GetChanges(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -113,6 +125,18 @@ func (h *SyncHandler) GetChanges(w http.ResponseWriter, r *http.Request) {
 // v1 scope is user_book_interactions only and update-only (no creates
 // through this endpoint; clients still POST/PUT new rows via the
 // existing per-resource endpoints).
+//
+// @Summary     Push a batch of client changes
+// @Description Applies client ops with per-field last-writer-wins. Every op comes back with its own status, so a partial success is normal and the client clears only the ops it sees applied. Update-only in v1: create new rows through the per-resource endpoints.
+// @Tags        sync
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyRequest  true  "Ops to apply, at most 1000"
+// @Success     200   {object}  github_com_fireball1725_librarium-api_internal_api_responses.SyncApplyResponse
+// @Failure     400   {object}  object{error=string}
+// @Failure     401   {object}  object{error=string}
+// @Router      /sync/apply [post]
 func (h *SyncHandler) ApplyChanges(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {

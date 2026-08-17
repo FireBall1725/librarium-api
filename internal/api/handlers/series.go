@@ -39,7 +39,7 @@ func NewSeriesHandler(svc *service.SeriesService, sync *service.ReleaseSyncServi
 // @Param       library_id  path      string  true   "Library UUID"
 // @Param       search      query     string  false  "Filter by series name"
 // @Param       tag         query     string  false  "Filter by tag"
-// @Success     200  {array}   responses.SeriesResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/series [get]
@@ -74,7 +74,7 @@ func (h *SeriesHandler) ListSeries(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       body        body      object{name=string,description=string,total_count=integer,status=string,original_language=string,publication_year=integer,demographic=string,genres=[]string,url=string,external_id=string,external_source=string,tag_ids=[]string}  true  "Series details"
-// @Success     201  {object}  responses.SeriesResponse
+// @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/series [post]
@@ -107,7 +107,7 @@ func (h *SeriesHandler) CreateSeries(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       series_id   path      string  true  "Series UUID"
-// @Success     200  {object}  responses.SeriesResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -142,7 +142,7 @@ func (h *SeriesHandler) GetSeries(w http.ResponseWriter, r *http.Request) {
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       series_id   path      string  true  "Series UUID"
 // @Param       body        body      object{name=string,description=string,total_count=integer,status=string,original_language=string,publication_year=integer,demographic=string,genres=[]string,url=string,external_id=string,external_source=string,tag_ids=[]string}  true  "Updated series"
-// @Success     200  {object}  responses.SeriesResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -208,7 +208,7 @@ func (h *SeriesHandler) DeleteSeries(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       series_id   path      string  true  "Series UUID"
-// @Success     200  {array}   responses.SeriesEntryResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.SeriesEntryResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/series/{series_id}/books [get]
@@ -512,7 +512,7 @@ func (h *SeriesHandler) RemoveSeriesBook(w http.ResponseWriter, r *http.Request)
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       series_id   path      string  true  "Series UUID"
-// @Success     200  {array}   responses.SeriesVolumeResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.SeriesVolumeResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/series/{series_id}/volumes [get]
@@ -558,7 +558,7 @@ func (h *SeriesHandler) ListSeriesVolumes(w http.ResponseWriter, r *http.Request
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       series_id   path      string  true  "Series UUID"
-// @Success     200  {array}   responses.SeriesVolumeResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.SeriesVolumeResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     503  {object}  object{error=string}

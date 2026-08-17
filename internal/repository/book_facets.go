@@ -1,0 +1,318 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 FireBall1725 (Adaléa)
+
+package repository
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/fireball1725/librarium-api/internal/models"
+	"github.com/google/uuid"
+)
+
+// FacetValue is one selectable value in a facet, with the number of books that
+// would match if it were chosen.
+type FacetValue struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+// BookFacets is the counts block returned alongside a book search, so a client
+// can render a filter rail without a request per value.
+type BookFacets struct {
+	Ownership  []FacetValue `json:"ownership"`
+	Library    []FacetValue `json:"library"`
+	ReadStatus []FacetValue `json:"read_status"`
+	MediaType  []FacetValue `json:"media_type"`
+	Genre      []FacetValue `json:"genre"`
+	Tag        []FacetValue `json:"tag"`
+	Shelf      []FacetValue `json:"shelf"`
+	Rating     []FacetValue `json:"rating"`
+}
+
+// FacetSelection is what the user has ticked in each facet. An empty slice
+// means that facet is not filtering.
+//
+// Passed as structured values rather than as opaque filter JSON because each
+// dimension has to be counted with its OWN selection removed, which is
+// impossible once the conditions have been flattened into one WHERE string.
+type FacetSelection struct {
+	// Ownership is where a book stands in relation to the caller: on the
+	// shelf, wishlisted, suggested, or a gap in a series. See book_ownership.go.
+	Ownership  []string
+	Libraries  []uuid.UUID
+	ReadStatus []string
+	MediaTypes []string // media_types.name
+	Genres     []string
+	Tags       []string
+	// Shelves are hand-picked sets rather than a property of a book, but they
+	// narrow the list exactly like a tag does, so they are a facet dimension.
+	Shelves []uuid.UUID
+	Ratings []int32
+}
+
+func emptyFacets() *BookFacets {
+	return &BookFacets{
+		Ownership: []FacetValue{},
+		Library:   []FacetValue{}, ReadStatus: []FacetValue{}, MediaType: []FacetValue{},
+		Genre: []FacetValue{}, Tag: []FacetValue{}, Shelf: []FacetValue{},
+		Rating: []FacetValue{},
+	}
+}
+
+// Facets counts books per facet value over the whole filtered set, not the page.
+//
+// Each dimension is counted with its own selection EXCLUDED. Applying every
+// filter uniformly collapses the facet you just used: tick Fantasy and the
+// genre list shows only Fantasy, so adding Science Fiction becomes impossible
+// without clearing first. Excluding a dimension's own selection answers the
+// question the rail is actually asking, which is "what would I get if I picked
+// this one as well".
+//
+// One pass, not a query per dimension. Match flags are computed once per row and
+// each dimension aggregates using the five flags it does not own.
+//
+// Read status and rating come from user_book_interactions, which is keyed on
+// book_edition_id. Joining editions directly counts a work with three editions
+// three times, so interactions collapse to one row per book first, best status
+// winning: read > reading > did_not_finish > unread.
+func (r *BookRepo) Facets(
+	ctx context.Context,
+	accessible []uuid.UUID,
+	sel FacetSelection,
+	query string,
+	seriesIDs []uuid.UUID,
+	callerID uuid.UUID,
+) (*BookFacets, error) {
+	if len(accessible) == 0 {
+		return emptyFacets(), nil
+	}
+
+	args := []any{accessible}
+	arg := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	// Scope first, because it binds the caller's own placeholder and the
+	// numbering follows the order arg() is called in, not the order the pieces
+	// appear in the format string.
+	//
+	// The caller is bound once here and again for the interaction CTE below.
+	// Two binds of the same value is cheaper than threading one placeholder
+	// through both and getting the numbering wrong.
+	scopeCallerArg := 0
+	if callerID != uuid.Nil {
+		arg(callerID)
+		scopeCallerArg = len(args)
+	}
+	scopeSQL := bookScopeCTE(1, scopeCallerArg)
+
+	// Text search is not a facet, so it narrows every dimension including the
+	// one being counted, and belongs in the base scope.
+	textWhere := ""
+	if query != "" {
+		p := arg("%" + query + "%")
+		textWhere = fmt.Sprintf(`AND (b.title ILIKE %[1]s OR EXISTS (
+            SELECT 1 FROM book_contributors bc JOIN contributors c ON c.id = bc.contributor_id
+            WHERE bc.book_id = b.id AND c.name ILIKE %[1]s))`, p)
+	}
+
+	// Drilling into a series narrows every dimension, for the same reason the
+	// text search does: it is not one of the facets, so no dimension owns it and
+	// none may count around it. Without this the rail reported the whole shelf
+	// beside a list showing one run.
+	if len(seriesIDs) > 0 {
+		p := arg(seriesIDs)
+		textWhere += fmt.Sprintf(` AND EXISTS (
+            SELECT 1 FROM book_series bs_f WHERE bs_f.book_id = b.id AND bs_f.series_id = ANY(%s))`, p)
+	}
+
+	interCTE := "SELECT NULL::uuid AS book_id, NULL::text AS read_status, NULL::int AS rating WHERE false"
+	if callerID != uuid.Nil {
+		p := arg(callerID)
+		interCTE = fmt.Sprintf(`
+            SELECT e.book_id,
+                   `+bestReadStatusExpr+` AS read_status,
+                   max(i.rating) AS rating
+            FROM user_book_interactions i
+            JOIN book_editions e ON e.id = i.book_edition_id
+            WHERE i.user_id = %s AND i.deleted_at IS NULL
+            GROUP BY e.book_id`, p)
+	}
+
+	// One flag per dimension. An unused facet is always TRUE so it narrows
+	// nothing, and critically its parameter is never bound: Go evaluates call
+	// arguments eagerly, so building the expression unconditionally would append
+	// an arg whose placeholder never reaches the SQL, and Postgres then fails
+	// with "could not determine data type of parameter $N".
+	mOwn := "TRUE"
+	mLib, mStatus, mType := "TRUE", "TRUE", "TRUE"
+	mGenre, mTag, mRating := "TRUE", "TRUE", "TRUE"
+	mShelf := "TRUE"
+
+	if len(sel.Ownership) > 0 {
+		mOwn = fmt.Sprintf("s.ownership = ANY(%s)", arg(sel.Ownership))
+	}
+
+	if len(sel.Libraries) > 0 {
+		mLib = fmt.Sprintf(`EXISTS (SELECT 1 FROM library_books lb2 WHERE lb2.book_id = s.id
+                 AND lb2.deleted_at IS NULL AND lb2.library_id = ANY(%s))`, arg(sel.Libraries))
+	}
+	if len(sel.ReadStatus) > 0 {
+		mStatus = fmt.Sprintf(`COALESCE(x.read_status, 'unread') = ANY(%s)`, arg(sel.ReadStatus))
+	}
+	if len(sel.MediaTypes) > 0 {
+		mType = fmt.Sprintf(
+			`EXISTS (SELECT 1 FROM media_types mt2 WHERE mt2.id = s.media_type_id AND mt2.name = ANY(%s))`,
+			arg(sel.MediaTypes))
+	}
+	if len(sel.Genres) > 0 {
+		mGenre = fmt.Sprintf(`EXISTS (SELECT 1 FROM book_genres bg2 JOIN genres g2 ON g2.id = bg2.genre_id
+                 WHERE bg2.book_id = s.id AND g2.name = ANY(%s))`, arg(sel.Genres))
+	}
+	if len(sel.Tags) > 0 {
+		mTag = fmt.Sprintf(`EXISTS (SELECT 1 FROM book_tags bt2 JOIN tags t2 ON t2.id = bt2.tag_id
+                 WHERE bt2.book_id = s.id AND bt2.deleted_at IS NULL AND t2.name = ANY(%s))`, arg(sel.Tags))
+	}
+	// By id, not name: a shelf name is only unique within its library, so two
+	// libraries can both have "Favourites" and they are different shelves.
+	if len(sel.Shelves) > 0 {
+		mShelf = fmt.Sprintf(`EXISTS (SELECT 1 FROM book_shelves bsh2
+                 WHERE bsh2.book_id = s.id AND bsh2.shelf_id = ANY(%s))`, arg(sel.Shelves))
+	}
+	if len(sel.Ratings) > 0 {
+		mRating = fmt.Sprintf(`x.rating = ANY(%s)`, arg(sel.Ratings))
+	}
+
+	// Every flag except the dimension's own.
+	others := func(skip string) string {
+		all := map[string]string{
+			"own": "f.m_own",
+			"lib": "f.m_lib", "status": "f.m_status", "type": "f.m_type",
+			"genre": "f.m_genre", "tag": "f.m_tag", "shelf": "f.m_shelf",
+			"rating": "f.m_rating",
+		}
+		parts := make([]string, 0, 7)
+		for k, v := range all {
+			if k != skip {
+				parts = append(parts, v)
+			}
+		}
+		insertionSort(parts) // deterministic SQL, so it diffs cleanly in logs
+		return strings.Join(parts, " AND ")
+	}
+
+	q := fmt.Sprintf(`
+WITH scope AS (
+    SELECT DISTINCT b.id, b.media_type_id, lb.ownership
+    FROM books b
+    JOIN (%s) lb ON lb.book_id = b.id
+    WHERE TRUE %s
+),
+inter AS (%s),
+f AS (
+    SELECT s.id, s.media_type_id, s.ownership,
+           COALESCE(x.read_status, 'unread') AS read_status,
+           x.rating,
+           %s AS m_own, %s AS m_lib, %s AS m_status, %s AS m_type,
+           %s AS m_genre, %s AS m_tag, %s AS m_shelf, %s AS m_rating
+    FROM scope s LEFT JOIN inter x ON x.book_id = s.id
+)
+SELECT 'ownership' AS dim, f.ownership AS value, f.ownership AS label, COUNT(*) AS n
+FROM f WHERE %s GROUP BY f.ownership
+UNION ALL
+SELECT 'library', l.id::text, l.name, COUNT(DISTINCT f.id)
+FROM f JOIN library_books lb3 ON lb3.book_id = f.id AND lb3.deleted_at IS NULL
+       JOIN libraries l ON l.id = lb3.library_id
+WHERE lb3.library_id = ANY($1) AND %s
+GROUP BY l.id, l.name
+UNION ALL
+SELECT 'read_status', f.read_status, f.read_status, COUNT(*)
+FROM f WHERE %s GROUP BY f.read_status
+UNION ALL
+SELECT 'media_type', mt.name, mt.display_name, COUNT(*)
+FROM f JOIN media_types mt ON mt.id = f.media_type_id
+WHERE %s GROUP BY mt.name, mt.display_name
+UNION ALL
+SELECT 'genre', g.name, g.name, COUNT(*)
+FROM f JOIN book_genres bg ON bg.book_id = f.id JOIN genres g ON g.id = bg.genre_id
+WHERE %s GROUP BY g.name
+UNION ALL
+SELECT 'tag', t.name, t.name, COUNT(*)
+FROM f JOIN book_tags bt ON bt.book_id = f.id AND bt.deleted_at IS NULL
+       JOIN tags t ON t.id = bt.tag_id AND t.deleted_at IS NULL
+WHERE %s GROUP BY t.name
+UNION ALL
+SELECT 'shelf', sh.id::text, sh.name, COUNT(DISTINCT f.id)
+FROM f JOIN book_shelves bsh ON bsh.book_id = f.id
+       JOIN shelves sh ON sh.id = bsh.shelf_id
+WHERE sh.library_id = ANY($1) AND %s
+GROUP BY sh.id, sh.name
+UNION ALL
+SELECT 'rating', f.rating::text, f.rating::text, COUNT(*)
+FROM f WHERE f.rating IS NOT NULL AND %s GROUP BY f.rating
+ORDER BY 1, 4 DESC, 3`,
+		// The scope CTE comes first now: it holds the caller's own placeholder,
+		// so it has to be built before the text filter's is counted.
+		scopeSQL, textWhere, interCTE,
+		mOwn, mLib, mStatus, mType, mGenre, mTag, mShelf, mRating,
+		others("own"),
+		others("lib"), others("status"), others("type"),
+		others("genre"), others("tag"), others("shelf"), others("rating"))
+
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("counting book facets: %w", err)
+	}
+	defer rows.Close()
+
+	out := emptyFacets()
+	for rows.Next() {
+		var dim string
+		var fv FacetValue
+		if err := rows.Scan(&dim, &fv.Value, &fv.Label, &fv.Count); err != nil {
+			return nil, fmt.Errorf("scanning facet row: %w", err)
+		}
+		switch dim {
+		case "ownership":
+			out.Ownership = append(out.Ownership, fv)
+		case "library":
+			out.Library = append(out.Library, fv)
+		case "read_status":
+			out.ReadStatus = append(out.ReadStatus, fv)
+		case "media_type":
+			out.MediaType = append(out.MediaType, fv)
+		case "genre":
+			out.Genre = append(out.Genre, fv)
+		case "tag":
+			out.Tag = append(out.Tag, fv)
+		case "shelf":
+			out.Shelf = append(out.Shelf, fv)
+		case "rating":
+			out.Rating = append(out.Rating, fv)
+		}
+	}
+	return out, rows.Err()
+}
+
+// insertionSort keeps a six-element slice ordered without reaching for sort.
+func insertionSort(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
+}
+
+// ListAcross lists books spanning several libraries, deduplicated: a work held
+// by two libraries appears once, not twice.
+func (r *BookRepo) ListAcross(ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts) ([]*models.Book, int, error) {
+	if len(libraryIDs) == 0 {
+		return []*models.Book{}, 0, nil
+	}
+	return r.listScoped(ctx, libraryIDs, opts)
+}

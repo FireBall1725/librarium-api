@@ -112,7 +112,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	setupHandler := handlers.NewSetupHandler(authSvc, userRepo)
 	adminHandler := handlers.NewAdminHandler(authSvc)
 	libraryHandler := handlers.NewLibraryHandler(libSvc)
-	bookHandler := handlers.NewBookHandler(bookSvc, bookRepo, loanRepo, riverClient, enrichmentBatchRepo, editionFileSvc)
+	bookHandler := handlers.NewBookHandler(bookSvc, bookRepo, loanRepo, riverClient, enrichmentBatchRepo, editionFileSvc, libraryRepo)
 	shelfHandler := handlers.NewShelfHandler(shelfSvc)
 	loanHandler := handlers.NewLoanHandler(loanSvc)
 	seriesHandler := handlers.NewSeriesHandler(seriesSvc, releaseSyncSvc)
@@ -129,6 +129,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	contributorHandler := handlers.NewContributorHandler(contributorSvc)
 	dashboardHandler := handlers.NewDashboardHandler(bookRepo)
 	meLookupHandler := handlers.NewMeLookupHandler(libSvc, seriesRepo, tagRepo)
+	meBrowseHandler := handlers.NewMeBrowseHandler(libraryRepo, seriesRepo, contributorRepo, shelfRepo, loanRepo)
 
 	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
 	go releaseChecker.Start(ctx)
@@ -150,6 +151,15 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.HandleFunc("GET /api/docs", handlers.ServeScalarUI)
 
 	mux.HandleFunc("GET /health", handlers.Health)
+
+	// What this server is built from, for the clients' licences page.
+	// Authenticated, unlike /health: the version alone is one fact, but a full
+	// dependency inventory with versions is a shopping list of which CVEs to
+	// try, and an instance on the public internet should not hand that to
+	// anyone who asks. The AGPL's notice obligation travels with the source,
+	// not with an anonymous HTTP endpoint, so nothing is lost by asking for a
+	// login here.
+	mux.Handle("GET /api/v1/components", requireAuth(http.HandlerFunc(handlers.ListComponents)))
 
 	// Dashboard
 	mux.Handle("GET /api/v1/dashboard/currently-reading", requireAuth(http.HandlerFunc(dashboardHandler.GetCurrentlyReading)))
@@ -181,6 +191,12 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("PUT /api/v1/auth/me", requireAuth(http.HandlerFunc(authHandler.UpdateMe)))
 	mux.Handle("PUT /api/v1/auth/me/password", requireAuth(http.HandlerFunc(authHandler.UpdatePassword)))
 	mux.Handle("GET /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.GetPreferences)))
+	mux.Handle("GET /api/v1/me/libraries", requireAuth(http.HandlerFunc(libraryHandler.ListMyAccess)))
+	mux.Handle("GET /api/v1/me/books", requireAuth(http.HandlerFunc(bookHandler.ListMyBooks)))
+	mux.Handle("GET /api/v1/me/loans", requireAuth(http.HandlerFunc(meBrowseHandler.MyLoans)))
+	mux.Handle("GET /api/v1/me/shelves", requireAuth(http.HandlerFunc(meBrowseHandler.MyShelves)))
+	mux.Handle("GET /api/v1/me/books/grouped", requireAuth(http.HandlerFunc(bookHandler.ListMyBooksGrouped)))
+	mux.Handle("GET /api/v1/me/books/facets", requireAuth(http.HandlerFunc(bookHandler.MyBookFacets)))
 	mux.Handle("PATCH /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.PatchPreferences)))
 
 	// Personal access tokens
@@ -250,6 +266,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 
 	// User-scoped lookup endpoints (aggregated across the caller's libraries)
 	mux.Handle("GET /api/v1/me/series", requireAuth(http.HandlerFunc(meLookupHandler.SearchSeries)))
+	mux.Handle("GET /api/v1/me/series/index", requireAuth(http.HandlerFunc(meBrowseHandler.SeriesIndex)))
+	mux.Handle("GET /api/v1/me/authors/index", requireAuth(http.HandlerFunc(meBrowseHandler.AuthorsIndex)))
+	mux.Handle("GET /api/v1/me/counts", requireAuth(http.HandlerFunc(meBrowseHandler.Counts)))
 	mux.Handle("GET /api/v1/me/tags", requireAuth(http.HandlerFunc(meLookupHandler.SearchTags)))
 
 	// User-scoped AI suggestions
@@ -317,6 +336,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("POST /api/v1/libraries/{library_id}/books/bulk/enrich", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.BulkEnrich)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/books/bulk/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.BulkRefreshCovers)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/books", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.ListBooks)))
+	mux.Handle("GET /api/v1/libraries/{library_id}/books/facets", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.Facets)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/books", requireLibraryPerm("books:create", http.HandlerFunc(bookHandler.CreateBook)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/books/{book_id}", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.GetBook)))
 	mux.Handle("PUT /api/v1/libraries/{library_id}/books/{book_id}", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.UpdateBook)))

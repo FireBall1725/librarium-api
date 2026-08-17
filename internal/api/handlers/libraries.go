@@ -33,7 +33,7 @@ func NewLibraryHandler(svc *service.LibraryService) *LibraryHandler {
 // @Tags        libraries
 // @Produce     json
 // @Security    BearerAuth
-// @Success     200  {array}   responses.LibraryResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries [get]
 func (h *LibraryHandler) ListLibraries(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +59,7 @@ func (h *LibraryHandler) ListLibraries(w http.ResponseWriter, r *http.Request) {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       body  body      object{name=string,description=string,slug=string,is_public=boolean}  true  "Library details"
-// @Success     201   {object}  responses.LibraryResponse
+// @Success     201   {object}  github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse
 // @Failure     400   {object}  object{error=string}
 // @Failure     401   {object}  object{error=string}
 // @Failure     409   {object}  object{error=string}
@@ -107,7 +107,7 @@ func (h *LibraryHandler) CreateLibrary(w http.ResponseWriter, r *http.Request) {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
-// @Success     200  {object}  responses.LibraryResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -140,7 +140,7 @@ func (h *LibraryHandler) GetLibrary(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
 // @Param       body        body      object{name=string,description=string,is_public=boolean}  true  "Updated fields"
-// @Success     200  {object}  responses.LibraryResponse
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.LibraryResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -222,7 +222,7 @@ func (h *LibraryHandler) DeleteLibrary(w http.ResponseWriter, r *http.Request) {
 // @Param       library_id  path      string  true   "Library UUID"
 // @Param       search      query     string  false  "Filter by username/display name"
 // @Param       tag         query     string  false  "Filter by tag name"
-// @Success     200  {array}   responses.MemberResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.MemberResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
 // @Router      /libraries/{library_id}/members [get]
@@ -443,4 +443,31 @@ func memberBody(m *models.LibraryMember) map[string]any {
 		body["invited_by"] = m.InvitedBy
 	}
 	return body
+}
+
+// ListMyAccess godoc
+//
+// @Summary     Libraries the caller can reach, with effective permissions
+// @Description Returns every library the authenticated user can see and the
+// @Description permission names they hold in each, already capped by the
+// @Description token's scope. A client fetches this once and gates each row by
+// @Description the library the row came from, rather than checking per book.
+// @Tags        libraries
+// @Produce     json
+// @Success     200  {object}  object{data=[]repository.LibraryAccess}
+// @Failure     401  {object}  object{error=string}
+// @Router      /me/libraries [get]
+func (h *LibraryHandler) ListMyAccess(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Error(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	access, err := h.svc.ListMyAccess(r.Context(), claims.UserID, claims.IsInstanceAdmin, claims.ScopeAllows)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"data": access})
 }

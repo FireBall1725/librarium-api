@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/google/uuid"
@@ -72,11 +73,63 @@ func readStateSubqueries(callerArg int) string {
           ) = 'reading') AS reading_count`, callerArg, callerArg)
 }
 
+// seriesBookCountExpr counts the volumes of a series the library actually holds.
+//
+// It used to be a plain COUNT over book_series, which counts every book recorded
+// against the series whatever its ownership: wishlist entries, AI suggestions,
+// and the gap rows that exist precisely to represent volumes nobody has. Those
+// are all real book_series rows, so a series you own half of counted as whole.
+// Every series on the index reported "own N of N" and wore a "complete" badge
+// while the Books page, which filters on ownership, disagreed about the same
+// series in the same session.
+//
+// Holding is a row in library_books, matching the shelf arm of bookScopeCTE. The
+// series' own library is the one asked about: a series record belongs to one
+// library and its counts describe that library's copies, which is why a series
+// held twice is two rows rather than a merged total.
+const seriesBookCountExpr = `COUNT(bs.book_id) FILTER (
+	           WHERE EXISTS (
+	               SELECT 1 FROM library_books lb
+	               WHERE lb.book_id = bs.book_id
+	                 AND lb.library_id = s.library_id
+	                 AND lb.deleted_at IS NULL
+	           )
+	       ) AS book_count`
+
 // ─── Series CRUD ──────────────────────────────────────────────────────────────
 
+// List is the per-library entry point.
 func (r *SeriesRepo) List(ctx context.Context, libraryID, callerID uuid.UUID, search, tagFilter string) ([]*models.Series, error) {
-	args := []any{libraryID}
-	where := `WHERE s.library_id = $1`
+	return r.listScoped(ctx, []uuid.UUID{libraryID}, callerID, search, tagFilter, defaultPreviewBooks)
+}
+
+// ListAcross lists series spanning several libraries, for the cross-library
+// Series surface. Series are a per-library record, so a series held by two
+// libraries is genuinely two rows and appears twice rather than being merged:
+// the counts on each row describe that library's copies, and collapsing them
+// would report a total nobody owns.
+//
+// previewBooks caps the volumes returned per series. The index draws a strip of
+// every volume it can, so it asks for far more than the four a detail panel
+// needs, but still a bounded number: a series with a thousand entries must not
+// become a thousand-element payload per row.
+func (r *SeriesRepo) ListAcross(ctx context.Context, libraryIDs []uuid.UUID, callerID uuid.UUID, search string, previewBooks int) ([]*models.Series, error) {
+	if len(libraryIDs) == 0 {
+		return []*models.Series{}, nil
+	}
+	return r.listScoped(ctx, libraryIDs, callerID, search, "", previewBooks)
+}
+
+// defaultPreviewBooks is what a series card shows: enough to suggest the run
+// without paying for the whole thing.
+const defaultPreviewBooks = 4
+
+func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, callerID uuid.UUID, search, tagFilter string, previewBooks int) ([]*models.Series, error) {
+	if previewBooks <= 0 {
+		previewBooks = defaultPreviewBooks
+	}
+	args := []any{libraryIDs}
+	where := `WHERE s.library_id = ANY($1)`
 	if search != "" {
 		args = append(args, "%"+search+"%")
 		where += fmt.Sprintf(` AND lower(s.name) LIKE lower($%d)`, len(args))
@@ -98,7 +151,7 @@ func (r *SeriesRepo) List(ctx context.Context, libraryID, callerID uuid.UUID, se
 		       COALESCE(s.external_id,''), COALESCE(s.external_source,''),
 		       (SELECT MAX(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date <= CURRENT_DATE) AS last_release_date,
 		       (SELECT MIN(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date > CURRENT_DATE) AS next_release_date,
-		       COUNT(bs.book_id) AS book_count,
+		       ` + seriesBookCountExpr + `,
 		       (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
 		       ` + readStateSubqueries(callerArg) + `,
 		       (
@@ -115,7 +168,7 @@ func (r *SeriesRepo) List(ctx context.Context, libraryID, callerID uuid.UUID, se
 		               FROM book_series bs2 JOIN books b ON b.id = bs2.book_id
 		               WHERE bs2.series_id = s.id
 		               ORDER BY bs2.position
-		               LIMIT 4
+		               LIMIT ` + strconv.Itoa(previewBooks) + `
 		           ) t
 		       ) AS preview_books,
 		       s.created_at, s.updated_at,
@@ -157,7 +210,7 @@ func (r *SeriesRepo) FindByID(ctx context.Context, id, callerID uuid.UUID) (*mod
 		       COALESCE(s.external_id,''), COALESCE(s.external_source,''),
 		       (SELECT MAX(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date <= CURRENT_DATE) AS last_release_date,
 		       (SELECT MIN(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date > CURRENT_DATE) AS next_release_date,
-		       COUNT(bs.book_id) AS book_count,
+		       ` + seriesBookCountExpr + `,
 		       (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
 		       ` + readStateSubqueries(callerArg) + `,
 		       (

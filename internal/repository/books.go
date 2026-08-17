@@ -68,7 +68,12 @@ func (r *BookRepo) ListMediaTypes(ctx context.Context) ([]*models.MediaType, err
 // When loanLibraryArg > 0, active_loan_count is scoped to that library_id
 // arg (used by ListBooks). When 0, it counts active loans across every
 // library the book belongs to (used by FindByID).
-func booksSelect(userStatusArg, loanLibraryArg int) string {
+// loanLibraryIsSet says whether loanLibraryArg binds a uuid[] rather than a
+// single uuid. The cross-library Books surface scopes by a set; FindByID and
+// ListByContributor still scope by one library. Getting this wrong is a runtime
+// "operator does not exist: uuid = uuid[]", not a compile error, so it is a
+// parameter rather than something inferred.
+func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) string {
 	// All three caller-scoped subqueries (status / rating / progress) use
 	// the same ORDER BY so they pick the same interaction row, keeping the
 	// returned values internally consistent for users who own multiple
@@ -114,9 +119,17 @@ func booksSelect(userStatusArg, loanLibraryArg int) string {
 
 	var activeLoanExpr string
 	if loanLibraryArg > 0 {
+		// $1 is the library SCOPE and is always an array now, one entry for a
+		// per-library call and the caller's whole set for the cross-library
+		// Books surface. `= ANY` covers both; `=` broke the moment the scope
+		// stopped being a single id.
+		match := "library_id = $%d"
+		if loanLibraryIsSet {
+			match = "library_id = ANY($%d)"
+		}
 		activeLoanExpr = fmt.Sprintf(`(
 		SELECT COUNT(*) FROM loans
-		WHERE book_id = b.id AND library_id = $%d AND returned_at IS NULL
+		WHERE book_id = b.id AND `+match+` AND returned_at IS NULL
 	) AS active_loan_count`, loanLibraryArg)
 	} else {
 		activeLoanExpr = `(
@@ -124,6 +137,49 @@ func booksSelect(userStatusArg, loanLibraryArg int) string {
 		WHERE book_id = b.id AND returned_at IS NULL
 	) AS active_loan_count`
 	}
+
+	// A book's tags, scoped to the libraries in play.
+	//
+	// Tags are a per-library vocabulary (UNIQUE (library_id, name)) but
+	// book_tags is work-level, so an unfiltered subquery returns the tags every
+	// library has put on the book, including libraries the caller cannot read.
+	// Invisible while no book is held by two libraries, and a disclosure the
+	// moment one is. Scoped like the loan count beside it.
+	tagsScope := ""
+	if loanLibraryArg > 0 {
+		match := " AND t.library_id = $%d"
+		if loanLibraryIsSet {
+			match = " AND t.library_id = ANY($%d)"
+		}
+		tagsScope = fmt.Sprintf(match, loanLibraryArg)
+	}
+
+	// Which libraries hold this book.
+	//
+	// The list used to send none, so every row on the cross-library Books
+	// surface arrived with library_id null: book detail linked to a route that
+	// does not exist, and a bulk edit had no library to make the request
+	// through. The per-library grid never noticed because it knew the library
+	// from the URL.
+	//
+	// Constrained to the caller's scope for the same reason the loan count is:
+	// a book the caller reaches through one library must not disclose the name
+	// of another library holding it.
+	librariesExpr := `(
+		SELECT COALESCE(json_agg(json_build_object('id', l.id, 'name', l.name)
+			ORDER BY lower(l.name)), '[]'::json)
+		FROM library_books lb_h
+		JOIN libraries l ON l.id = lb_h.library_id
+		WHERE lb_h.book_id = b.id`
+	if loanLibraryArg > 0 {
+		match := " AND lb_h.library_id = $%d"
+		if loanLibraryIsSet {
+			match = " AND lb_h.library_id = ANY($%d)"
+		}
+		librariesExpr += fmt.Sprintf(match, loanLibraryArg)
+	}
+	librariesExpr += `
+	) AS holding_libraries`
 
 	return `
 	SELECT
@@ -156,7 +212,7 @@ func booksSelect(userStatusArg, loanLibraryArg int) string {
 			)
 			FROM book_tags bt
 			JOIN tags t ON t.id = bt.tag_id
-			WHERE bt.book_id = b.id
+			WHERE bt.book_id = b.id` + tagsScope + `
 		) AS tags,
 		(
 			SELECT COALESCE(
@@ -219,7 +275,8 @@ func booksSelect(userStatusArg, loanLibraryArg int) string {
 		` + userReadStatusExpr + `,
 		` + userRatingExpr + `,
 		` + userProgressExpr + `,
-		` + activeLoanExpr + `
+		` + activeLoanExpr + `,
+		` + librariesExpr + `
 	FROM books b
 	JOIN media_types mt ON mt.id = b.media_type_id`
 }
@@ -311,7 +368,7 @@ func (r *BookRepo) FindByID(ctx context.Context, id uuid.UUID, callerID uuid.UUI
 		loanLibraryArg = len(args)
 	}
 
-	q := booksSelect(callerArg, loanLibraryArg) + ` WHERE b.id = $1`
+	q := booksSelect(callerArg, loanLibraryArg, false) + ` WHERE b.id = $1`
 
 	book, err := scanBook(r.db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -338,10 +395,10 @@ func (r *BookRepo) ListByContributor(ctx context.Context, libraryID, contributor
 		  )
 		ORDER BY natural_sort_key(b.title)`
 	if callerID != uuid.Nil {
-		q = booksSelect(3, 1) + scope
+		q = booksSelect(3, 1, false) + scope
 		args = []any{libraryID, contributorID, callerID}
 	} else {
-		q = booksSelect(0, 1) + scope
+		q = booksSelect(0, 1, false) + scope
 		args = []any{libraryID, contributorID}
 	}
 
@@ -437,50 +494,52 @@ type ListBooksOpts struct {
 	SortDir    string           // "asc" | "desc"; default "asc"
 	Letter     string           // single char: 'a'-'z' matches LIKE 'letter%'
 	TagFilter  string           // filter to books that have a tag with this exact name (case-insensitive)
+	SeriesIDs  []uuid.UUID      // filter to books in any of these series; how a collapsed series group is opened
+	ShelfIDs   []uuid.UUID      // filter to books on any of these shelves
 	TypeFilter string           // filter by media type display name (case-insensitive), e.g. "Novel"
 	IsRegex    bool             // if true, use b.title ~* $query instead of ILIKE
 	Groups     []ConditionGroup // from query language parser; groups are ANDed together
 	CallerID   uuid.UUID        // when non-zero, includes user_read_status for this user
+
+	// Selection is the faceted filter behind the Books rail. It is structured
+	// rather than folded into Groups because the query language has no field for
+	// read status, rating, or library, and because Facets has to count each
+	// dimension with its own selection removed, which is impossible once the
+	// conditions have been flattened into one WHERE string.
+	Selection FacetSelection
 }
 
-func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooksOpts) ([]*models.Book, int, error) {
-	if opts.PerPage <= 0 || opts.PerPage > 200 {
-		opts.PerPage = 25
-	}
-	if opts.Page <= 0 {
-		opts.Page = 1
-	}
-	offset := (opts.Page - 1) * opts.PerPage
+// bestReadStatusExpr collapses a user's per-edition statuses to one per work:
+// read beats reading beats did_not_finish beats unread. It aggregates, so it
+// belongs under a GROUP BY or in a scalar subquery.
+//
+// Declared once because the list filter and the facet counts both need it, and
+// any disagreement between them surfaces as a facet count that does not match
+// the rows sitting next to it.
+const bestReadStatusExpr = `CASE min(CASE i.read_status
+            WHEN 'read' THEN 1 WHEN 'reading' THEN 2
+            WHEN 'did_not_finish' THEN 3 ELSE 4 END)
+        WHEN 1 THEN 'read' WHEN 2 THEN 'reading'
+        WHEN 3 THEN 'did_not_finish' ELSE 'unread' END`
 
-	// Validate sort — title sort uses natural_sort_key() which strips leading articles,
-	// lowercases, and pads digit sequences so #2 sorts before #10.
-	sortCol := "natural_sort_key(b.title)"
-	switch opts.Sort {
-	case "created_at":
-		sortCol = "b.created_at"
-	case "media_type":
-		sortCol = "lower(mt.display_name)"
-	case "publish_date":
-		sortCol = "(SELECT be.publish_date FROM book_editions be WHERE be.book_id = b.id AND be.is_primary = true AND be.publish_date IS NOT NULL LIMIT 1)"
-	case "author":
-		// Sort by the first contributor's lowercased name (display
-		// order ascending so the "primary" credit wins). Books with
-		// no contributors fall to the end via NULLS LAST below.
-		sortCol = `(
-			SELECT lower(c.name)
-			FROM book_contributors bc
-			JOIN contributors c ON c.id = bc.contributor_id
-			WHERE bc.book_id = b.id
-			ORDER BY bc.display_order, c.name
-			LIMIT 1
-		)`
-	}
-	sortDir := "ASC"
-	if opts.SortDir == "desc" {
-		sortDir = "DESC"
-	}
+// bookFilter is the WHERE clause for a book query, plus the args it binds.
+// List and Facets must build this identically: a facet count that disagrees
+// with the list beside it is worse than no count at all.
+type bookFilter struct {
+	where     string
+	scopeJoin string
+	args      []any
+	nextArg   int // next free positional parameter, for callers appending their own
+}
 
-	args := []any{libraryID} // $1
+// buildBookFilter assembles the library scope and every active filter from
+// opts. Extracted from List so Facets can reuse it verbatim rather than
+// reimplementing the same conditions and drifting.
+// libraryIDs is the scope: one entry for a per-library route, the caller's
+// whole membership set for the cross-library Books surface. Passing a set
+// rather than a single id keeps both on one filter implementation.
+func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) bookFilter {
+	args := []any{libraryIDs} // $1
 	argIdx := 2
 
 	// Build WHERE conditions
@@ -513,6 +572,30 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 	}
 
 	// Tag filter
+	// Opening a series group from the grouped list. In buildBookFilter rather
+	// than bolted onto the list query, so the facet counts narrow with it: drill
+	// into a 34-volume run and the rail describes those 34 books.
+	if len(opts.SeriesIDs) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM book_series bs2
+            WHERE bs2.book_id = b.id AND bs2.series_id = ANY($%d)
+        )`, argIdx))
+		args = append(args, opts.SeriesIDs)
+		argIdx++
+	}
+
+	// A shelf is a hand-picked set rather than a property of the book, but it
+	// narrows the list the same way a tag does, so it lives with the rest of
+	// the conditions and the facet counts pick it up for free.
+	if len(opts.ShelfIDs) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM book_shelves bsh
+            WHERE bsh.book_id = b.id AND bsh.shelf_id = ANY($%d)
+        )`, argIdx))
+		args = append(args, opts.ShelfIDs)
+		argIdx++
+	}
+
 	if opts.TagFilter != "" {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
             SELECT 1 FROM book_tags bt2
@@ -717,12 +800,165 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 		}
 	}
 
-	// Library scope routes through the library_books junction.
-	where := "WHERE lb.library_id = $1"
-	for _, c := range conditions {
-		where += " AND " + c
+	// Faceted selection. Values within a dimension are OR (ANY), dimensions are
+	// AND, which is what the rail's checkboxes mean: ticking two genres widens,
+	// ticking a genre and a tag narrows.
+	//
+	// sel.Libraries is deliberately absent: the library facet narrows libraryIDs
+	// at the caller instead, so it already lives in the scope join. Filtering on
+	// it here as well would apply the same restriction twice.
+	sel := opts.Selection
+
+	if len(sel.MediaTypes) > 0 {
+		conditions = append(conditions, fmt.Sprintf("mt.name = ANY($%d)", argIdx))
+		args = append(args, sel.MediaTypes)
+		argIdx++
 	}
-	scopeJoin := " JOIN library_books lb ON lb.book_id = b.id "
+
+	if len(sel.Genres) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM book_genres bg2 JOIN genres g2 ON g2.id = bg2.genre_id
+            WHERE bg2.book_id = b.id AND g2.name = ANY($%d)
+        )`, argIdx))
+		args = append(args, sel.Genres)
+		argIdx++
+	}
+
+	if len(sel.Tags) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM book_tags bt3 JOIN tags t3 ON t3.id = bt3.tag_id
+            WHERE bt3.book_id = b.id AND bt3.deleted_at IS NULL AND t3.name = ANY($%d)
+        )`, argIdx))
+		args = append(args, sel.Tags)
+		argIdx++
+	}
+
+	// Read status and rating live on user_book_interactions, which is keyed on
+	// book_edition_id. A correlated scalar subquery per book, rather than a
+	// join: joining editions directly would multiply a work with three editions
+	// into three rows and inflate the count.
+	if len(sel.ReadStatus) > 0 {
+		if opts.CallerID == uuid.Nil {
+			// No caller means no interactions, so every book reads as unread.
+			// Say that in SQL rather than silently dropping the filter.
+			conditions = append(conditions, fmt.Sprintf("'unread' = ANY($%d)", argIdx))
+			args = append(args, sel.ReadStatus)
+			argIdx++
+		} else {
+			conditions = append(conditions, fmt.Sprintf(`COALESCE((
+            SELECT %s
+            FROM user_book_interactions i JOIN book_editions e ON e.id = i.book_edition_id
+            WHERE i.user_id = $%d AND i.deleted_at IS NULL AND e.book_id = b.id
+        ), 'unread') = ANY($%d)`, bestReadStatusExpr, argIdx, argIdx+1))
+			args = append(args, opts.CallerID, sel.ReadStatus)
+			argIdx += 2
+		}
+	}
+
+	if len(sel.Ratings) > 0 {
+		if opts.CallerID == uuid.Nil {
+			conditions = append(conditions, "FALSE") // nobody's ratings to match
+		} else {
+			conditions = append(conditions, fmt.Sprintf(`(
+            SELECT max(i.rating)
+            FROM user_book_interactions i JOIN book_editions e ON e.id = i.book_edition_id
+            WHERE i.user_id = $%d AND i.deleted_at IS NULL AND e.book_id = b.id
+        ) = ANY($%d)`, argIdx, argIdx+1))
+			args = append(args, opts.CallerID, sel.Ratings)
+			argIdx += 2
+		}
+	}
+
+	// Scope is a union over the places a book can be yours to see, one row per
+	// book carrying the ownership state that won. It replaces the plain
+	// library_books join, which could only ever express "on the shelf" and so
+	// made every other ownership state unrepresentable.
+	//
+	// It still deduplicates, which the join needed too: under the m2m junction
+	// a work held by two libraries has two rows, and a plain join would list it
+	// twice and inflate every count.
+	//
+	// The caller argument is passed only when there is one. Go evaluates
+	// arguments eagerly, so building the personal arms unconditionally would
+	// bind a parameter whose placeholder never reaches the SQL.
+	callerArg := 0
+	if opts.CallerID != uuid.Nil {
+		args = append(args, opts.CallerID)
+		callerArg = len(args)
+		argIdx = len(args) + 1
+	}
+	scopeJoin := " JOIN (" + bookScopeCTE(1, callerArg) + ") lb ON lb.book_id = b.id "
+
+	// Ownership filters against the scope's own column rather than re-deriving
+	// it, so the list and the counts cannot disagree about what a book is.
+	if len(sel.Ownership) > 0 {
+		conditions = append(conditions, fmt.Sprintf("lb.ownership = ANY($%d)", argIdx))
+		args = append(args, sel.Ownership)
+		argIdx++
+	}
+
+	where := ""
+	for i, c := range conditions {
+		if i == 0 {
+			where = "WHERE " + c
+		} else {
+			where += " AND " + c
+		}
+	}
+
+	// A join with no WHERE still needs valid SQL downstream.
+	if where == "" {
+		where = "WHERE TRUE"
+	}
+
+	return bookFilter{where: where, scopeJoin: scopeJoin, args: args, nextArg: argIdx}
+}
+
+// List is the per-library entry point. Both it and ListAcross delegate to
+// listScoped so the filter, sort, paging and scan logic exist once.
+func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooksOpts) ([]*models.Book, int, error) {
+	return r.listScoped(ctx, []uuid.UUID{libraryID}, opts)
+}
+
+func (r *BookRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts) ([]*models.Book, int, error) {
+	if opts.PerPage <= 0 || opts.PerPage > 200 {
+		opts.PerPage = 25
+	}
+	if opts.Page <= 0 {
+		opts.Page = 1
+	}
+	offset := (opts.Page - 1) * opts.PerPage
+
+	// Validate sort — title sort uses natural_sort_key() which strips leading articles,
+	// lowercases, and pads digit sequences so #2 sorts before #10.
+	sortCol := "natural_sort_key(b.title)"
+	switch opts.Sort {
+	case "created_at":
+		sortCol = "b.created_at"
+	case "media_type":
+		sortCol = "lower(mt.display_name)"
+	case "publish_date":
+		sortCol = "(SELECT be.publish_date FROM book_editions be WHERE be.book_id = b.id AND be.is_primary = true AND be.publish_date IS NOT NULL LIMIT 1)"
+	case "author":
+		// Sort by the first contributor's lowercased name (display
+		// order ascending so the "primary" credit wins). Books with
+		// no contributors fall to the end via NULLS LAST below.
+		sortCol = `(
+			SELECT lower(c.name)
+			FROM book_contributors bc
+			JOIN contributors c ON c.id = bc.contributor_id
+			WHERE bc.book_id = b.id
+			ORDER BY bc.display_order, c.name
+			LIMIT 1
+		)`
+	}
+	sortDir := "ASC"
+	if opts.SortDir == "desc" {
+		sortDir = "DESC"
+	}
+
+	f := r.buildBookFilter(libraryIDs, opts)
+	where, scopeJoin, args, argIdx := f.where, f.scopeJoin, f.args, f.nextArg
 
 	// Count
 	var total int
@@ -737,9 +973,9 @@ func (r *BookRepo) List(ctx context.Context, libraryID uuid.UUID, opts ListBooks
 		args = append(args, opts.CallerID)
 		userArgIdx := argIdx
 		argIdx++
-		selectQuery = booksSelect(userArgIdx, 1)
+		selectQuery = booksSelect(userArgIdx, 1, true)
 	} else {
-		selectQuery = booksSelect(0, 1)
+		selectQuery = booksSelect(0, 1, true)
 	}
 
 	// List
@@ -882,6 +1118,7 @@ func scanBook(s scanner) (*models.Book, error) {
 		userRating     int
 		userProgress   pgtype.Numeric
 		activeLoans    int
+		librariesJSON  []byte
 		b              models.Book
 	)
 
@@ -892,6 +1129,7 @@ func scanBook(s scanner) (*models.Book, error) {
 		&contribJSON, &tagsJSON, &genresJSON, &b.HasCover,
 		&seriesJSON, &shelvesJSON, &publisher, &publishYear, &language,
 		&userReadStatus, &userRating, &userProgress, &activeLoans,
+		&librariesJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -948,6 +1186,15 @@ func scanBook(s scanner) (*models.Book, error) {
 	if len(shelvesJSON) > 0 {
 		if err := json.Unmarshal(shelvesJSON, &b.Shelves); err != nil {
 			return nil, fmt.Errorf("unmarshaling shelves: %w", err)
+		}
+	}
+
+	// Empty rather than nil: a floating book genuinely holds no library, and a
+	// nil slice marshals to null, which the React client does not survive.
+	b.Libraries = []models.BookLibraryRef{}
+	if len(librariesJSON) > 0 {
+		if err := json.Unmarshal(librariesJSON, &b.Libraries); err != nil {
+			return nil, fmt.Errorf("unmarshaling libraries: %w", err)
 		}
 	}
 

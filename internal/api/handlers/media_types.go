@@ -28,7 +28,7 @@ func NewMediaTypeHandler(mediaTypes *repository.MediaTypeRepo) *MediaTypeHandler
 // @Tags        media-types
 // @Produce     json
 // @Security    BearerAuth
-// @Success     200  {array}   responses.MediaTypeResponse
+// @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse
 // @Failure     401  {object}  object{error=string}
 // @Router      /media-types [get]
 func (h *MediaTypeHandler) ListMediaTypes(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +49,7 @@ func (h *MediaTypeHandler) ListMediaTypes(w http.ResponseWriter, r *http.Request
 // @Produce     json
 // @Security    BearerAuth
 // @Param       body  body      object{name=string,display_name=string,description=string}  true  "Media type details"
-// @Success     201   {object}  responses.MediaTypeResponse
+// @Success     201   {object}  github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse
 // @Failure     400   {object}  object{error=string}
 // @Failure     401   {object}  object{error=string}
 // @Failure     403   {object}  object{error=string}
@@ -95,7 +95,7 @@ func (h *MediaTypeHandler) CreateMediaType(w http.ResponseWriter, r *http.Reques
 // @Security    BearerAuth
 // @Param       media_type_id  path      string  true  "Media type UUID"
 // @Param       body           body      object{display_name=string,description=string}  true  "Updated fields"
-// @Success     200   {object}  responses.MediaTypeResponse
+// @Success     200   {object}  github_com_fireball1725_librarium-api_internal_api_responses.MediaTypeResponse
 // @Failure     400   {object}  object{error=string}
 // @Failure     401   {object}  object{error=string}
 // @Failure     403   {object}  object{error=string}
