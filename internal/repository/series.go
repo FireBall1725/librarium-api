@@ -73,6 +73,29 @@ func readStateSubqueries(callerArg int) string {
           ) = 'reading') AS reading_count`, callerArg, callerArg)
 }
 
+// seriesBookCountExpr counts the volumes of a series the library actually holds.
+//
+// It used to be a plain COUNT over book_series, which counts every book recorded
+// against the series whatever its ownership: wishlist entries, AI suggestions,
+// and the gap rows that exist precisely to represent volumes nobody has. Those
+// are all real book_series rows, so a series you own half of counted as whole.
+// Every series on the index reported "own N of N" and wore a "complete" badge
+// while the Books page, which filters on ownership, disagreed about the same
+// series in the same session.
+//
+// Holding is a row in library_books, matching the shelf arm of bookScopeCTE. The
+// series' own library is the one asked about: a series record belongs to one
+// library and its counts describe that library's copies, which is why a series
+// held twice is two rows rather than a merged total.
+const seriesBookCountExpr = `COUNT(bs.book_id) FILTER (
+	           WHERE EXISTS (
+	               SELECT 1 FROM library_books lb
+	               WHERE lb.book_id = bs.book_id
+	                 AND lb.library_id = s.library_id
+	                 AND lb.deleted_at IS NULL
+	           )
+	       ) AS book_count`
+
 // ─── Series CRUD ──────────────────────────────────────────────────────────────
 
 // List is the per-library entry point.
@@ -128,7 +151,7 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 		       COALESCE(s.external_id,''), COALESCE(s.external_source,''),
 		       (SELECT MAX(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date <= CURRENT_DATE) AS last_release_date,
 		       (SELECT MIN(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date > CURRENT_DATE) AS next_release_date,
-		       COUNT(bs.book_id) AS book_count,
+		       ` + seriesBookCountExpr + `,
 		       (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
 		       ` + readStateSubqueries(callerArg) + `,
 		       (
@@ -187,7 +210,7 @@ func (r *SeriesRepo) FindByID(ctx context.Context, id, callerID uuid.UUID) (*mod
 		       COALESCE(s.external_id,''), COALESCE(s.external_source,''),
 		       (SELECT MAX(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date <= CURRENT_DATE) AS last_release_date,
 		       (SELECT MIN(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date > CURRENT_DATE) AS next_release_date,
-		       COUNT(bs.book_id) AS book_count,
+		       ` + seriesBookCountExpr + `,
 		       (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
 		       ` + readStateSubqueries(callerArg) + `,
 		       (
