@@ -111,7 +111,7 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 //	@Tags        me
 //	@Produce     json
 //	@Security    BearerAuth
-//	@Success     200  {object}  object{books=int,series=int,authors=int}
+//	@Success     200  {object}  object{books=int,series=int,authors=int,loans=int,loans_overdue=int,suggestions=int}
 //	@Failure     401  {object}  object{error=string}
 //	@Router      /me/counts [get]
 func (h *MeBrowseHandler) Counts(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +121,14 @@ func (h *MeBrowseHandler) Counts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	counts, err := h.libraries.CountsForLibraries(r.Context(), libraryIDs)
+	// Suggestions belong to the caller rather than to a library, so this count
+	// needs the user the other five do not.
+	var callerID uuid.UUID
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		callerID = claims.UserID
+	}
+
+	counts, err := h.libraries.CountsForLibraries(r.Context(), libraryIDs, callerID)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return

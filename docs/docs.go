@@ -11233,7 +11233,16 @@ const docTemplate = `{
                                 "books": {
                                     "type": "integer"
                                 },
+                                "loans": {
+                                    "type": "integer"
+                                },
+                                "loans_overdue": {
+                                    "type": "integer"
+                                },
                                 "series": {
+                                    "type": "integer"
+                                },
+                                "suggestions": {
                                     "type": "integer"
                                 }
                             }

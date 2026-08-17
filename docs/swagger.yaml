@@ -8734,7 +8734,13 @@ paths:
                 type: integer
               books:
                 type: integer
+              loans:
+                type: integer
+              loans_overdue:
+                type: integer
               series:
+                type: integer
+              suggestions:
                 type: integer
             type: object
         "401":
