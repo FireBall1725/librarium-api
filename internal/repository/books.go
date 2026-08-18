@@ -869,6 +869,28 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 		}
 	}
 
+	if len(sel.Favourites) > 0 {
+		if opts.CallerID == uuid.Nil {
+			// No caller means no interactions, so nothing is starred. Answer
+			// "is false among the wanted values" rather than dropping the
+			// filter, which would list the whole shelf as favourites.
+			conditions = append(conditions, fmt.Sprintf("false = ANY($%d)", argIdx))
+			args = append(args, sel.Favourites)
+			argIdx++
+		} else {
+			// COALESCE because a book the caller has never opened has no
+			// interaction row at all, and that means not a favourite rather
+			// than unknown.
+			conditions = append(conditions, fmt.Sprintf(`COALESCE((
+            SELECT bool_or(i.is_favorite)
+            FROM user_book_interactions i JOIN book_editions e ON e.id = i.book_edition_id
+            WHERE i.user_id = $%d AND i.deleted_at IS NULL AND e.book_id = b.id
+        ), false) = ANY($%d)`, argIdx, argIdx+1))
+			args = append(args, opts.CallerID, sel.Favourites)
+			argIdx += 2
+		}
+	}
+
 	// Scope is a union over the places a book can be yours to see, one row per
 	// book carrying the ownership state that won. It replaces the plain
 	// library_books join, which could only ever express "on the shelf" and so

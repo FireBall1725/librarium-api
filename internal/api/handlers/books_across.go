@@ -239,12 +239,29 @@ func parseFacetSelection(r *http.Request) repository.FacetSelection {
 		return out
 	}
 
+	// The starred flag, as "true" / "false". Anything else is ignored rather
+	// than treated as false, so a typo narrows to nothing visible instead of
+	// silently answering the opposite question.
+	splitBools := func(key string) []bool {
+		out := make([]bool, 0, 2)
+		for _, v := range split(key) {
+			switch strings.ToLower(v) {
+			case "true", "1", "yes":
+				out = append(out, true)
+			case "false", "0", "no":
+				out = append(out, false)
+			}
+		}
+		return out
+	}
+
 	sel := repository.FacetSelection{
 		Ownership:  split("own"),
 		ReadStatus: split("status"),
 		MediaTypes: split("type"),
 		Genres:     split("genre"),
 		Tags:       split("tag"),
+		Favourites: splitBools("fav"),
 	}
 	// Shelves come through by id for the same reason libraries do: the name is
 	// only unique within one library.
