@@ -14092,6 +14092,13 @@ const docTemplate = `{
         "github_com_fireball1725_librarium-api_internal_repository.BookFacets": {
             "type": "object",
             "properties": {
+                "favourite": {
+                    "description": "Favourite is the per-book starred flag, counted as a dimension so\n\"Favourites\" can be a saved view with a number beside it. A rule, not a\nhand-picked set, which is what separates it from a shelf.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
                 "genre": {
                     "type": "array",
                     "items": {

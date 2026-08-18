@@ -31,6 +31,10 @@ type BookFacets struct {
 	Tag        []FacetValue `json:"tag"`
 	Shelf      []FacetValue `json:"shelf"`
 	Rating     []FacetValue `json:"rating"`
+	// Favourite is the per-book starred flag, counted as a dimension so
+	// "Favourites" can be a saved view with a number beside it. A rule, not a
+	// hand-picked set, which is what separates it from a shelf.
+	Favourite []FacetValue `json:"favourite"`
 }
 
 // FacetSelection is what the user has ticked in each facet. An empty slice
@@ -52,6 +56,9 @@ type FacetSelection struct {
 	// narrow the list exactly like a tag does, so they are a facet dimension.
 	Shelves []uuid.UUID
 	Ratings []int32
+	// Favourites filters on the starred flag. A slice rather than a *bool so
+	// it behaves like every other dimension: empty means not filtering.
+	Favourites []bool
 }
 
 func emptyFacets() *BookFacets {
@@ -59,7 +66,7 @@ func emptyFacets() *BookFacets {
 		Ownership: []FacetValue{},
 		Library:   []FacetValue{}, ReadStatus: []FacetValue{}, MediaType: []FacetValue{},
 		Genre: []FacetValue{}, Tag: []FacetValue{}, Shelf: []FacetValue{},
-		Rating: []FacetValue{},
+		Rating: []FacetValue{}, Favourite: []FacetValue{},
 	}
 }
 
@@ -131,13 +138,14 @@ func (r *BookRepo) Facets(
             SELECT 1 FROM book_series bs_f WHERE bs_f.book_id = b.id AND bs_f.series_id = ANY(%s))`, p)
 	}
 
-	interCTE := "SELECT NULL::uuid AS book_id, NULL::text AS read_status, NULL::int AS rating WHERE false"
+	interCTE := "SELECT NULL::uuid AS book_id, NULL::text AS read_status, NULL::int AS rating, NULL::bool AS is_favorite WHERE false"
 	if callerID != uuid.Nil {
 		p := arg(callerID)
 		interCTE = fmt.Sprintf(`
             SELECT e.book_id,
                    `+bestReadStatusExpr+` AS read_status,
-                   max(i.rating) AS rating
+                   max(i.rating) AS rating,
+                   bool_or(i.is_favorite) AS is_favorite
             FROM user_book_interactions i
             JOIN book_editions e ON e.id = i.book_edition_id
             WHERE i.user_id = %s AND i.deleted_at IS NULL
@@ -153,6 +161,7 @@ func (r *BookRepo) Facets(
 	mLib, mStatus, mType := "TRUE", "TRUE", "TRUE"
 	mGenre, mTag, mRating := "TRUE", "TRUE", "TRUE"
 	mShelf := "TRUE"
+	mFav := "TRUE"
 
 	if len(sel.Ownership) > 0 {
 		mOwn = fmt.Sprintf("s.ownership = ANY(%s)", arg(sel.Ownership))
@@ -187,6 +196,12 @@ func (r *BookRepo) Facets(
 	if len(sel.Ratings) > 0 {
 		mRating = fmt.Sprintf(`x.rating = ANY(%s)`, arg(sel.Ratings))
 	}
+	if len(sel.Favourites) > 0 {
+		// COALESCE because a book the caller has never touched has no
+		// interaction row, and "no row" means not a favourite rather than
+		// unknown. Without it every such book drops out of both sides.
+		mFav = fmt.Sprintf(`COALESCE(x.is_favorite, false) = ANY(%s)`, arg(sel.Favourites))
+	}
 
 	// Every flag except the dimension's own.
 	others := func(skip string) string {
@@ -194,9 +209,9 @@ func (r *BookRepo) Facets(
 			"own": "f.m_own",
 			"lib": "f.m_lib", "status": "f.m_status", "type": "f.m_type",
 			"genre": "f.m_genre", "tag": "f.m_tag", "shelf": "f.m_shelf",
-			"rating": "f.m_rating",
+			"rating": "f.m_rating", "fav": "f.m_fav",
 		}
-		parts := make([]string, 0, 7)
+		parts := make([]string, 0, 8)
 		for k, v := range all {
 			if k != skip {
 				parts = append(parts, v)
@@ -217,9 +232,10 @@ inter AS (%s),
 f AS (
     SELECT s.id, s.media_type_id, s.ownership,
            COALESCE(x.read_status, 'unread') AS read_status,
-           x.rating,
+           x.rating, COALESCE(x.is_favorite, false) AS is_favorite,
            %s AS m_own, %s AS m_lib, %s AS m_status, %s AS m_type,
-           %s AS m_genre, %s AS m_tag, %s AS m_shelf, %s AS m_rating
+           %s AS m_genre, %s AS m_tag, %s AS m_shelf, %s AS m_rating,
+           %s AS m_fav
     FROM scope s LEFT JOIN inter x ON x.book_id = s.id
 )
 SELECT 'ownership' AS dim, f.ownership AS value, f.ownership AS label, COUNT(*) AS n
@@ -255,14 +271,18 @@ GROUP BY sh.id, sh.name
 UNION ALL
 SELECT 'rating', f.rating::text, f.rating::text, COUNT(*)
 FROM f WHERE f.rating IS NOT NULL AND %s GROUP BY f.rating
+UNION ALL
+SELECT 'favourite', f.is_favorite::text, f.is_favorite::text, COUNT(*)
+FROM f WHERE %s GROUP BY f.is_favorite
 ORDER BY 1, 4 DESC, 3`,
 		// The scope CTE comes first now: it holds the caller's own placeholder,
 		// so it has to be built before the text filter's is counted.
 		scopeSQL, textWhere, interCTE,
-		mOwn, mLib, mStatus, mType, mGenre, mTag, mShelf, mRating,
+		mOwn, mLib, mStatus, mType, mGenre, mTag, mShelf, mRating, mFav,
 		others("own"),
 		others("lib"), others("status"), others("type"),
-		others("genre"), others("tag"), others("shelf"), others("rating"))
+		others("genre"), others("tag"), others("shelf"), others("rating"),
+		others("fav"))
 
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -294,6 +314,8 @@ ORDER BY 1, 4 DESC, 3`,
 			out.Shelf = append(out.Shelf, fv)
 		case "rating":
 			out.Rating = append(out.Rating, fv)
+		case "favourite":
+			out.Favourite = append(out.Favourite, fv)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -312,6 +334,7 @@ ORDER BY 1, 4 DESC, 3`,
 	// every saved view built on a status with no number beside it.
 	out.Ownership = fillClosed(out.Ownership, OwnershipValues)
 	out.ReadStatus = fillClosed(out.ReadStatus, ReadStatusValues)
+	out.Favourite = fillClosed(out.Favourite, FavouriteValues)
 
 	return out, nil
 }
@@ -320,6 +343,11 @@ ORDER BY 1, 4 DESC, 3`,
 // through it. Mirrors the priority in bestReadStatusExpr, which is about which
 // status wins for a book with several editions rather than about display.
 var ReadStatusValues = []string{"unread", "reading", "read", "did_not_finish"}
+
+// FavouriteValues is the starred flag as a facet. Both sides are emitted so a
+// Favourites view still shows a nought when nothing is starred yet; clients
+// generally render only the true row.
+var FavouriteValues = []string{"true", "false"}
 
 // fillClosed returns the facet in vocabulary order with every missing value
 // present at zero, and anything unexpected kept on the end rather than dropped:
