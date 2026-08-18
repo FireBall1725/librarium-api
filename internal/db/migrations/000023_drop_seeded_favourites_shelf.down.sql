@@ -1,0 +1,12 @@
+-- Nothing to restore.
+--
+-- The up removes only shelves that were empty, untagged, undescribed and still
+-- carrying the icon the service gave them — rows holding no information beyond
+-- their own existence. Recreating one per library would be worse than a no-op:
+-- libraries created after this migration never had one, so the down would
+-- invent shelves that never existed and reintroduce the duplicate names the up
+-- was written to clear.
+--
+-- Rolling back the schema does not put the seeding back either; that lived in
+-- LibraryService, not in SQL.
+SELECT 1;
