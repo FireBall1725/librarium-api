@@ -281,7 +281,17 @@ func (r *EditionRepo) UpsertInteraction(ctx context.Context, userID, editionID u
 			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite, progress)
 		VALUES
 			($1, $2, $3, $4, $5, NULLIF($6,''), NULLIF($7,''), $8,
-			 COALESCE($9, CASE WHEN $4 = 'read' THEN CURRENT_DATE END), $10, $11)
+			 -- $4::varchar, not bare $4. The same parameter fills read_status,
+			 -- which is varchar, and comparing it to a bare literal here made
+			 -- Postgres deduce text for it as well — "inconsistent types
+			 -- deduced for parameter $4: text versus character varying" — which
+			 -- rejects the whole statement. Every save through this form failed,
+			 -- and silently, because the client swallowed the error.
+			 --
+			 -- Casting the literal instead ('read'::varchar) does not work: the
+			 -- parameter is still deduced from both positions. The cast has to
+			 -- be on the parameter.
+			 COALESCE($9, CASE WHEN $4::varchar = 'read' THEN CURRENT_DATE END), $10, $11)
 		ON CONFLICT (user_id, book_edition_id) DO UPDATE
 		SET read_status   = EXCLUDED.read_status,
 		    rating        = EXCLUDED.rating,
