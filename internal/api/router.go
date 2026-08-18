@@ -93,7 +93,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 		RefreshTTL:          cfg.JWTRefreshTTL,
 		RegistrationEnabled: cfg.RegistrationEnabled,
 	})
-	libSvc := service.NewLibraryService(db, libraryRepo, membershipRepo, roleRepo, userRepo, shelfRepo)
+	libSvc := service.NewLibraryService(db, libraryRepo, membershipRepo, roleRepo, userRepo)
 	bookSvc := service.NewBookService(db, bookRepo, libraryBookRepo, contributorRepo, editionRepo, tagRepo, genreRepo, coverRepo, aiSuggestionsRepo, cfg.CoverStoragePath)
 	editionFileSvc := service.NewEditionFileService(bookRepo, editionRepo, editionFileRepo, storageLocationRepo, cfg.EbookStoragePath, cfg.AudiobookStoragePath, cfg.EbookPathTemplate, cfg.AudiobookPathTemplate)
 	shelfSvc := service.NewShelfService(shelfRepo, tagRepo)

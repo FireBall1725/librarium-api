@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"regexp"
 	"strings"
 
@@ -28,7 +27,6 @@ type LibraryService struct {
 	memberships *repository.MembershipRepo
 	roles       *repository.RoleRepo
 	users       *repository.UserRepo
-	shelves     *repository.ShelfRepo
 }
 
 func NewLibraryService(
@@ -37,7 +35,6 @@ func NewLibraryService(
 	memberships *repository.MembershipRepo,
 	roles *repository.RoleRepo,
 	users *repository.UserRepo,
-	shelves *repository.ShelfRepo,
 ) *LibraryService {
 	return &LibraryService{
 		pool:        pool,
@@ -45,7 +42,6 @@ func NewLibraryService(
 		memberships: memberships,
 		roles:       roles,
 		users:       users,
-		shelves:     shelves,
 	}
 }
 
@@ -115,11 +111,18 @@ func (s *LibraryService) CreateLibrary(ctx context.Context, ownerID uuid.UUID, r
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
 
-	// Create default Favourites shelf (best-effort — library is already committed)
-	if _, err := s.shelves.Create(ctx, uuid.New(), lib.ID, "Favourites", "", "", "⭐", 0, ownerID); err != nil {
-		slog.Warn("failed to create default Favourites shelf", "library_id", lib.ID, "err", err)
-	}
-
+	// No shelf is seeded here.
+	//
+	// Every new library used to get a "Favourites", which made the rail list
+	// the same name once per library: a shelf belongs to one library, so two
+	// called Favourites are two different shelves and nothing said which was
+	// which. It also arrived with an emoji icon, from before shelves drew on
+	// the app's own icon set.
+	//
+	// A shelf is a set of books picked by hand, so an empty one nobody asked
+	// for is a guess about how someone files their collection. Favouriting is
+	// already a per-book flag; a shelf named after it was a second way to say
+	// the same thing.
 	return lib, nil
 }
 
