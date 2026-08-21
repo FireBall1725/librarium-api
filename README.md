@@ -4,8 +4,6 @@ The backend service for **[Librarium](https://librarium.press)**, a self-hosted,
 
 Go 1.25 · PostgreSQL 16 · [River](https://riverqueue.com) for background jobs · Swagger-generated OpenAPI docs.
 
-Questions, updates, and works in progress: [FireBall Codes on Discord](https://discord.gg/QpV82CFfVD).
-
 > ⚠︎ **Early beta.** Things are changing fast, some edges are rough, and self-hosters should expect to read release notes before upgrading.
 
 Part of the Librarium stack:
@@ -114,6 +112,12 @@ Releases are cut from `main` via the `release` GitHub Actions workflow (`workflo
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). PRs must sign off on the [Developer Certificate of Origin](./DCO) (`git commit -s`) — a CI check enforces this.
+
+## Support
+
+Questions, updates, and works in progress: [FireBall Codes on Discord](https://discord.gg/QpV82CFfVD).
+
+If this saved you some time, you can [buy me a sushi roll](https://ko-fi.com/fireball1725).
 
 ## License
 
