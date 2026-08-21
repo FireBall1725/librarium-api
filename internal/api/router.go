@@ -55,6 +55,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	editionRepo := repository.NewEditionRepo(db)
 	tagRepo := repository.NewTagRepo(db)
 	shelfRepo := repository.NewShelfRepo(db)
+	userViewRepo := repository.NewUserViewRepo(db)
 	loanRepo := repository.NewLoanRepo(db)
 	seriesRepo := repository.NewSeriesRepo(db)
 	seriesArcRepo := repository.NewSeriesArcRepo(db)
@@ -129,6 +130,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	contributorHandler := handlers.NewContributorHandler(contributorSvc)
 	dashboardHandler := handlers.NewDashboardHandler(bookRepo)
 	meLookupHandler := handlers.NewMeLookupHandler(libSvc, seriesRepo, tagRepo)
+	userViewHandler := handlers.NewUserViewHandler(userViewRepo)
 	meBrowseHandler := handlers.NewMeBrowseHandler(libraryRepo, seriesRepo, contributorRepo, shelfRepo, loanRepo)
 
 	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
@@ -193,6 +195,11 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.GetPreferences)))
 	mux.Handle("GET /api/v1/me/libraries", requireAuth(http.HandlerFunc(libraryHandler.ListMyAccess)))
 	mux.Handle("GET /api/v1/me/books", requireAuth(http.HandlerFunc(bookHandler.ListMyBooks)))
+	// Saved views, per user rather than per browser.
+	mux.Handle("GET /api/v1/me/views", requireAuth(http.HandlerFunc(userViewHandler.ListMyViews)))
+	mux.Handle("PUT /api/v1/me/views", requireAuth(http.HandlerFunc(userViewHandler.SaveMyView)))
+	mux.Handle("DELETE /api/v1/me/views/{view_id}", requireAuth(http.HandlerFunc(userViewHandler.DeleteMyView)))
+	mux.Handle("POST /api/v1/me/views/import", requireAuth(http.HandlerFunc(userViewHandler.ImportMyViews)))
 	mux.Handle("GET /api/v1/me/loans", requireAuth(http.HandlerFunc(meBrowseHandler.MyLoans)))
 	mux.Handle("GET /api/v1/me/shelves", requireAuth(http.HandlerFunc(meBrowseHandler.MyShelves)))
 	mux.Handle("GET /api/v1/me/books/grouped", requireAuth(http.HandlerFunc(bookHandler.ListMyBooksGrouped)))
