@@ -221,6 +221,18 @@ func (r *BookRepo) Facets(
 		return strings.Join(parts, " AND ")
 	}
 
+	// Which lists this caller may be counted against: their own, plus anything
+	// shared into a library in scope. Spliced in by concatenation rather than as
+	// another %s, because the argument list below is positional and adding a
+	// slot in the middle renumbers everything after it.
+	//
+	// A nil caller matches no owner, so an unauthenticated read still sees the
+	// library-shared lists and nothing private, which is what it saw before
+	// shelves and saved views became one thing.
+	listVisible := fmt.Sprintf(
+		`(l4.owner_user_id = %s OR (l4.visibility = 'library' AND l4.shared_library_id = ANY($1)))`,
+		arg(callerID))
+
 	q := fmt.Sprintf(`
 WITH scope AS (
     SELECT DISTINCT b.id, b.media_type_id, lb.ownership
@@ -263,11 +275,11 @@ FROM f JOIN book_tags bt ON bt.book_id = f.id AND bt.deleted_at IS NULL
        JOIN tags t ON t.id = bt.tag_id AND t.deleted_at IS NULL
 WHERE %s GROUP BY t.name
 UNION ALL
-SELECT 'shelf', sh.id::text, sh.name, COUNT(DISTINCT f.id)
-FROM f JOIN library_shelf_books bsh ON bsh.book_id = f.id
-       JOIN library_shelves sh ON sh.id = bsh.shelf_id
-WHERE sh.library_id = ANY($1) AND %s
-GROUP BY sh.id, sh.name
+SELECT 'shelf', l4.id::text, l4.name, COUNT(DISTINCT f.id)
+FROM f JOIN list_books lb4 ON lb4.book_id = f.id
+       JOIN lists l4 ON l4.id = lb4.list_id
+WHERE `+listVisible+` AND %s
+GROUP BY l4.id, l4.name
 UNION ALL
 SELECT 'rating', f.rating::text, f.rating::text, COUNT(*)
 FROM f WHERE f.rating IS NOT NULL AND %s GROUP BY f.rating
