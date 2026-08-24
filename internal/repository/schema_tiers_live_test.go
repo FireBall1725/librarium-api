@@ -380,3 +380,214 @@ func TestLocationTreeRefusesLoopsAndKeepsFullShelves(t *testing.T) {
 		t.Errorf("copy location name = %q, want the shelf it was filed at", copy.LocationName)
 	}
 }
+
+func TestPartialUpsertDoesNotClobberOtherFields(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewUserBookRepo(pool)
+
+	var userID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT u.id, b.id FROM users u CROSS JOIN books b
+		 WHERE NOT EXISTS (SELECT 1 FROM user_books ub WHERE ub.user_id = u.id AND ub.book_id = b.id)
+		 LIMIT 1`).Scan(&userID, &bookID); err != nil {
+		t.Skipf("no untouched user/book pair: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM user_books WHERE user_id = $1 AND book_id = $2`, userID, bookID)
+	}()
+
+	status := "read"
+	rating := 8
+	review := "worth the reread"
+	if _, err := repo.Upsert(ctx, userID, bookID, UpsertInput{
+		ReadStatus: &status, Rating: &[]*int{&rating}[0], Review: &review,
+	}); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+
+	// A client that only knows about favourites must not blank the review the
+	// user typed on another device. This is the whole reason every field is a
+	// pointer.
+	fav := true
+	got, err := repo.Upsert(ctx, userID, bookID, UpsertInput{IsFavorite: &fav})
+	if err != nil {
+		t.Fatalf("partial upsert: %v", err)
+	}
+	if got.Review != review {
+		t.Errorf("review = %q after a favourite-only update, want it untouched", got.Review)
+	}
+	if got.Rating == nil || *got.Rating != rating {
+		t.Errorf("rating = %v after a favourite-only update, want %d", got.Rating, rating)
+	}
+	if got.ReadStatus != status {
+		t.Errorf("read status = %q, want %q", got.ReadStatus, status)
+	}
+	if !got.IsFavorite {
+		t.Error("is_favorite did not take")
+	}
+
+	// Clearing is different from not mentioning, and one parameter cannot say
+	// both, which is why Rating is a pointer to a pointer.
+	var cleared *int
+	got, err = repo.Upsert(ctx, userID, bookID, UpsertInput{Rating: &cleared})
+	if err != nil {
+		t.Fatalf("clearing the rating: %v", err)
+	}
+	if got.Rating != nil {
+		t.Errorf("rating = %v after an explicit clear, want nil", got.Rating)
+	}
+	if got.Review != review {
+		t.Errorf("clearing the rating also changed the review to %q", got.Review)
+	}
+}
+
+func TestSmartListsRefuseHandPickedBooks(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewListRepo(pool)
+
+	var userID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM books LIMIT 1`).Scan(&bookID); err != nil {
+		t.Skipf("no books: %v", err)
+	}
+
+	smart, err := repo.Create(ctx, CreateListInput{
+		OwnerUserID: userID, Name: "test smart list", Kind: "smart",
+		Filter: []byte(`{"read_status":"unread"}`),
+	})
+	if err != nil {
+		t.Fatalf("creating a smart list: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, smart.ID) }()
+
+	if smart.FilterVersion == nil || *smart.FilterVersion != FilterVersionCurrent {
+		t.Errorf("filter version = %v, want %d; an unversioned filter gets silently reinterpreted later",
+			smart.FilterVersion, FilterVersionCurrent)
+	}
+
+	// A smart list computes its own membership, so adding by hand would produce
+	// a row its filter disagrees with.
+	if err := repo.AddBook(ctx, smart.ID, bookID, 0); !errors.Is(err, ErrSmartListNotEnumerable) {
+		t.Errorf("adding a book to a smart list returned %v, want ErrSmartListNotEnumerable", err)
+	}
+
+	manual, err := repo.Create(ctx, CreateListInput{
+		OwnerUserID: userID, Name: "test manual list", Kind: "manual",
+	})
+	if err != nil {
+		t.Fatalf("creating a manual list: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, manual.ID) }()
+
+	if err := repo.AddBook(ctx, manual.ID, bookID, 1); err != nil {
+		t.Fatalf("adding a book to a manual list: %v", err)
+	}
+	ids, err := repo.BookIDs(ctx, manual.ID)
+	if err != nil {
+		t.Fatalf("reading list contents: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != bookID {
+		t.Errorf("contents = %v, want the one book added", ids)
+	}
+}
+
+func TestPublicListsGetAnUnguessableToken(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewListRepo(pool)
+
+	var userID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+
+	public, err := repo.Create(ctx, CreateListInput{
+		OwnerUserID: userID, Name: "test public list", Kind: "manual", Visibility: "public",
+	})
+	if err != nil {
+		t.Fatalf("creating a public list: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, public.ID) }()
+
+	// The token is the only credential on a public link, so guessing it has to
+	// be pointless.
+	if len(public.ShareToken) < 40 {
+		t.Errorf("share token %q is too short to be unguessable", public.ShareToken)
+	}
+
+	found, err := repo.FindByShareToken(ctx, public.ShareToken)
+	if err != nil || found.ID != public.ID {
+		t.Errorf("resolving the share token gave %v, %v", found, err)
+	}
+
+	if _, err := repo.FindByShareToken(ctx, "not-a-real-token"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a bogus token returned %v, want ErrNotFound", err)
+	}
+
+	// A private list must not be reachable by a token left over from before.
+	private, err := repo.Create(ctx, CreateListInput{
+		OwnerUserID: userID, Name: "test private list", Kind: "manual",
+	})
+	if err != nil {
+		t.Fatalf("creating a private list: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, private.ID) }()
+	if private.ShareToken != "" {
+		t.Errorf("a private list was given a share token: %q", private.ShareToken)
+	}
+}
+
+func TestWishlistHoldsBothShapesInOneTable(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewWishlistRepo(pool)
+
+	var userID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT b.id FROM books b
+		 WHERE NOT EXISTS (SELECT 1 FROM wishlist w WHERE w.book_id = b.id AND w.user_id = $1)
+		 LIMIT 1`, userID).Scan(&bookID); err != nil {
+		t.Skipf("no book that is not already wanted: %v", err)
+	}
+
+	catalogued, err := repo.AddCatalogued(ctx, userID, bookID, "seen in a shop", 5)
+	if err != nil {
+		t.Fatalf("adding a catalogued want: %v", err)
+	}
+	defer func() { _ = repo.Remove(ctx, userID, catalogued.ID) }()
+
+	if catalogued.Title == "" {
+		t.Error("a catalogued want has no title; it should read through to the book")
+	}
+	if err := func() error { _, err := repo.AddCatalogued(ctx, userID, bookID, "", 0); return err }(); !errors.Is(err, ErrAlreadyWanted) {
+		t.Errorf("wanting the same book twice returned %v, want ErrAlreadyWanted", err)
+	}
+
+	free, err := repo.AddFreeText(ctx, userID, "Something With No ISBN", "A Nobody", "", 1)
+	if err != nil {
+		t.Fatalf("adding a free-text want: %v", err)
+	}
+	defer func() { _ = repo.Remove(ctx, userID, free.ID) }()
+	if free.BookID != nil {
+		t.Error("a free-text want should not point at a book")
+	}
+
+	// Both shapes come back from one query, which is the point: the old schema
+	// split this by whether the thing was catalogued.
+	all, err := repo.List(ctx, userID)
+	if err != nil {
+		t.Fatalf("listing the wishlist: %v", err)
+	}
+	var sawBoth int
+	for _, e := range all {
+		if e.ID == catalogued.ID || e.ID == free.ID {
+			sawBoth++
+		}
+	}
+	if sawBoth != 2 {
+		t.Errorf("one list returned %d of the 2 entries just added", sawBoth)
+	}
+}
