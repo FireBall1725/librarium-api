@@ -1,6 +1,6 @@
 # Pinned to the BUILD platform: without this, buildx runs the arm64 leg under
 # QEMU emulation. Go cross-compiles natively.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
