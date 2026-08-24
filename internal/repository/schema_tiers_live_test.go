@@ -1540,3 +1540,75 @@ func TestInteractionCarriesItsRowID(t *testing.T) {
 		t.Errorf("book_edition_id = %s, want the edition requested %s", got.BookEditionID, editionID)
 	}
 }
+
+// TestLegacySyncIDsStillResolve covers the upgrade path for a client that was
+// offline across it.
+//
+// 000027 minted fresh surrogate ids for user_books, so an id cached before the
+// upgrade addresses nothing. Its comment said the client would get not_found
+// and re-read, losing only a round trip. The shipping iOS client instead treats
+// not_found as acknowledged and deletes the op, so every edit queued offline
+// before the upgrade would be thrown away on reconnect.
+func TestLegacySyncIDsStillResolve(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewSyncRepo(pool)
+
+	var legacyID, userBookID, userID uuid.UUID
+	err := pool.QueryRow(ctx,
+		`SELECT l.legacy_id, l.user_book_id, ub.user_id
+		   FROM legacy_interaction_ids l
+		   JOIN user_books ub ON ub.id = l.user_book_id
+		  WHERE ub.deleted_at IS NULL
+		  LIMIT 1`).Scan(&legacyID, &userBookID, &userID)
+	if err != nil {
+		t.Skipf("no forwarded ids: %v", err)
+	}
+	if legacyID == userBookID {
+		t.Skip("this install kept its ids, so there is nothing to forward")
+	}
+
+	// An op addressed the old way has to land, not be answered not_found.
+	before := time.Now()
+	status, err := repo.ApplyUserBookInteractionOp(ctx, userID, responses.SyncApplyOp{
+		EntityType: "user_book_interaction",
+		EntityID:   legacyID,
+		Field:      "is_favorite",
+		Value:      true,
+		UpdatedAt:  before,
+	})
+	if err != nil {
+		t.Fatalf("applying through a legacy id: %v", err)
+	}
+	if status != SyncApplyStatusApplied {
+		t.Fatalf("a legacy id returned %q, want applied; not_found is what the client throws away", status)
+	}
+
+	var fav bool
+	if err := pool.QueryRow(ctx,
+		`SELECT is_favorite FROM user_books WHERE id = $1`, userBookID).Scan(&fav); err != nil {
+		t.Fatalf("re-reading: %v", err)
+	}
+	if !fav {
+		t.Error("the op was acknowledged but changed nothing")
+	}
+	// Put it back rather than leaving a favourite nobody set.
+	_, _ = pool.Exec(ctx,
+		`UPDATE user_books SET is_favorite = false, is_favorite_updated_at = NULL WHERE id = $1`,
+		userBookID)
+
+	// An id belonging to nobody still misses, so forwarding has not become a
+	// way to write to another person's row.
+	status, err = repo.ApplyUserBookInteractionOp(ctx, userID, responses.SyncApplyOp{
+		EntityType: "user_book_interaction",
+		EntityID:   uuid.New(),
+		Field:      "is_favorite",
+		Value:      true,
+		UpdatedAt:  before,
+	})
+	if err != nil {
+		t.Fatalf("applying an unknown id: %v", err)
+	}
+	if status != SyncApplyStatusNotFound {
+		t.Errorf("an unknown id returned %q, want not_found", status)
+	}
+}

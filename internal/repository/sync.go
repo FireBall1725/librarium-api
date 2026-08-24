@@ -184,6 +184,15 @@ func (r *SyncRepo) ApplyUserBookInteractionOp(ctx context.Context, userID uuid.U
 	if op.EntityType != "user_book_interaction" {
 		return SyncApplyStatusInvalid, nil
 	}
+	// An id from before the surrogate key existed still has to resolve. The
+	// client deletes an op it is told not_found, so failing to forward it is
+	// not a retry, it is the edit being thrown away.
+	entityID, err := r.resolveEntityID(ctx, userID, op.EntityID)
+	if err != nil {
+		return "", err
+	}
+	op.EntityID = entityID
+
 	if op.Deleted {
 		return r.applyUBITombstone(ctx, userID, op.EntityID, op.UpdatedAt)
 	}
@@ -420,6 +429,31 @@ func (r *SyncRepo) applyUBITombstone(ctx context.Context, userID, entityID uuid.
 // classifyUBIMiss runs after an apply UPDATE returned 0 rows. It
 // distinguishes "row doesn't exist (or wrong owner)" from "row exists
 // but the LWW comparison rejected the write."
+// resolveEntityID maps an id the client is holding onto the row it addresses.
+//
+// Current ids pass straight through. One minted before 000027 is looked up in
+// the forwarding table, which is why that table exists: several per-edition
+// rows could collapse into one per-work row, so the old ids could not simply be
+// reused and every one of them still has to resolve.
+//
+// An id that matches nothing is returned unchanged, so the miss is classified
+// downstream the way it always was.
+func (r *SyncRepo) resolveEntityID(ctx context.Context, userID, entityID uuid.UUID) (uuid.UUID, error) {
+	const q = `
+		SELECT CASE
+		         WHEN EXISTS (SELECT 1 FROM user_books WHERE id = $1 AND user_id = $2) THEN $1
+		         ELSE COALESCE((SELECT l.user_book_id
+		                          FROM legacy_interaction_ids l
+		                          JOIN user_books ub ON ub.id = l.user_book_id AND ub.user_id = $2
+		                         WHERE l.legacy_id = $1), $1)
+		       END`
+	var resolved uuid.UUID
+	if err := r.db.QueryRow(ctx, q, entityID, userID).Scan(&resolved); err != nil {
+		return uuid.Nil, fmt.Errorf("resolving entity id: %w", err)
+	}
+	return resolved, nil
+}
+
 func (r *SyncRepo) classifyUBIMiss(ctx context.Context, userID, entityID uuid.UUID) (string, error) {
 	const q = `SELECT EXISTS(SELECT 1 FROM user_books WHERE id = $1 AND user_id = $2)`
 	var exists bool
