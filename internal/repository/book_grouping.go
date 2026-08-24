@@ -221,8 +221,7 @@ func (r *BookRepo) seriesGroups(
 			FROM book_series bs_r
 			JOIN held_books lb_r ON lb_r.book_id = bs_r.book_id
 				AND lb_r.library_id = ANY($2) AND lb_r.deleted_at IS NULL
-			JOIN book_editions be_r ON be_r.book_id = bs_r.book_id
-			JOIN user_book_interactions ubi_r ON ubi_r.book_edition_id = be_r.id
+			JOIN user_books ubi_r ON ubi_r.book_id = bs_r.book_id AND ubi_r.deleted_at IS NULL
 				AND ubi_r.user_id = $3 AND ubi_r.read_status = 'read'
 			WHERE bs_r.series_id = s.id
 		)`

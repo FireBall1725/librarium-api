@@ -162,25 +162,21 @@ func (r *AISuggestionsRepo) ListLibraryTitles(ctx context.Context, libraryID, us
 				WHERE bg.book_id = b.id
 			), ''),
 			(
-				SELECT ubi.rating FROM book_editions be
-				JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-				WHERE be.book_id = b.id AND ubi.user_id = $2 AND ubi.rating IS NOT NULL
-				ORDER BY ubi.rating DESC
-				LIMIT 1
+				SELECT ubi.rating FROM user_books ubi
+				WHERE ubi.book_id = b.id AND ubi.user_id = $2
+				  AND ubi.deleted_at IS NULL AND ubi.rating IS NOT NULL
 			),
 			COALESCE((
-				SELECT ubi.read_status FROM book_editions be
-				JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-				WHERE be.book_id = b.id AND ubi.user_id = $2
+				SELECT ubi.read_status FROM user_books ubi
+				WHERE ubi.book_id = b.id AND ubi.user_id = $2 AND ubi.deleted_at IS NULL
 				ORDER BY CASE ubi.read_status
 					WHEN 'read' THEN 1 WHEN 'reading' THEN 2
 					WHEN 'did_not_finish' THEN 3 ELSE 4 END
 				LIMIT 1
 			), 'unread'),
 			COALESCE((
-				SELECT bool_or(ubi.is_favorite) FROM book_editions be
-				JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-				WHERE be.book_id = b.id AND ubi.user_id = $2
+				SELECT ubi.is_favorite FROM user_books ubi
+				WHERE ubi.book_id = b.id AND ubi.user_id = $2 AND ubi.deleted_at IS NULL
 			), FALSE),
 			COALESCE((
 				SELECT s.name FROM book_series bs

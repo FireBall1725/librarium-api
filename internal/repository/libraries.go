@@ -42,15 +42,13 @@ func libraryListColumns(callerArg int) string {
 		COALESCE((
 			SELECT COUNT(DISTINCT lb.book_id)
 			FROM held_books lb
-			JOIN book_editions be ON be.book_id = lb.book_id
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
+			JOIN user_books ubi ON ubi.book_id = lb.book_id AND ubi.deleted_at IS NULL
 			WHERE lb.library_id = l.id AND ubi.user_id = $` + fmt.Sprint(callerArg) + ` AND ubi.read_status = 'reading'
 		), 0) AS reading_count,
 		COALESCE((
 			SELECT COUNT(DISTINCT lb.book_id)
 			FROM held_books lb
-			JOIN book_editions be ON be.book_id = lb.book_id
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
+			JOIN user_books ubi ON ubi.book_id = lb.book_id AND ubi.deleted_at IS NULL
 			WHERE lb.library_id = l.id AND ubi.user_id = $` + fmt.Sprint(callerArg) + ` AND ubi.read_status = 'read'
 		), 0) AS read_count`
 }

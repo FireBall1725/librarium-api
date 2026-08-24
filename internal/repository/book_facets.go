@@ -82,7 +82,7 @@ func emptyFacets() *BookFacets {
 // One pass, not a query per dimension. Match flags are computed once per row and
 // each dimension aggregates using the five flags it does not own.
 //
-// Read status and rating come from user_book_interactions, which is keyed on
+// Read status and rating come from user_books, which is keyed on
 // book_edition_id. Joining editions directly counts a work with three editions
 // three times, so interactions collapse to one row per book first, best status
 // winning: read > reading > did_not_finish > unread.
@@ -141,15 +141,15 @@ func (r *BookRepo) Facets(
 	interCTE := "SELECT NULL::uuid AS book_id, NULL::text AS read_status, NULL::int AS rating, NULL::bool AS is_favorite WHERE false"
 	if callerID != uuid.Nil {
 		p := arg(callerID)
+		// One row per work already, so no GROUP BY and no collapsing. The
+		// aggregate this replaced was not a summary of anything: max(rating)
+		// and bool_or(is_favorite) existed only to reduce several editions to
+		// one answer, and reducing them is what made starring a paperback star
+		// the hardcover.
 		interCTE = fmt.Sprintf(`
-            SELECT e.book_id,
-                   `+bestReadStatusExpr+` AS read_status,
-                   max(i.rating) AS rating,
-                   bool_or(i.is_favorite) AS is_favorite
-            FROM user_book_interactions i
-            JOIN book_editions e ON e.id = i.book_edition_id
-            WHERE i.user_id = %s AND i.deleted_at IS NULL
-            GROUP BY e.book_id`, p)
+            SELECT ub.book_id, ub.read_status, ub.rating, ub.is_favorite
+            FROM user_books ub
+            WHERE ub.user_id = %s AND ub.deleted_at IS NULL`, p)
 	}
 
 	// One flag per dimension. An unused facet is always TRUE so it narrows
@@ -340,7 +340,7 @@ ORDER BY 1, 4 DESC, 3`,
 }
 
 // ReadStatusValues is the read-status vocabulary, in the order a reader moves
-// through it. Mirrors the priority in bestReadStatusExpr, which is about which
+// through it. Mirrors the priority reading state used to be collapsed by, which
 // status wins for a book with several editions rather than about display.
 var ReadStatusValues = []string{"unread", "reading", "read", "did_not_finish"}
 

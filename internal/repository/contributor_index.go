@@ -98,9 +98,8 @@ func (r *ContributorRepo) ListAuthorIndex(
 	if callerID != uuid.Nil {
 		args = append(args, callerID)
 		readCount = fmt.Sprintf(`COUNT(DISTINCT s.book_id) FILTER (WHERE EXISTS (
-            SELECT 1 FROM user_book_interactions i
-            JOIN book_editions e ON e.id = i.book_edition_id
-            WHERE e.book_id = s.book_id AND i.user_id = $%d
+            SELECT 1 FROM user_books i
+            WHERE i.book_id = s.book_id AND i.user_id = $%d
               AND i.deleted_at IS NULL AND i.read_status = 'read'
         ))`, len(args))
 	}

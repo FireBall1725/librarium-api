@@ -46,30 +46,14 @@ func readStateSubqueries(callerArg int) string {
        (SELECT COUNT(*)::int FROM book_series bs2
           JOIN books b ON b.id = bs2.book_id
           WHERE bs2.series_id = s.id AND (
-              SELECT ubi.read_status FROM book_editions be
-              JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-              WHERE be.book_id = b.id AND ubi.user_id = $%d
-              ORDER BY CASE ubi.read_status
-                  WHEN 'read' THEN 1
-                  WHEN 'reading' THEN 2
-                  WHEN 'did_not_finish' THEN 3
-                  ELSE 4
-              END
-              LIMIT 1
+              SELECT ubi.read_status FROM user_books ubi
+              WHERE ubi.book_id = b.id AND ubi.user_id = $%d AND ubi.deleted_at IS NULL
           ) = 'read') AS read_count,
        (SELECT COUNT(*)::int FROM book_series bs2
           JOIN books b ON b.id = bs2.book_id
           WHERE bs2.series_id = s.id AND (
-              SELECT ubi.read_status FROM book_editions be
-              JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-              WHERE be.book_id = b.id AND ubi.user_id = $%d
-              ORDER BY CASE ubi.read_status
-                  WHEN 'read' THEN 1
-                  WHEN 'reading' THEN 2
-                  WHEN 'did_not_finish' THEN 3
-                  ELSE 4
-              END
-              LIMIT 1
+              SELECT ubi.read_status FROM user_books ubi
+              WHERE ubi.book_id = b.id AND ubi.user_id = $%d AND ubi.deleted_at IS NULL
           ) = 'reading') AS reading_count`, callerArg, callerArg)
 }
 
@@ -314,16 +298,8 @@ func (r *SeriesRepo) ListBooks(ctx context.Context, seriesID, callerID uuid.UUID
 		args = append(args, callerID)
 		userStatusExpr = fmt.Sprintf(`COALESCE((
 			SELECT ubi.read_status
-			FROM book_editions be
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-			WHERE be.book_id = b.id AND ubi.user_id = $%d
-			ORDER BY CASE ubi.read_status
-				WHEN 'read' THEN 1
-				WHEN 'reading' THEN 2
-				WHEN 'did_not_finish' THEN 3
-				ELSE 4
-			END
-			LIMIT 1
+			FROM user_books ubi
+			WHERE ubi.book_id = b.id AND ubi.user_id = $%d AND ubi.deleted_at IS NULL
 		), '') AS user_read_status`, len(args))
 	}
 	q := `
