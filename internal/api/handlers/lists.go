@@ -1,0 +1,337 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 FireBall1725 (Adaléa)
+
+package handlers
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+
+	"github.com/fireball1725/librarium-api/internal/api/respond"
+	"github.com/fireball1725/librarium-api/internal/repository"
+	"github.com/google/uuid"
+)
+
+// ListHandler serves lists and the wishlist.
+//
+// Lists are what shelves and saved views became. They were never distinguished
+// by ownership but by how membership is decided, so one concept with a kind
+// gives one sharing implementation instead of two.
+type ListHandler struct {
+	lists    *repository.ListRepo
+	wishlist *repository.WishlistRepo
+}
+
+func NewListHandler(lists *repository.ListRepo, wishlist *repository.WishlistRepo) *ListHandler {
+	return &ListHandler{lists: lists, wishlist: wishlist}
+}
+
+// ListMyLists godoc
+//
+// @Summary     List my lists
+// @Description The caller's own lists plus any shared into a library they can reach. A manual list enumerates its books; a smart one computes them from a stored filter.
+// @Tags        me
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  object{items=[]object{id=string,name=string,kind=string,visibility=string,book_count=int}}
+// @Failure     401  {object}  object{error=string}
+// @Router      /me/lists [get]
+func (h *ListHandler) ListMyLists(w http.ResponseWriter, r *http.Request) {
+	lists, err := h.lists.ListForUser(r.Context(), callerOf(r))
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": lists})
+}
+
+type listBody struct {
+	Name            string          `json:"name"`
+	Description     string          `json:"description"`
+	Icon            string          `json:"icon"`
+	Color           string          `json:"color"`
+	Kind            string          `json:"kind"`
+	Filter          json.RawMessage `json:"filter"`
+	Layout          string          `json:"layout"`
+	Visibility      string          `json:"visibility"`
+	SharedLibraryID *string         `json:"shared_library_id"`
+}
+
+// CreateList godoc
+//
+// @Summary     Create a list
+// @Description A manual list is filled by hand; a smart list stores a filter and fills itself. Visibility is private, library or public; a public list is given an unguessable share token, since on a public link the token is the only credential.
+// @Tags        me
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body  object{name=string,description=string,icon=string,color=string,kind=string,filter=object,layout=string,visibility=string,shared_library_id=string}  true  "The list"
+// @Success     201  {object}  object{id=string,name=string,kind=string,visibility=string,share_token=string}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /me/lists [post]
+func (h *ListHandler) CreateList(w http.ResponseWriter, r *http.Request) {
+	var body listBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	in := repository.CreateListInput{
+		OwnerUserID: callerOf(r),
+		Name:        body.Name,
+		Description: body.Description,
+		Icon:        body.Icon,
+		Color:       body.Color,
+		Kind:        body.Kind,
+		Filter:      body.Filter,
+		Layout:      body.Layout,
+		Visibility:  body.Visibility,
+	}
+	if body.SharedLibraryID != nil && *body.SharedLibraryID != "" {
+		id, err := uuid.Parse(*body.SharedLibraryID)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid library id")
+			return
+		}
+		in.SharedLibraryID = &id
+	}
+
+	list, err := h.lists.Create(r.Context(), in)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond.JSON(w, http.StatusCreated, list)
+}
+
+// DeleteList godoc
+//
+// @Summary     Delete one of my lists
+// @Tags        me
+// @Produce     json
+// @Security    BearerAuth
+// @Param       list_id  path  string  true  "List UUID"
+// @Success     204
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /me/lists/{list_id} [delete]
+func (h *ListHandler) DeleteList(w http.ResponseWriter, r *http.Request) {
+	list, ok := h.ownedList(w, r)
+	if !ok {
+		return
+	}
+	if err := h.lists.Delete(r.Context(), list.ID); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AddBookToList godoc
+//
+// @Summary     Put a book in one of my lists
+// @Description Manual lists only. A smart list computes its own membership, so adding by hand would produce a row its filter disagrees with.
+// @Tags        me
+// @Produce     json
+// @Security    BearerAuth
+// @Param       list_id  path  string  true  "List UUID"
+// @Param       book_id  path  string  true  "Book UUID"
+// @Success     204
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /me/lists/{list_id}/books/{book_id} [post]
+func (h *ListHandler) AddBookToList(w http.ResponseWriter, r *http.Request) {
+	list, ok := h.ownedList(w, r)
+	if !ok {
+		return
+	}
+	bookID, valid := bookIDOf(r)
+	if !valid {
+		respond.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+
+	err := h.lists.AddBook(r.Context(), list.ID, bookID, 0)
+	switch {
+	case errors.Is(err, repository.ErrSmartListNotEnumerable):
+		respond.Error(w, http.StatusBadRequest,
+			"that list fills itself from its filter, so books cannot be added by hand")
+		return
+	case err != nil:
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// RemoveBookFromList godoc
+//
+// @Summary     Take a book out of one of my lists
+// @Tags        me
+// @Produce     json
+// @Security    BearerAuth
+// @Param       list_id  path  string  true  "List UUID"
+// @Param       book_id  path  string  true  "Book UUID"
+// @Success     204
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /me/lists/{list_id}/books/{book_id} [delete]
+func (h *ListHandler) RemoveBookFromList(w http.ResponseWriter, r *http.Request) {
+	list, ok := h.ownedList(w, r)
+	if !ok {
+		return
+	}
+	bookID, valid := bookIDOf(r)
+	if !valid {
+		respond.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+
+	err := h.lists.RemoveBook(r.Context(), list.ID, bookID)
+	if errors.Is(err, repository.ErrSmartListNotEnumerable) {
+		respond.Error(w, http.StatusBadRequest, "that list fills itself from its filter")
+		return
+	}
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ownedList resolves the list in the path and checks the caller owns it.
+//
+// Ownership rather than visibility on purpose: a list shared into a library is
+// readable by its members but still belongs to one person, and letting a reader
+// edit it would make "shared with you" mean "yours".
+func (h *ListHandler) ownedList(w http.ResponseWriter, r *http.Request) (*listRef, bool) {
+	id, err := uuid.Parse(r.PathValue("list_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid list id")
+		return nil, false
+	}
+	list, err := h.lists.FindByID(r.Context(), id)
+	if errors.Is(err, repository.ErrNotFound) || (err == nil && list.OwnerUserID != callerOf(r)) {
+		// 404 rather than 403: a 403 would confirm the list exists to someone
+		// who cannot see it.
+		respond.Error(w, http.StatusNotFound, "list not found")
+		return nil, false
+	}
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return nil, false
+	}
+	return &listRef{ID: list.ID}, true
+}
+
+type listRef struct{ ID uuid.UUID }
+
+// ListMyWishlist godoc
+//
+// @Summary     List what I want
+// @Description One list holding both shapes: entries pointing at a catalogue book, and free-text entries for things the catalogue has never heard of.
+// @Tags        me
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  object{items=[]object{id=string,book_id=string,title=string,author_name=string,notes=string,priority=int}}
+// @Failure     401  {object}  object{error=string}
+// @Router      /me/wishlist [get]
+func (h *ListHandler) ListMyWishlist(w http.ResponseWriter, r *http.Request) {
+	items, err := h.wishlist.List(r.Context(), callerOf(r))
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+type wishlistBody struct {
+	BookID     *string `json:"book_id"`
+	Title      string  `json:"title"`
+	AuthorName string  `json:"author_name"`
+	Notes      string  `json:"notes"`
+	Priority   int     `json:"priority"`
+}
+
+// AddToWishlist godoc
+//
+// @Summary     Want something
+// @Description Send a book_id for something in the catalogue, or a title for something that is not. Both land in the same list, so asking what you want is one query rather than a union.
+// @Tags        me
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body  object{book_id=string,title=string,author_name=string,notes=string,priority=int}  true  "The want"
+// @Success     201  {object}  object{id=string,book_id=string,title=string}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     409  {object}  object{error=string}
+// @Router      /me/wishlist [post]
+func (h *ListHandler) AddToWishlist(w http.ResponseWriter, r *http.Request) {
+	var body wishlistBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	caller := callerOf(r)
+	var entry any
+	var err error
+
+	if body.BookID != nil && *body.BookID != "" {
+		id, parseErr := uuid.Parse(*body.BookID)
+		if parseErr != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid book id")
+			return
+		}
+		entry, err = h.wishlist.AddCatalogued(r.Context(), caller, id, body.Notes, body.Priority)
+	} else {
+		entry, err = h.wishlist.AddFreeText(r.Context(), caller, body.Title, body.AuthorName, body.Notes, body.Priority)
+	}
+
+	switch {
+	case errors.Is(err, repository.ErrAlreadyWanted):
+		respond.Error(w, http.StatusConflict, "that book is already on your wishlist")
+		return
+	case errors.Is(err, repository.ErrNotFound):
+		respond.Error(w, http.StatusNotFound, "book not found")
+		return
+	case err != nil:
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond.JSON(w, http.StatusCreated, entry)
+}
+
+// RemoveFromWishlist godoc
+//
+// @Summary     Stop wanting something
+// @Tags        me
+// @Produce     json
+// @Security    BearerAuth
+// @Param       entry_id  path  string  true  "Wishlist entry UUID"
+// @Success     204
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /me/wishlist/{entry_id} [delete]
+func (h *ListHandler) RemoveFromWishlist(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("entry_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid entry id")
+		return
+	}
+
+	// Scoped to the caller in the query itself, so one person's id cannot
+	// delete another person's want.
+	if err := h.wishlist.Remove(r.Context(), callerOf(r), id); errors.Is(err, repository.ErrNotFound) {
+		respond.Error(w, http.StatusNotFound, "wishlist entry not found")
+		return
+	} else if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

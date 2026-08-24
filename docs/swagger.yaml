@@ -3173,6 +3173,213 @@ paths:
       summary: Register a new user
       tags:
       - auth
+  /books/{book_id}/containers:
+    get:
+      description: The reverse direction, which answers "I own the 3-in-1, so do I
+        have volume 2".
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    container_id:
+                      type: string
+                    title:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List the works that contain this one
+      tags:
+      - catalogue
+  /books/{book_id}/contents:
+    get:
+      description: An omnibus holding volumes 1 to 3, an anthology, an Ace Double.
+        Ownership resolves through this, so holding the container counts as holding
+        what is inside it.
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    contained_id:
+                      type: string
+                    position:
+                      type: number
+                    title:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List what a work contains
+      tags:
+      - catalogue
+    post:
+      consumes:
+      - application/json
+      description: Containment means contains exactly, never overlaps. A re-cut edition
+        whose volume boundaries do not line up is modelled as its own series instead.
+      parameters:
+      - description: Container book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: What it contains
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            contained_id:
+              type: string
+            position:
+              type: number
+          type: object
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Record that a work contains another
+      tags:
+      - catalogue
+  /books/{book_id}/contents/{contained_id}:
+    delete:
+      parameters:
+      - description: Container book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Contained book UUID
+        in: path
+        name: contained_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a containment link
+      tags:
+      - catalogue
+  /books/{book_id}/copies:
+    get:
+      description: Every copy of the work across the libraries the caller can reach,
+        signed copies first. A copy with no edition means the printing was never recorded,
+        which is a supported state.
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    condition:
+                      type: string
+                    edition_id:
+                      type: string
+                    id:
+                      type: string
+                    is_signed:
+                      type: boolean
+                    library_id:
+                      type: string
+                    location_name:
+                      type: string
+                    on_loan_to:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List my copies of a book
+      tags:
+      - copies
   /books/{book_id}/enrich:
     post:
       description: |-
@@ -3217,6 +3424,289 @@ paths:
       summary: Re-enrich metadata for a single book
       tags:
       - books
+  /books/{book_id}/me:
+    delete:
+      description: Soft-deletes the caller's opinion. The review and notes history
+        tables keep the text, so this is recoverable.
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Forget my reading state for a book
+      tags:
+      - me
+    get:
+      description: The caller's status, rating, review and notes for a work. Reads
+        through containment, so a volume inside an omnibus the caller has read comes
+        back as read with inherited set.
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              book_id:
+                type: string
+              inherited:
+                type: boolean
+              is_favorite:
+                type: boolean
+              notes:
+                type: string
+              rating:
+                type: integer
+              read_status:
+                type: string
+              review:
+                type: string
+              wants:
+                type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get my reading state for a book
+      tags:
+      - me
+    put:
+      consumes:
+      - application/json
+      description: Partial update. Any field left out is untouched, which is what
+        lets two clients edit different fields without either losing. Send clear_rating
+        to remove a rating, since omitting it means "no change".
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Reading state
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            clear_rating:
+              type: boolean
+            is_favorite:
+              type: boolean
+            notes:
+              type: string
+            rating:
+              type: integer
+            read_status:
+              type: string
+            review:
+              type: string
+            wants:
+              type: boolean
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              book_id:
+                type: string
+              is_favorite:
+                type: boolean
+              notes:
+                type: string
+              rating:
+                type: integer
+              read_status:
+                type: string
+              review:
+                type: string
+              wants:
+                type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set my reading state for a book
+      tags:
+      - me
+  /books/{book_id}/sessions:
+    get:
+      description: Each pass through the work, most recent first. A reread is a separate
+        session rather than a counter, so it can say when and in which printing.
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    book_id:
+                      type: string
+                    edition_id:
+                      type: string
+                    finished_at:
+                      type: string
+                    id:
+                      type: string
+                    progress_unit:
+                      type: string
+                    progress_value:
+                      type: number
+                    started_at:
+                      type: string
+                    status:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List my reading sessions for a book
+      tags:
+      - me
+    post:
+      consumes:
+      - application/json
+      description: Records one pass through a work. Progress is a unit and a value
+        rather than a blob; page progress requires an edition, because page 200 of
+        a paperback is not page 200 of the omnibus.
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: The session
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            edition_id:
+              type: string
+            finished_at:
+              type: string
+            progress_unit:
+              type: string
+            progress_value:
+              type: number
+            started_at:
+              type: string
+            status:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              book_id:
+                type: string
+              id:
+                type: string
+              status:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Log a reading session
+      tags:
+      - me
   /components:
     get:
       description: Every Go module linked into this API binary, with its version and
@@ -3551,6 +4041,223 @@ paths:
       summary: Delete a contributor work
       tags:
       - contributors
+  /copies/{copy_id}:
+    delete:
+      description: Soft-deletes, because losing an object by accident is the expensive
+        case.
+      parameters:
+      - description: Copy UUID
+        in: path
+        name: copy_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a copy
+      tags:
+      - copies
+    patch:
+      consumes:
+      - application/json
+      description: 'Partial update: a field left out is untouched.'
+      parameters:
+      - description: Copy UUID
+        in: path
+        name: copy_id
+        required: true
+        type: string
+      - description: Changes
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            acquired_at:
+              type: string
+            acquired_from:
+              type: string
+            condition:
+              type: string
+            edition_id:
+              type: string
+            is_signed:
+              type: boolean
+            location_id:
+              type: string
+            notes:
+              type: string
+            price_currency:
+              type: string
+            price_minor:
+              type: integer
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              condition:
+                type: string
+              id:
+                type: string
+              is_signed:
+                type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a copy
+      tags:
+      - copies
+  /editions/{edition_id}/identifiers:
+    get:
+      description: ISBN is one scheme among several. A 1957 Ace Double has no ISBN
+        and never will; its publisher catalogue number is the best identifier in existence
+        for it.
+      parameters:
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    scheme:
+                      type: string
+                    value:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List a printing's identifiers
+      tags:
+      - catalogue
+    post:
+      consumes:
+      - application/json
+      description: An edition can carry several, including more than one of a scheme.
+        What cannot happen is two editions claiming the same one, which is the uniqueness
+        the dedup logic always assumed and never had.
+      parameters:
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      - description: The identifier
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            scheme:
+              type: string
+            value:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Give a printing an identifier
+      tags:
+      - catalogue
+  /editions/{edition_id}/identifiers/{scheme}/{value}:
+    delete:
+      parameters:
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      - description: Scheme code, e.g. isbn13
+        in: path
+        name: scheme
+        required: true
+        type: string
+      - description: The identifier value
+        in: path
+        name: value
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Take an identifier off a printing
+      tags:
+      - catalogue
   /enrichment-batches:
     delete:
       description: Bulk-deletes all done/failed/cancelled enrichment batches for the
@@ -3909,6 +4616,42 @@ paths:
       summary: Health check
       tags:
       - health
+  /identifier-schemes:
+    get:
+      description: 'A vocabulary table, so a new scheme is a row rather than a release.
+        Codes only: the display name belongs in the locale files, since a label in
+        the database cannot be translated.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    code:
+                      type: string
+                    is_active:
+                      type: boolean
+                    sort_order:
+                      type: integer
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List the identifier schemes this server knows
+      tags:
+      - catalogue
   /imports:
     delete:
       description: Bulk-deletes all done/failed/cancelled import jobs for the calling
@@ -5822,6 +6565,136 @@ paths:
       summary: Get available first letters for contributors in a library
       tags:
       - contributors
+  /libraries/{library_id}/copies:
+    get:
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Page size, default 50
+        in: query
+        name: limit
+        type: integer
+      - description: Offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    book_id:
+                      type: string
+                    condition:
+                      type: string
+                    id:
+                      type: string
+                    is_signed:
+                      type: boolean
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List a library's copies
+      tags:
+      - copies
+    post:
+      consumes:
+      - application/json
+      description: Adds one physical object to a library. Everything but the book
+        is optional, so recording a book you own is one field and the detail only
+        appears when someone wants it.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: The copy
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            acquired_at:
+              type: string
+            acquired_from:
+              type: string
+            book_id:
+              type: string
+            condition:
+              type: string
+            edition_id:
+              type: string
+            is_signed:
+              type: boolean
+            location_id:
+              type: string
+            notes:
+              type: string
+            price_currency:
+              type: string
+            price_minor:
+              type: integer
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              book_id:
+                type: string
+              condition:
+                type: string
+              id:
+                type: string
+              is_signed:
+                type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Record a copy
+      tags:
+      - copies
   /libraries/{library_id}/imports:
     get:
       description: Returns all import jobs for a specific library.
@@ -6186,6 +7059,95 @@ paths:
       summary: Update a loan
       tags:
       - loans
+  /libraries/{library_id}/locations:
+    get:
+      description: A tree, so office can contain top shelf without a second concept.
+        Distinct from storage locations, which are filesystem paths for ebook files.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    copy_count:
+                      type: integer
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    parent_id:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List where a library keeps things
+      tags:
+      - copies
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: The location
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            name:
+              type: string
+            parent_id:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              parent_id:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add a place to keep things
+      tags:
+      - copies
   /libraries/{library_id}/members:
     get:
       description: Returns all members of a library with their roles.
@@ -8213,6 +9175,40 @@ paths:
       summary: Update a tag
       tags:
       - tags
+  /locations/{location_id}:
+    delete:
+      description: Refused while copies are still filed there, because a copy whose
+        location silently became null is a book you cannot find.
+      parameters:
+      - description: Location UUID
+        in: path
+        name: location_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a place
+      tags:
+      - copies
   /lookup/books:
     get:
       description: Queries all enabled providers for books matching the freetext query.
@@ -8795,6 +9791,229 @@ paths:
       summary: Libraries the caller can reach, with effective permissions
       tags:
       - libraries
+  /me/lists:
+    get:
+      description: The caller's own lists plus any shared into a library they can
+        reach. A manual list enumerates its books; a smart one computes them from
+        a stored filter.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    book_count:
+                      type: integer
+                    id:
+                      type: string
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    visibility:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List my lists
+      tags:
+      - me
+    post:
+      consumes:
+      - application/json
+      description: A manual list is filled by hand; a smart list stores a filter and
+        fills itself. Visibility is private, library or public; a public list is given
+        an unguessable share token, since on a public link the token is the only credential.
+      parameters:
+      - description: The list
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            color:
+              type: string
+            description:
+              type: string
+            filter:
+              type: object
+            icon:
+              type: string
+            kind:
+              type: string
+            layout:
+              type: string
+            name:
+              type: string
+            shared_library_id:
+              type: string
+            visibility:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              id:
+                type: string
+              kind:
+                type: string
+              name:
+                type: string
+              share_token:
+                type: string
+              visibility:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a list
+      tags:
+      - me
+  /me/lists/{list_id}:
+    delete:
+      parameters:
+      - description: List UUID
+        in: path
+        name: list_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete one of my lists
+      tags:
+      - me
+  /me/lists/{list_id}/books/{book_id}:
+    delete:
+      parameters:
+      - description: List UUID
+        in: path
+        name: list_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Take a book out of one of my lists
+      tags:
+      - me
+    post:
+      description: Manual lists only. A smart list computes its own membership, so
+        adding by hand would produce a row its filter disagrees with.
+      parameters:
+      - description: List UUID
+        in: path
+        name: list_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Put a book in one of my lists
+      tags:
+      - me
   /me/loans:
     get:
       description: |-
@@ -9523,6 +10742,143 @@ paths:
       summary: Import views from a client's local storage
       tags:
       - me
+  /me/wishlist:
+    get:
+      description: 'One list holding both shapes: entries pointing at a catalogue
+        book, and free-text entries for things the catalogue has never heard of.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    author_name:
+                      type: string
+                    book_id:
+                      type: string
+                    id:
+                      type: string
+                    notes:
+                      type: string
+                    priority:
+                      type: integer
+                    title:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List what I want
+      tags:
+      - me
+    post:
+      consumes:
+      - application/json
+      description: Send a book_id for something in the catalogue, or a title for something
+        that is not. Both land in the same list, so asking what you want is one query
+        rather than a union.
+      parameters:
+      - description: The want
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            author_name:
+              type: string
+            book_id:
+              type: string
+            notes:
+              type: string
+            priority:
+              type: integer
+            title:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              book_id:
+                type: string
+              id:
+                type: string
+              title:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Want something
+      tags:
+      - me
+  /me/wishlist/{entry_id}:
+    delete:
+      parameters:
+      - description: Wishlist entry UUID
+        in: path
+        name: entry_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Stop wanting something
+      tags:
+      - me
   /media-types:
     get:
       description: Returns all globally defined media types (book, manga, audiobook,
@@ -9721,6 +11077,38 @@ paths:
       summary: Update a media type (admin)
       tags:
       - media-types
+  /sessions/{session_id}:
+    delete:
+      parameters:
+      - description: Session UUID
+        in: path
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a reading session
+      tags:
+      - me
   /setup/admin:
     post:
       consumes:
