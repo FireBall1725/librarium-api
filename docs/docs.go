@@ -3738,7 +3738,7 @@ const docTemplate = `{
         },
         "/health": {
             "get": {
-                "description": "Returns the API health status and current version",
+                "description": "Returns the API health status, current version, and the oldest client version this server can serve.",
                 "produces": [
                     "application/json"
                 ],
@@ -3752,6 +3752,9 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "properties": {
+                                "min_clients": {
+                                    "type": "object"
+                                },
                                 "started_at": {
                                     "type": "string"
                                 },

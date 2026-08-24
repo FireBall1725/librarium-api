@@ -39,6 +39,11 @@ func GetHandlerError(ctx context.Context) error {
 type envelope struct {
 	Data  any    `json:"data,omitempty"`
 	Error string `json:"error,omitempty"`
+	// Code is a stable, machine-readable discriminator for the error. Clients
+	// branch on it; the message is for people and may be reworded freely.
+	// omitempty keeps it absent from every response that does not set one, so
+	// nothing already on the wire changes shape.
+	Code string `json:"code,omitempty"`
 }
 
 func JSON(w http.ResponseWriter, status int, data any) {
@@ -51,6 +56,18 @@ func Error(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(envelope{Error: msg})
+}
+
+// ErrorCode is Error with a machine-readable code attached, for the cases where
+// a client has to tell one 4xx apart from another and act differently.
+//
+// The message still has to read well on its own: the iOS client does not parse
+// this envelope on failure, it puts the raw response body into the message the
+// user sees.
+func ErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(envelope{Error: msg, Code: code})
 }
 
 // ServerError logs the real Go error (for TUI debugging and structured logs),

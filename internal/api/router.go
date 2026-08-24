@@ -17,6 +17,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
+	"github.com/fireball1725/librarium-api/internal/version"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -136,7 +137,16 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
 	go releaseChecker.Start(ctx)
 
-	requireAuth := middleware.RequireAuth(jwtSvc, denylistRepo, apiTokenRepo)
+	// The client version gate sits inside auth, not in the global chain, for two
+	// reasons: it needs the claims to tell a personal access token apart from an
+	// interactive session, and the global chain also wraps /health, the setup
+	// routes and login, which are exactly what a rejected client still has to
+	// reach to find out why and to recover.
+	clientGate := middleware.RequireClientVersion(version.MinClients)
+	authOnly := middleware.RequireAuth(jwtSvc, denylistRepo, apiTokenRepo)
+	requireAuth := func(h http.Handler) http.Handler {
+		return authOnly(clientGate(h))
+	}
 	// requireAdmin chains auth validation then instance-admin check
 	requireAdmin := func(h http.Handler) http.Handler {
 		return requireAuth(middleware.RequireInstanceAdmin(h))

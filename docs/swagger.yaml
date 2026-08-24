@@ -3888,7 +3888,8 @@ paths:
       - genres
   /health:
     get:
-      description: Returns the API health status and current version
+      description: Returns the API health status, current version, and the oldest
+        client version this server can serve.
       produces:
       - application/json
       responses:
@@ -3896,6 +3897,8 @@ paths:
           description: OK
           schema:
             properties:
+              min_clients:
+                type: object
               started_at:
                 type: string
               status:
