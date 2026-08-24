@@ -43,7 +43,7 @@ func (r *AISuggestionsRepo) ListOptedInUsers(ctx context.Context) ([]*OptedInUse
 		SELECT u.id, s.taste_profile,
 			(
 				SELECT lm.library_id
-				FROM library_memberships lm
+				FROM library_members lm
 				WHERE lm.user_id = u.id
 				ORDER BY lm.joined_at ASC
 				LIMIT 1
@@ -95,7 +95,7 @@ func (r *AISuggestionsRepo) GetOptedInUser(ctx context.Context, userID uuid.UUID
 		SELECT u.id, s.taste_profile,
 			(
 				SELECT lm.library_id
-				FROM library_memberships lm
+				FROM library_members lm
 				WHERE lm.user_id = u.id
 				ORDER BY lm.joined_at ASC
 				LIMIT 1
@@ -571,7 +571,7 @@ func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUI
 		LEFT JOIN LATERAL (
 		    SELECT lb.library_id
 		    FROM held_books lb
-		    JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = s.user_id
+		    JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = s.user_id
 		    WHERE lb.book_id = s.book_id
 		    ORDER BY lb.added_at ASC
 		    LIMIT 1

@@ -1284,7 +1284,7 @@ func (r *BookRepo) CurrentlyReading(ctx context.Context, userID uuid.UUID, limit
 			SELECT DISTINCT ON (lb.book_id)
 				lb.book_id, lb.library_id
 			FROM held_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		)
 		SELECT
@@ -1358,7 +1358,7 @@ func (r *BookRepo) RecentlyAdded(ctx context.Context, userID uuid.UUID, limit in
 			SELECT DISTINCT ON (lb.book_id)
 				lb.book_id, lb.library_id, lb.added_at
 			FROM held_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		)
 		SELECT
@@ -1419,7 +1419,7 @@ func (r *BookRepo) PicksOfTheDay(ctx context.Context, userID uuid.UUID, mediaTyp
 			SELECT DISTINCT ON (lb.book_id)
 				lb.book_id, lb.library_id, lb.added_at
 			FROM held_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		)
 		SELECT
@@ -1510,7 +1510,7 @@ func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*Da
 		WITH user_book AS (
 			SELECT DISTINCT ON (lb.book_id) lb.book_id, lb.added_at
 			FROM held_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		)
 		SELECT
@@ -1551,7 +1551,7 @@ func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*Da
 				COUNT(DISTINCT b.id) AS c
 			FROM books b
 			JOIN held_books lb ON lb.book_id = b.id
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			JOIN reading_sessions rs ON rs.book_id = b.id AND rs.user_id = $1
 			WHERE rs.finished_at IS NOT NULL
 			  AND rs.finished_at >= date_trunc('month', NOW()) - INTERVAL '11 months'
@@ -1611,7 +1611,7 @@ func (r *BookRepo) ContinueSeries(ctx context.Context, userID uuid.UUID, limit i
 			FROM book_series bs
 			JOIN books b ON b.id = bs.book_id
 			JOIN held_books lb ON lb.book_id = b.id
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			JOIN user_books ubi ON ubi.book_id = b.id AND ubi.user_id = $1 AND ubi.deleted_at IS NULL
 			WHERE ubi.read_status = 'read'
 			GROUP BY bs.series_id
@@ -1625,7 +1625,7 @@ func (r *BookRepo) ContinueSeries(ctx context.Context, userID uuid.UUID, limit i
 			JOIN user_read_positions urp ON urp.series_id = bs.series_id
 			JOIN books b ON b.id = bs.book_id
 			JOIN held_books lb ON lb.book_id = b.id
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			WHERE bs.position > urp.max_pos
 			  AND NOT EXISTS (
 				SELECT 1
@@ -1710,7 +1710,7 @@ func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit
 		WITH user_book AS (
 			SELECT DISTINCT ON (lb.book_id) lb.book_id, lb.library_id
 			FROM held_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		),
 		finished AS (

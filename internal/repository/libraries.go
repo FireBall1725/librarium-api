@@ -137,7 +137,7 @@ func (r *LibraryRepo) ListForUser(ctx context.Context, userID uuid.UUID) ([]*mod
 	q := `
 		SELECT l.` + libraryListColumns(1) + `
 		FROM libraries l
-		JOIN library_memberships lm ON lm.library_id = l.id
+		JOIN library_members lm ON lm.library_id = l.id
 		WHERE lm.user_id = $1
 		ORDER BY l.name`
 

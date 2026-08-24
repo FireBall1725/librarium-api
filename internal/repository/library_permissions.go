@@ -36,22 +36,30 @@ type LibraryAccess struct {
 // under-report what they can actually do and the client would hide controls
 // that would in fact succeed.
 func (r *LibraryRepo) ListAccessForUser(ctx context.Context, userID uuid.UUID, isInstanceAdmin bool) ([]*LibraryAccess, error) {
-	// `lm.deleted_at IS NULL` is defensive. Membership removal is a hard DELETE
-	// today so the column is never set, but if that ever becomes a soft delete
-	// an unfiltered permission query would keep granting access to people who
-	// had been removed.
+	// Permissions come from user_permissions rather than from the row's own
+	// role. library_members collapses a person to one role per library, which is
+	// right for a label and wrong for this: a grant table can hold two roles, and
+	// an instance-wide grant reaches every library without appearing as a
+	// membership at all. Reading the one role would under-report both, and this
+	// answer decides which controls the client shows, so under-reporting hides
+	// controls that would in fact succeed.
+	//
+	// `lm.deleted_at IS NULL` is defensive. Removal is a hard DELETE today so
+	// the column is never set, but if that ever becomes a soft delete an
+	// unfiltered permission query would keep granting access to people who had
+	// been removed.
 	const memberQ = `
 		SELECT l.id, l.name, l.slug, ro.name AS role,
-		       COALESCE(array_agg(DISTINCT p.name) FILTER (WHERE p.name IS NOT NULL), '{}') AS perms,
+		       COALESCE((SELECT array_agg(DISTINCT up.permission_code)
+		                   FROM user_permissions up
+		                  WHERE up.user_id = $1
+		                    AND (up.library_id IS NULL OR up.library_id = l.id)), '{}') AS perms,
 		       (SELECT COUNT(*) FROM held_books lb
 		         WHERE lb.library_id = l.id AND lb.deleted_at IS NULL) AS book_count
-		FROM library_memberships lm
-		JOIN libraries l         ON l.id = lm.library_id
-		JOIN roles ro            ON ro.id = lm.role_id
-		LEFT JOIN role_permissions rp ON rp.role_id = lm.role_id
-		LEFT JOIN permissions p       ON p.id = rp.permission_id
+		FROM library_members lm
+		JOIN libraries l ON l.id = lm.library_id
+		JOIN roles ro    ON ro.id = lm.role_id
 		WHERE lm.user_id = $1 AND lm.deleted_at IS NULL
-		GROUP BY l.id, l.name, l.slug, ro.name
 		ORDER BY l.name`
 
 	// Every library, every permission: what an instance admin can actually do.

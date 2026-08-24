@@ -1130,3 +1130,107 @@ func TestVocabulariesAreReadableAndNonEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestLibraryMembersMatchesTheTableItReplaced pins the switch from
+// library_memberships to a view over user_roles. The two must name the same
+// people, or somebody either lost access or gained it.
+func TestLibraryMembersMatchesTheTableItReplaced(t *testing.T) {
+	pool, ctx := tiersPool(t)
+
+	type pair struct{ library, user uuid.UUID }
+	read := func(q string) map[pair]bool {
+		rows, err := pool.Query(ctx, q)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		defer rows.Close()
+		out := map[pair]bool{}
+		for rows.Next() {
+			var p pair
+			if err := rows.Scan(&p.library, &p.user); err != nil {
+				t.Fatalf("scanning: %v", err)
+			}
+			out[p] = true
+		}
+		return out
+	}
+
+	was := read(`SELECT library_id, user_id FROM library_memberships WHERE deleted_at IS NULL`)
+	now := read(`SELECT library_id, user_id FROM library_members`)
+	if len(was) == 0 {
+		t.Skip("no memberships to compare")
+	}
+	for p := range was {
+		if !now[p] {
+			t.Errorf("user %s lost access to library %s in the switch", p.user, p.library)
+		}
+	}
+	for p := range now {
+		if !was[p] {
+			t.Errorf("user %s gained access to library %s in the switch", p.user, p.library)
+		}
+	}
+}
+
+// TestLibraryMembersCollapsesASecondRole covers the cardinality trap. user_roles
+// has no unique constraint on (library_id, user_id) because a grant table has to
+// be able to say someone holds two roles; every reader of the old table assumed
+// exactly one. A second grant must not make a person appear twice, or the books
+// list joined through it shows every book twice.
+func TestLibraryMembersCollapsesASecondRole(t *testing.T) {
+	pool, ctx := tiersPool(t)
+
+	var libraryID, userID, roleID uuid.UUID
+	err := pool.QueryRow(ctx,
+		`SELECT library_id, user_id, role_id FROM library_members LIMIT 1`).
+		Scan(&libraryID, &userID, &roleID)
+	if err != nil {
+		t.Skipf("no members: %v", err)
+	}
+
+	// A different library-scoped role than the one already held.
+	var otherRole uuid.UUID
+	err = pool.QueryRow(ctx,
+		`SELECT id FROM roles WHERE scope = 'library' AND id <> $1 LIMIT 1`, roleID).Scan(&otherRole)
+	if err != nil {
+		t.Skipf("no second library role to grant: %v", err)
+	}
+
+	grantID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_roles (id, user_id, role_id, scope, library_id)
+		 VALUES ($1, $2, $3, 'library', $4)`, grantID, userID, otherRole, libraryID); err != nil {
+		t.Fatalf("granting a second role: %v", err)
+	}
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM user_roles WHERE id = $1`, grantID) }()
+
+	var rows int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM library_members WHERE library_id = $1 AND user_id = $2`,
+		libraryID, userID).Scan(&rows); err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("two grants produced %d member rows, want 1", rows)
+	}
+
+	// The surviving row reports the more privileged of the two, measured by how
+	// many permissions the role actually grants.
+	var reported uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT role_id FROM library_members WHERE library_id = $1 AND user_id = $2`,
+		libraryID, userID).Scan(&reported); err != nil {
+		t.Fatalf("reading the collapsed role: %v", err)
+	}
+	var reportedPerms, heldPerms int
+	if err := pool.QueryRow(ctx,
+		`SELECT (SELECT count(*) FROM role_permissions WHERE role_id = $1),
+		        (SELECT count(*) FROM role_permissions WHERE role_id = $2)`,
+		reported, roleID).Scan(&reportedPerms, &heldPerms); err != nil {
+		t.Fatalf("counting permissions: %v", err)
+	}
+	if reportedPerms < heldPerms {
+		t.Errorf("collapsed to a role granting %d permissions when one granting %d was held",
+			reportedPerms, heldPerms)
+	}
+}

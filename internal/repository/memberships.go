@@ -25,10 +25,32 @@ func NewMembershipRepo(db *pgxpool.Pool) *MembershipRepo {
 	return &MembershipRepo{db: db}
 }
 
+// Add grants a library-scoped role.
+//
+// Writing user_roles rather than library_members, which is a view and not
+// writable. The signature is unchanged so the member routes keep working, but
+// two things about it are now historical: id is supplied by the caller where
+// user_roles would mint its own, and invitedBy is stored as granted_by, which
+// is what the fact always was.
 func (r *MembershipRepo) Add(ctx context.Context, tx pgx.Tx, id, libraryID, userID, roleID uuid.UUID, invitedBy *uuid.UUID) error {
+	// user_roles has no unique constraint on (library_id, user_id): holding two
+	// roles is something a grant table has to be able to say. The member routes
+	// still promise one, so the duplicate check is here rather than left to a
+	// constraint violation that will never fire.
+	const dup = `
+		SELECT EXISTS(SELECT 1 FROM user_roles
+		               WHERE scope = 'library' AND library_id = $1 AND user_id = $2)`
+	var exists bool
+	if err := tx.QueryRow(ctx, dup, libraryID, userID).Scan(&exists); err != nil {
+		return fmt.Errorf("checking for an existing grant: %w", err)
+	}
+	if exists {
+		return ErrDuplicate
+	}
+
 	const q = `
-		INSERT INTO library_memberships (id, library_id, user_id, role_id, invited_by)
-		VALUES ($1, $2, $3, $4, $5)`
+		INSERT INTO user_roles (id, library_id, user_id, role_id, granted_by, scope)
+		VALUES ($1, $2, $3, $4, $5, 'library')`
 
 	_, err := tx.Exec(ctx, q, id, libraryID, userID, roleID, invitedBy)
 	if err != nil {
@@ -62,7 +84,7 @@ func (r *MembershipRepo) ListByLibrary(ctx context.Context, libraryID uuid.UUID,
 		            FROM member_tags mt JOIN tags t ON t.id = mt.tag_id WHERE mt.library_id = lm.library_id AND mt.user_id = lm.user_id),
 		           '[]'::json
 		       ) AS tags
-		FROM library_memberships lm
+		FROM library_members lm
 		JOIN users u  ON u.id  = lm.user_id
 		JOIN roles ro ON ro.id = lm.role_id
 		` + where + `
@@ -87,7 +109,8 @@ func (r *MembershipRepo) ListByLibrary(ctx context.Context, libraryID uuid.UUID,
 
 func (r *MembershipRepo) UpdateRole(ctx context.Context, libraryID, userID, roleID uuid.UUID) error {
 	result, err := r.db.Exec(ctx,
-		`UPDATE library_memberships SET role_id = $3 WHERE library_id = $1 AND user_id = $2`,
+		`UPDATE user_roles SET role_id = $3
+		  WHERE scope = 'library' AND library_id = $1 AND user_id = $2`,
 		libraryID, userID, roleID,
 	)
 	if err != nil {
@@ -103,7 +126,7 @@ func (r *MembershipRepo) UpdateRole(ctx context.Context, libraryID, userID, role
 // Cheap point lookup used by handlers that need to validate cross-user
 // references (e.g. import attribution) without loading the full member list.
 func (r *MembershipRepo) IsMember(ctx context.Context, libraryID, userID uuid.UUID) (bool, error) {
-	const q = `SELECT EXISTS(SELECT 1 FROM library_memberships WHERE library_id = $1 AND user_id = $2)`
+	const q = `SELECT EXISTS(SELECT 1 FROM library_members WHERE library_id = $1 AND user_id = $2)`
 	var ok bool
 	if err := r.db.QueryRow(ctx, q, libraryID, userID).Scan(&ok); err != nil {
 		return false, fmt.Errorf("checking membership: %w", err)
@@ -113,7 +136,7 @@ func (r *MembershipRepo) IsMember(ctx context.Context, libraryID, userID uuid.UU
 
 func (r *MembershipRepo) Remove(ctx context.Context, libraryID, userID uuid.UUID) error {
 	result, err := r.db.Exec(ctx,
-		`DELETE FROM library_memberships WHERE library_id = $1 AND user_id = $2`,
+		`DELETE FROM user_roles WHERE scope = 'library' AND library_id = $1 AND user_id = $2`,
 		libraryID, userID,
 	)
 	if err != nil {
