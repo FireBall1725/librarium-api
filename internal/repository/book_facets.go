@@ -189,9 +189,24 @@ func (r *BookRepo) Facets(
 	}
 	// By id, not name: a shelf name is only unique within its library, so two
 	// libraries can both have "Favourites" and they are different shelves.
+	// Reads list_books rather than the shelf-shaped view over it, for the same
+	// reason the shelf arm below does: the view only holds lists shared with a
+	// library, so selecting a private list matched nothing. That is worse than
+	// an empty result, because every other dimension is counted with this
+	// applied, so all of them reported zero and the page said "4 of 0 records"
+	// while showing four books.
+	//
+	// Carries the same visibility arm as the counted arm below. The base scope
+	// already limits this to books the caller can see, so the leak is narrow,
+	// but selecting a stranger's list id would still report how many of your
+	// own books sit on it.
 	if len(sel.Shelves) > 0 {
-		mShelf = fmt.Sprintf(`EXISTS (SELECT 1 FROM library_shelf_books bsh2
-                 WHERE bsh2.book_id = s.id AND bsh2.shelf_id = ANY(%s))`, arg(sel.Shelves))
+		mShelf = fmt.Sprintf(`EXISTS (SELECT 1 FROM list_books lb5
+                 JOIN lists l5 ON l5.id = lb5.list_id
+                 WHERE lb5.book_id = s.id AND lb5.list_id = ANY(%s)
+                   AND (l5.owner_user_id = %s
+                        OR (l5.visibility = 'library' AND l5.shared_library_id = ANY($1))))`,
+			arg(sel.Shelves), arg(callerID))
 	}
 	if len(sel.Ratings) > 0 {
 		mRating = fmt.Sprintf(`x.rating = ANY(%s)`, arg(sel.Ratings))
