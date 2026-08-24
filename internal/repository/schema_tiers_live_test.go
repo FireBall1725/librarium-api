@@ -591,3 +591,198 @@ func TestWishlistHoldsBothShapesInOneTable(t *testing.T) {
 		t.Errorf("one list returned %d of the 2 entries just added", sawBoth)
 	}
 }
+
+// TestPermissionCheckIsUnchangedByTheRoleMigration compares the query the
+// middleware used to run against the one it runs now, for every combination of
+// real user, real library and real permission.
+//
+// This is the test that matters most in the whole tier change. The permission
+// path guards 88 routes, and a difference here is not a wrong count on a page,
+// it is someone seeing or changing what they should not.
+func TestPermissionCheckIsUnchangedByTheRoleMigration(t *testing.T) {
+	pool, ctx := tiersPool(t)
+
+	var users, libraries []uuid.UUID
+	var permissions []string
+
+	rows, err := pool.Query(ctx, `SELECT id FROM users`)
+	if err != nil {
+		t.Fatalf("listing users: %v", err)
+	}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		users = append(users, id)
+	}
+	rows.Close()
+
+	rows, err = pool.Query(ctx, `SELECT id FROM libraries`)
+	if err != nil {
+		t.Fatalf("listing libraries: %v", err)
+	}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		libraries = append(libraries, id)
+	}
+	rows.Close()
+
+	rows, err = pool.Query(ctx, `SELECT name FROM permissions`)
+	if err != nil {
+		t.Fatalf("listing permissions: %v", err)
+	}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			t.Fatal(err)
+		}
+		permissions = append(permissions, p)
+	}
+	rows.Close()
+
+	if len(users) == 0 || len(libraries) == 0 || len(permissions) == 0 {
+		t.Skip("need users, libraries and permissions to compare")
+	}
+
+	// What the middleware ran before: library_memberships joined to the role's
+	// permissions, with instance admins bypassed in Go rather than in SQL.
+	const oldQ = `
+		SELECT COUNT(*) > 0
+		  FROM library_memberships lm
+		  JOIN role_permissions rp ON rp.role_id = lm.role_id
+		  JOIN permissions p       ON p.id = rp.permission_id
+		 WHERE lm.library_id = $1 AND lm.user_id = $2 AND p.name = $3`
+
+	// What it runs now: user_roles, where a null library_id is an instance-wide
+	// grant and so covers the case the Go bypass used to handle.
+	const newQ = `
+		SELECT EXISTS (
+		    SELECT 1
+		      FROM user_roles ur
+		      JOIN role_permissions rp ON rp.role_id = ur.role_id
+		      JOIN permissions p       ON p.id = rp.permission_id
+		     WHERE ur.user_id = $2 AND p.name = $3
+		       AND (ur.library_id IS NULL OR ur.library_id = $1))`
+
+	var compared, differed int
+	for _, u := range users {
+		var isAdmin bool
+		if err := pool.QueryRow(ctx, `SELECT is_instance_admin FROM users WHERE id = $1`, u).Scan(&isAdmin); err != nil {
+			t.Fatalf("reading admin flag: %v", err)
+		}
+		for _, l := range libraries {
+			for _, p := range permissions {
+				var before, after bool
+				if err := pool.QueryRow(ctx, oldQ, l, u, p).Scan(&before); err != nil {
+					t.Fatalf("old query: %v", err)
+				}
+				if err := pool.QueryRow(ctx, newQ, l, u, p).Scan(&after); err != nil {
+					t.Fatalf("new query: %v", err)
+				}
+				// The old path let instance admins through before reaching SQL,
+				// so the effective answer then was "membership grants it OR the
+				// user is an admin".
+				effectiveBefore := before || isAdmin
+				compared++
+				if effectiveBefore != after {
+					differed++
+					if differed <= 5 {
+						t.Errorf("permission %q for user %s in library %s: was %v, now %v",
+							p, u, l, effectiveBefore, after)
+					}
+				}
+			}
+		}
+	}
+
+	t.Logf("compared %d user/library/permission combinations", compared)
+	if differed > 0 {
+		t.Errorf("%d of %d combinations changed answer", differed, compared)
+	}
+}
+
+func TestRoleGrantsRespectScope(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewUserRoleRepo(pool)
+
+	var userID, libraryID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no libraries: %v", err)
+	}
+
+	var libraryRole, instanceRole uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM roles WHERE scope = 'library' LIMIT 1`).Scan(&libraryRole); err != nil {
+		t.Skipf("no library-scoped role: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM roles WHERE scope = 'instance' LIMIT 1`).Scan(&instanceRole); err != nil {
+		t.Skipf("no instance-scoped role: %v", err)
+	}
+
+	// Granting library_viewer across the whole instance is meaningless, and
+	// granting instance_admin on one library would scope admin:users to a
+	// library, which is not a thing.
+	if err := repo.Grant(ctx, userID, libraryRole, nil, nil); !errors.Is(err, ErrRoleScopeMismatch) {
+		t.Errorf("granting a library role instance-wide returned %v, want ErrRoleScopeMismatch", err)
+		_ = repo.Revoke(ctx, userID, libraryRole, nil)
+	}
+	if err := repo.Grant(ctx, userID, instanceRole, &libraryID, nil); !errors.Is(err, ErrRoleScopeMismatch) {
+		t.Errorf("pinning an instance role to a library returned %v, want ErrRoleScopeMismatch", err)
+		_ = repo.Revoke(ctx, userID, instanceRole, &libraryID)
+	}
+}
+
+func TestReadableLibrariesMatchesWhatTheOldMembershipQuerySaid(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewUserRoleRepo(pool)
+
+	rows, err := pool.Query(ctx, `SELECT id, is_instance_admin FROM users`)
+	if err != nil {
+		t.Fatalf("listing users: %v", err)
+	}
+	type u struct {
+		id    uuid.UUID
+		admin bool
+	}
+	var all []u
+	for rows.Next() {
+		var x u
+		if err := rows.Scan(&x.id, &x.admin); err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, x)
+	}
+	rows.Close()
+
+	for _, user := range all {
+		got, err := repo.ReadableLibraryIDs(ctx, user.id)
+		if err != nil {
+			t.Fatalf("resolving readable libraries: %v", err)
+		}
+
+		var want int
+		q := `SELECT count(*) FROM library_memberships lm
+		       JOIN libraries l ON l.id = lm.library_id
+		      WHERE lm.user_id = $1 AND lm.deleted_at IS NULL`
+		if user.admin {
+			q = `SELECT count(*) FROM libraries`
+		}
+		args := []any{user.id}
+		if user.admin {
+			args = nil
+		}
+		if err := pool.QueryRow(ctx, q, args...).Scan(&want); err != nil {
+			t.Fatalf("counting old membership: %v", err)
+		}
+
+		if len(got) != want {
+			t.Errorf("user %s can read %d libraries, old membership said %d", user.id, len(got), want)
+		}
+	}
+}

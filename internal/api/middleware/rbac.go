@@ -61,21 +61,33 @@ func RequireLibraryPermission(db *pgxpool.Pool, permission string) func(http.Han
 				return
 			}
 
+			// Reads user_roles, where membership IS holding a library-scoped
+			// role, so being a member and having a role stopped being two facts
+			// that could disagree.
+			//
+			// The library_id IS NULL arm is an instance-wide grant, which
+			// reaches every library. That makes the IsInstanceAdmin bypass above
+			// redundant rather than load-bearing: migration 000025 gave every
+			// instance admin a matching grant. The bypass stays until the
+			// contract migration drops users.is_instance_admin, because removing
+			// a safety check in the same release that introduces its replacement
+			// is how a permission bug ships unnoticed.
 			const q = `
-				SELECT COUNT(*)
-				FROM library_memberships lm
-				JOIN role_permissions rp ON rp.role_id = lm.role_id
-				JOIN permissions p      ON p.id = rp.permission_id
-				WHERE lm.library_id = $1
-				  AND lm.user_id    = $2
-				  AND p.name        = $3`
+				SELECT EXISTS (
+				    SELECT 1
+				      FROM user_roles ur
+				      JOIN role_permissions rp ON rp.role_id = ur.role_id
+				      JOIN permissions p       ON p.id = rp.permission_id
+				     WHERE ur.user_id = $2
+				       AND p.name     = $3
+				       AND (ur.library_id IS NULL OR ur.library_id = $1))`
 
-			var count int
-			if err := db.QueryRow(r.Context(), q, libraryID, claims.UserID, permission).Scan(&count); err != nil {
+			var allowed bool
+			if err := db.QueryRow(r.Context(), q, libraryID, claims.UserID, permission).Scan(&allowed); err != nil {
 				respond.Error(w, http.StatusInternalServerError, "permission check failed")
 				return
 			}
-			if count == 0 {
+			if !allowed {
 				respond.Error(w, http.StatusForbidden, "insufficient permissions")
 				return
 			}
