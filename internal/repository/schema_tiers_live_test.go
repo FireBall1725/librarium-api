@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/fireball1725/librarium-api/internal/api/responses"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"os"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -1403,5 +1405,210 @@ func TestListFilterRefusesSomebodyElsesList(t *testing.T) {
 	}
 	if got := count(stranger); got != 0 {
 		t.Errorf("a stranger filtering on someone else's private list sees %d books, want 0", got)
+	}
+}
+
+// TestSyncProgressRoundTrips covers a regression that lost real data.
+//
+// Progress moved from the interactions row to reading_sessions, and the sync
+// path briefly rejected the field on the reasoning that a client told invalid
+// would stop sending it. The shipping iOS client does the opposite: it treats
+// invalid as acknowledged and deletes the op, so a reader who set their page
+// count saw it save locally and never leave the device.
+func TestSyncProgressRoundTrips(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	sync := NewSyncRepo(pool)
+
+	// A book with an edition, since a page number needs a printing to count in.
+	var userID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT ub.user_id, ub.book_id FROM user_books ub
+		  WHERE ub.deleted_at IS NULL
+		    AND EXISTS (SELECT 1 FROM book_editions be WHERE be.book_id = ub.book_id)
+		  LIMIT 1`).Scan(&userID, &bookID); err != nil {
+		t.Skipf("no opinion on a book with an edition: %v", err)
+	}
+	var entityID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM user_books WHERE user_id = $1 AND book_id = $2`,
+		userID, bookID).Scan(&entityID); err != nil {
+		t.Fatalf("finding the row: %v", err)
+	}
+
+	defer func() {
+		_, _ = pool.Exec(ctx,
+			`DELETE FROM reading_sessions WHERE user_id = $1 AND book_id = $2 AND progress_updated_at IS NOT NULL`,
+			userID, bookID)
+	}()
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM reading_sessions WHERE user_id = $1 AND book_id = $2`, userID, bookID); err != nil {
+		t.Fatalf("clearing sessions: %v", err)
+	}
+
+	at := time.Now().Add(-time.Hour)
+	op := responses.SyncApplyOp{
+		EntityType: "user_book_interaction",
+		EntityID:   entityID,
+		Field:      "progress",
+		Value:      map[string]any{"pages_read": float64(120)},
+		UpdatedAt:  at,
+	}
+	status, err := sync.ApplyUserBookInteractionOp(ctx, userID, op)
+	if err != nil {
+		t.Fatalf("applying progress: %v", err)
+	}
+	if status != SyncApplyStatusApplied {
+		t.Fatalf("progress returned %q, want applied; invalid is what silently dropped it", status)
+	}
+
+	var unit string
+	var value float64
+	if err := pool.QueryRow(ctx,
+		`SELECT progress_unit, progress_value FROM reading_sessions
+		  WHERE user_id = $1 AND book_id = $2 AND finished_at IS NULL
+		  ORDER BY created_at DESC LIMIT 1`, userID, bookID).Scan(&unit, &value); err != nil {
+		t.Fatalf("progress was accepted but stored nowhere: %v", err)
+	}
+	if unit != "page" || value != 120 {
+		t.Errorf("stored %s=%v, want page=120", unit, value)
+	}
+
+	// An older op must not overwrite a newer value, the same rule every other
+	// synced field follows.
+	older := op
+	older.UpdatedAt = at.Add(-time.Hour)
+	older.Value = map[string]any{"pages_read": float64(5)}
+	if status, err := sync.ApplyUserBookInteractionOp(ctx, userID, older); err != nil {
+		t.Fatalf("applying an older op: %v", err)
+	} else if status != SyncApplyStatusDiscardedStale {
+		t.Errorf("an older progress op returned %q, want discarded_stale", status)
+	}
+
+	// And it comes back down, or a second device never learns it.
+	ops, err := sync.UserBookInteractionChanges(ctx, userID, at.Add(-2*time.Hour), 500)
+	if err != nil {
+		t.Fatalf("reading changes: %v", err)
+	}
+	// The feed is one op per changed field, so progress is its own row.
+	found := false
+	for _, o := range ops {
+		if o.EntityID == entityID && o.Field == "progress" && o.Value != nil {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("progress was stored but never sent back, so another device would never see it")
+	}
+}
+
+// TestInteractionCarriesItsRowID guards a field that looks like decoration and
+// is not.
+//
+// The iOS outbox addresses every offline edit by interaction.id. This read
+// briefly returned the zero UUID, which parses as a perfectly good UUID on the
+// client, so edits were aimed at a row that does not exist, acknowledged as
+// not_found, and deleted. The old routes still serve clients in the field, so
+// the id has to be real there and not only on the new ones.
+func TestInteractionCarriesItsRowID(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewEditionRepo(pool)
+
+	var userID, editionID, wantID uuid.UUID
+	err := pool.QueryRow(ctx,
+		`SELECT ub.user_id, be.id, ub.id
+		   FROM user_books ub
+		   JOIN book_editions be ON be.book_id = ub.book_id
+		  WHERE ub.deleted_at IS NULL
+		  LIMIT 1`).Scan(&userID, &editionID, &wantID)
+	if err != nil {
+		t.Skipf("no opinion on a book with an edition: %v", err)
+	}
+
+	got, err := repo.GetInteraction(ctx, userID, editionID)
+	if err != nil {
+		t.Fatalf("reading the interaction: %v", err)
+	}
+	if got.ID == uuid.Nil {
+		t.Fatal("interaction came back with the zero id; every outbox op addressed to it would be dropped")
+	}
+	if got.ID != wantID {
+		t.Errorf("id = %s, want the user_books row id %s", got.ID, wantID)
+	}
+	// Still the edition that was asked for, since old clients key their local
+	// store on it.
+	if got.BookEditionID != editionID {
+		t.Errorf("book_edition_id = %s, want the edition requested %s", got.BookEditionID, editionID)
+	}
+}
+
+// TestLegacySyncIDsStillResolve covers the upgrade path for a client that was
+// offline across it.
+//
+// 000027 minted fresh surrogate ids for user_books, so an id cached before the
+// upgrade addresses nothing. Its comment said the client would get not_found
+// and re-read, losing only a round trip. The shipping iOS client instead treats
+// not_found as acknowledged and deletes the op, so every edit queued offline
+// before the upgrade would be thrown away on reconnect.
+func TestLegacySyncIDsStillResolve(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewSyncRepo(pool)
+
+	var legacyID, userBookID, userID uuid.UUID
+	err := pool.QueryRow(ctx,
+		`SELECT l.legacy_id, l.user_book_id, ub.user_id
+		   FROM legacy_interaction_ids l
+		   JOIN user_books ub ON ub.id = l.user_book_id
+		  WHERE ub.deleted_at IS NULL
+		  LIMIT 1`).Scan(&legacyID, &userBookID, &userID)
+	if err != nil {
+		t.Skipf("no forwarded ids: %v", err)
+	}
+	if legacyID == userBookID {
+		t.Skip("this install kept its ids, so there is nothing to forward")
+	}
+
+	// An op addressed the old way has to land, not be answered not_found.
+	before := time.Now()
+	status, err := repo.ApplyUserBookInteractionOp(ctx, userID, responses.SyncApplyOp{
+		EntityType: "user_book_interaction",
+		EntityID:   legacyID,
+		Field:      "is_favorite",
+		Value:      true,
+		UpdatedAt:  before,
+	})
+	if err != nil {
+		t.Fatalf("applying through a legacy id: %v", err)
+	}
+	if status != SyncApplyStatusApplied {
+		t.Fatalf("a legacy id returned %q, want applied; not_found is what the client throws away", status)
+	}
+
+	var fav bool
+	if err := pool.QueryRow(ctx,
+		`SELECT is_favorite FROM user_books WHERE id = $1`, userBookID).Scan(&fav); err != nil {
+		t.Fatalf("re-reading: %v", err)
+	}
+	if !fav {
+		t.Error("the op was acknowledged but changed nothing")
+	}
+	// Put it back rather than leaving a favourite nobody set.
+	_, _ = pool.Exec(ctx,
+		`UPDATE user_books SET is_favorite = false, is_favorite_updated_at = NULL WHERE id = $1`,
+		userBookID)
+
+	// An id belonging to nobody still misses, so forwarding has not become a
+	// way to write to another person's row.
+	status, err = repo.ApplyUserBookInteractionOp(ctx, userID, responses.SyncApplyOp{
+		EntityType: "user_book_interaction",
+		EntityID:   uuid.New(),
+		Field:      "is_favorite",
+		Value:      true,
+		UpdatedAt:  before,
+	})
+	if err != nil {
+		t.Fatalf("applying an unknown id: %v", err)
+	}
+	if status != SyncApplyStatusNotFound {
+		t.Errorf("an unknown id returned %q, want not_found", status)
 	}
 }

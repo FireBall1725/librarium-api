@@ -19,6 +19,11 @@ import (
 // forbade outright. Borrowing a book, rating it, and buying it later becomes a
 // thing the schema can express.
 type UserBook struct {
+	// ID is the surrogate key sync addresses ops by. The natural key is
+	// (user_id, book_id); this exists because the sync protocol hands clients
+	// an opaque id and takes it back, and changing that shape would put a
+	// schema change on the App Store's release schedule.
+	ID     uuid.UUID `json:"id"`
 	UserID uuid.UUID `json:"user_id"`
 	BookID uuid.UUID `json:"book_id"`
 
