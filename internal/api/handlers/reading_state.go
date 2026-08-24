@@ -290,6 +290,128 @@ func (h *ReadingStateHandler) CreateSession(w http.ResponseWriter, r *http.Reque
 	respond.JSON(w, http.StatusCreated, session)
 }
 
+type updateSessionBody struct {
+	EditionID     *string  `json:"edition_id"`
+	StartedAt     *string  `json:"started_at"`
+	FinishedAt    *string  `json:"finished_at"`
+	Status        *string  `json:"status"`
+	ProgressUnit  *string  `json:"progress_unit"`
+	ProgressValue *float64 `json:"progress_value"`
+}
+
+// UpdateSession godoc
+//
+// @Summary     Correct a logged reading session
+// @Description Partial update. A field left out is untouched; send it as null to clear it, which is how a mistyped finish date is removed rather than overwritten.
+// @Tags        me
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       session_id  path  string  true  "Session UUID"
+// @Param       body  body  object{edition_id=string,started_at=string,finished_at=string,status=string,progress_unit=string,progress_value=number}  true  "The changes"
+// @Success     200  {object}  object{id=string,book_id=string,started_at=string,finished_at=string,status=string}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     403  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /sessions/{session_id} [patch]
+func (h *ReadingStateHandler) UpdateSession(w http.ResponseWriter, r *http.Request) {
+	sessionID, err := uuid.Parse(r.PathValue("session_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid session id")
+		return
+	}
+
+	// Decoding into a map as well as the struct is what separates "sent as
+	// null" from "not sent at all". A pointer alone cannot tell them apart, and
+	// they mean different things here: one clears a date, the other keeps it.
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var body updateSessionBody
+	for key, target := range map[string]any{
+		"edition_id": &body.EditionID, "started_at": &body.StartedAt,
+		"finished_at": &body.FinishedAt, "status": &body.Status,
+		"progress_unit": &body.ProgressUnit, "progress_value": &body.ProgressValue,
+	} {
+		if v, ok := raw[key]; ok {
+			if err := json.Unmarshal(v, target); err != nil {
+				respond.Error(w, http.StatusBadRequest, "invalid value for "+key)
+				return
+			}
+		}
+	}
+
+	sent := func(key string) bool { _, ok := raw[key]; return ok }
+	in := repository.UpdateSessionInput{
+		StartedAt:     body.StartedAt,
+		ClearStarted:  sent("started_at") && body.StartedAt == nil,
+		FinishedAt:    body.FinishedAt,
+		ClearFinished: sent("finished_at") && body.FinishedAt == nil,
+		Status:        body.Status,
+		ProgressUnit:  body.ProgressUnit,
+		ProgressValue: body.ProgressValue,
+		ClearEdition:  sent("edition_id") && body.EditionID == nil,
+	}
+	if body.EditionID != nil && *body.EditionID != "" {
+		id, err := uuid.Parse(*body.EditionID)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid edition id")
+			return
+		}
+		in.EditionID = &id
+	}
+
+	if !h.ownsSession(w, r, sessionID) {
+		return
+	}
+
+	session, err := h.sessions.Update(r.Context(), sessionID, in)
+	switch {
+	case errors.Is(err, repository.ErrPageNeedsEdition):
+		respond.Error(w, http.StatusBadRequest,
+			"page progress needs an edition, since page 200 of a paperback is not page 200 of the omnibus")
+		return
+	case errors.Is(err, repository.ErrNotFound):
+		respond.Error(w, http.StatusNotFound, "session not found")
+		return
+	case err != nil:
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond.JSON(w, http.StatusOK, session)
+}
+
+// ownsSession refuses a session belonging to somebody else.
+//
+// A session id is not a capability. Sessions are addressed by their own id
+// rather than under a book, so the ownership check cannot come from the path
+// the way it does everywhere else, and without this anyone holding an id could
+// read or destroy someone else's reading history.
+//
+// One implementation on purpose: the update and delete paths both need it, and
+// two copies of an authorisation check is how one of them drifts.
+func (h *ReadingStateHandler) ownsSession(w http.ResponseWriter, r *http.Request, sessionID uuid.UUID) bool {
+	existing, err := h.sessions.FindByID(r.Context(), sessionID)
+	if errors.Is(err, repository.ErrNotFound) {
+		respond.Error(w, http.StatusNotFound, "session not found")
+		return false
+	}
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return false
+	}
+	if existing.UserID != callerOf(r) {
+		// 404 rather than 403: saying "forbidden" would confirm the session
+		// exists to somebody who cannot see it.
+		respond.Error(w, http.StatusNotFound, "session not found")
+		return false
+	}
+	return true
+}
+
 // DeleteSession godoc
 //
 // @Summary     Delete a reading session
@@ -308,15 +430,7 @@ func (h *ReadingStateHandler) DeleteSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Scoped to the caller: a session id is not a capability, and without this
-	// anyone holding one could delete someone else's reading history.
-	existing, err := h.sessions.FindByID(r.Context(), id)
-	if errors.Is(err, repository.ErrNotFound) || (err == nil && existing.UserID != callerOf(r)) {
-		respond.Error(w, http.StatusNotFound, "session not found")
-		return
-	}
-	if err != nil {
-		respond.ServerError(w, r, err)
+	if !h.ownsSession(w, r, id) {
 		return
 	}
 

@@ -129,6 +129,73 @@ func (r *ReadingSessionRepo) Create(ctx context.Context, in CreateSessionInput) 
 	return r.FindByID(ctx, id)
 }
 
+// UpdateSessionInput carries only what a person may change about a pass they
+// already logged. UserID and BookID are absent: a session cannot move to
+// another work or another person without becoming a different session.
+type UpdateSessionInput struct {
+	EditionID     *uuid.UUID
+	ClearEdition  bool
+	StartedAt     *string
+	ClearStarted  bool
+	FinishedAt    *string
+	ClearFinished bool
+	Status        *string
+	ProgressUnit  *string
+	ProgressValue *float64
+}
+
+// Update edits a logged session. A nil field is left alone rather than cleared,
+// so a client correcting one date does not have to send the row back; clearing
+// is a separate flag, because "not mentioned" and "remove it" are different
+// requests and one nullable field cannot say both.
+func (r *ReadingSessionRepo) Update(ctx context.Context, id uuid.UUID, in UpdateSessionInput) (*models.ReadingSession, error) {
+	cur, err := r.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// The page-needs-an-edition rule has to hold after the edit, not just at
+	// create time. Checking the merged state rather than the request catches
+	// clearing the edition on a session that already counts pages.
+	unit := cur.ProgressUnit
+	if in.ProgressUnit != nil {
+		unit = *in.ProgressUnit
+	}
+	edition := cur.EditionID
+	switch {
+	case in.ClearEdition:
+		edition = nil
+	case in.EditionID != nil:
+		edition = in.EditionID
+	}
+	if unit == "page" && edition == nil {
+		return nil, ErrPageNeedsEdition
+	}
+
+	const q = `
+		UPDATE reading_sessions
+		   SET edition_id     = CASE WHEN $2 THEN NULL ELSE COALESCE($3, edition_id) END,
+		       started_at     = CASE WHEN $4 THEN NULL ELSE COALESCE($5::timestamptz, started_at) END,
+		       finished_at    = CASE WHEN $6 THEN NULL ELSE COALESCE($7::timestamptz, finished_at) END,
+		       status         = COALESCE($8, status),
+		       progress_unit  = COALESCE(NULLIF($9, ''), progress_unit),
+		       progress_value = COALESCE($10, progress_value)
+		 WHERE id = $1`
+
+	tag, err := r.db.Exec(ctx, q, id,
+		in.ClearEdition, in.EditionID,
+		in.ClearStarted, in.StartedAt,
+		in.ClearFinished, in.FinishedAt,
+		in.Status, in.ProgressUnit, in.ProgressValue)
+	if err != nil {
+		return nil, translateSessionErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindByID(ctx, id)
+}
+
 // Finish closes a session, which is the common write: someone marks a book done
 // and the session that was open becomes the record of when.
 func (r *ReadingSessionRepo) Finish(ctx context.Context, id uuid.UUID, finishedAt *string, status string) (*models.ReadingSession, error) {
