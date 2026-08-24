@@ -296,7 +296,7 @@ func (r *EditionRepo) bookOfEdition(ctx context.Context, editionID uuid.UUID) (u
 // pass through the book, not the verdict on it.
 func (r *EditionRepo) readInteraction(ctx context.Context, userID, editionID, bookID uuid.UUID) (*models.UserBookInteraction, error) {
 	const q = `
-		SELECT ub.user_id, ub.read_status, ub.rating, COALESCE(ub.notes,''), COALESCE(ub.review,''),
+		SELECT ub.id, ub.user_id, ub.read_status, ub.rating, COALESCE(ub.notes,''), COALESCE(ub.review,''),
 		       ub.is_favorite, ub.created_at, ub.updated_at,
 		       (SELECT min(rs.started_at) FROM reading_sessions rs
 		         WHERE rs.user_id = ub.user_id AND rs.book_id = ub.book_id),
@@ -310,8 +310,12 @@ func (r *EditionRepo) readInteraction(ctx context.Context, userID, editionID, bo
 
 	var i models.UserBookInteraction
 	var sessions int
+	// The id is load-bearing rather than decoration: the sync outbox addresses
+	// ops by it, so returning the zero UUID here would have every offline edit
+	// aimed at a row that does not exist, acknowledged as not_found, and
+	// dropped by the client.
 	err := r.db.QueryRow(ctx, q, userID, bookID).Scan(
-		&i.UserID, &i.ReadStatus, &i.Rating, &i.Notes, &i.Review,
+		&i.ID, &i.UserID, &i.ReadStatus, &i.Rating, &i.Notes, &i.Review,
 		&i.IsFavorite, &i.CreatedAt, &i.UpdatedAt,
 		&i.DateStarted, &i.DateFinished, &sessions)
 	if errors.Is(err, pgx.ErrNoRows) {

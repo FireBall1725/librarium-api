@@ -1500,3 +1500,43 @@ func TestSyncProgressRoundTrips(t *testing.T) {
 		t.Error("progress was stored but never sent back, so another device would never see it")
 	}
 }
+
+// TestInteractionCarriesItsRowID guards a field that looks like decoration and
+// is not.
+//
+// The iOS outbox addresses every offline edit by interaction.id. This read
+// briefly returned the zero UUID, which parses as a perfectly good UUID on the
+// client, so edits were aimed at a row that does not exist, acknowledged as
+// not_found, and deleted. The old routes still serve clients in the field, so
+// the id has to be real there and not only on the new ones.
+func TestInteractionCarriesItsRowID(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewEditionRepo(pool)
+
+	var userID, editionID, wantID uuid.UUID
+	err := pool.QueryRow(ctx,
+		`SELECT ub.user_id, be.id, ub.id
+		   FROM user_books ub
+		   JOIN book_editions be ON be.book_id = ub.book_id
+		  WHERE ub.deleted_at IS NULL
+		  LIMIT 1`).Scan(&userID, &editionID, &wantID)
+	if err != nil {
+		t.Skipf("no opinion on a book with an edition: %v", err)
+	}
+
+	got, err := repo.GetInteraction(ctx, userID, editionID)
+	if err != nil {
+		t.Fatalf("reading the interaction: %v", err)
+	}
+	if got.ID == uuid.Nil {
+		t.Fatal("interaction came back with the zero id; every outbox op addressed to it would be dropped")
+	}
+	if got.ID != wantID {
+		t.Errorf("id = %s, want the user_books row id %s", got.ID, wantID)
+	}
+	// Still the edition that was asked for, since old clients key their local
+	// store on it.
+	if got.BookEditionID != editionID {
+		t.Errorf("book_edition_id = %s, want the edition requested %s", got.BookEditionID, editionID)
+	}
+}
