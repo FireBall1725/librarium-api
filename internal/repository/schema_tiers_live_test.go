@@ -1234,3 +1234,102 @@ func TestLibraryMembersCollapsesASecondRole(t *testing.T) {
 			reportedPerms, heldPerms)
 	}
 }
+
+// TestSessionUpdateChangesOnlyWhatWasSent covers the reason clearing is a
+// separate flag. A client correcting a start date must not blank the finish
+// date it did not mention, and removing a mistyped date must be possible at
+// all, which one nullable field cannot express.
+func TestSessionUpdateChangesOnlyWhatWasSent(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewReadingSessionRepo(pool)
+
+	var userID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM books LIMIT 1`).Scan(&bookID); err != nil {
+		t.Skipf("no books: %v", err)
+	}
+
+	started, finished := "2026-01-02T00:00:00Z", "2026-02-03T00:00:00Z"
+	s, err := repo.Create(ctx, CreateSessionInput{
+		UserID: userID, BookID: bookID,
+		StartedAt: &started, FinishedAt: &finished, Status: "finished",
+	})
+	if err != nil {
+		t.Fatalf("creating a session: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, s.ID) }()
+
+	// Correcting the start date leaves the finish date alone.
+	newStart := "2026-01-05T00:00:00Z"
+	got, err := repo.Update(ctx, s.ID, UpdateSessionInput{StartedAt: &newStart})
+	if err != nil {
+		t.Fatalf("updating the start date: %v", err)
+	}
+	// Compared in UTC: the value is stored as an instant, and formatting it in
+	// the machine's zone turns midnight UTC into the previous evening.
+	if got.StartedAt == nil || got.StartedAt.UTC().Format("2006-01-02") != "2026-01-05" {
+		t.Errorf("started_at = %v, want the corrected date", got.StartedAt)
+	}
+	if got.FinishedAt == nil {
+		t.Error("correcting the start date cleared the finish date")
+	}
+	if got.Status != "finished" {
+		t.Errorf("status = %q, want it untouched", got.Status)
+	}
+
+	// Clearing is a separate request, and it has to actually clear.
+	got, err = repo.Update(ctx, s.ID, UpdateSessionInput{ClearFinished: true})
+	if err != nil {
+		t.Fatalf("clearing the finish date: %v", err)
+	}
+	if got.FinishedAt != nil {
+		t.Errorf("finished_at = %v after an explicit clear, want nil", got.FinishedAt)
+	}
+	if got.StartedAt == nil {
+		t.Error("clearing the finish date also cleared the start date")
+	}
+}
+
+// TestSessionUpdateKeepsPageProgressHonest covers the rule holding after an
+// edit rather than only at create time. A page number is meaningless without
+// knowing which printing it counts, so clearing the edition on a session that
+// counts pages has to be refused.
+func TestSessionUpdateKeepsPageProgressHonest(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewReadingSessionRepo(pool)
+
+	var userID, bookID, editionID uuid.UUID
+	err := pool.QueryRow(ctx,
+		`SELECT be.book_id, be.id FROM book_editions be LIMIT 1`).Scan(&bookID, &editionID)
+	if err != nil {
+		t.Skipf("no editions: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+
+	pages := 200.0
+	s, err := repo.Create(ctx, CreateSessionInput{
+		UserID: userID, BookID: bookID, EditionID: &editionID,
+		Status: "reading", ProgressUnit: "page", ProgressValue: &pages,
+	})
+	if err != nil {
+		t.Fatalf("creating a page-progress session: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, s.ID) }()
+
+	if _, err := repo.Update(ctx, s.ID, UpdateSessionInput{ClearEdition: true}); !errors.Is(err, ErrPageNeedsEdition) {
+		t.Errorf("clearing the edition on a page-counting session returned %v, want ErrPageNeedsEdition", err)
+	}
+
+	// The session is unchanged after the refusal.
+	after, err := repo.FindByID(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("re-reading: %v", err)
+	}
+	if after.EditionID == nil {
+		t.Error("the refused update cleared the edition anyway")
+	}
+}

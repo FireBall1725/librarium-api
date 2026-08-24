@@ -11081,6 +11081,87 @@ paths:
       summary: Delete a reading session
       tags:
       - me
+    patch:
+      consumes:
+      - application/json
+      description: Partial update. A field left out is untouched; send it as null
+        to clear it, which is how a mistyped finish date is removed rather than overwritten.
+      parameters:
+      - description: Session UUID
+        in: path
+        name: session_id
+        required: true
+        type: string
+      - description: The changes
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            edition_id:
+              type: string
+            finished_at:
+              type: string
+            progress_unit:
+              type: string
+            progress_value:
+              type: number
+            started_at:
+              type: string
+            status:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              book_id:
+                type: string
+              finished_at:
+                type: string
+              id:
+                type: string
+              started_at:
+                type: string
+              status:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Correct a logged reading session
+      tags:
+      - me
   /setup/admin:
     post:
       consumes:
