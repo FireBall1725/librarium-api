@@ -14,3 +14,37 @@ concurrency:
 jobs:
   ci:
     uses: FireBall1725/workflows/.github/workflows/ci-go.yml@v1
+
+  # Repo-specific: it needs this repo's embedded migrations and a real Postgres,
+  # so it does not belong in the shared Go workflow. Until this existed nothing
+  # ever executed a migration before it reached someone's instance — the live
+  # tests skip without a DSN, and the shared workflow does not set one.
+  migrations:
+    name: migrations apply cleanly
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: librarium
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U librarium"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: go.sum
+      # The test creates and drops its own scratch database, so it points at
+      # the maintenance database rather than one it is about to migrate.
+      - name: Apply every migration to an empty database
+        env:
+          LIBRARIUM_MIGRATE_TEST_DSN: postgres://librarium:postgres@localhost:5432/postgres?sslmode=disable
+        run: go test -count=1 -run TestMigrations ./internal/db/
