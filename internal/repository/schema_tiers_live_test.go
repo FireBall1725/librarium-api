@@ -261,3 +261,122 @@ func TestReadStatusInheritsThroughContainmentButExplicitWins(t *testing.T) {
 			"from the start and reading state has to as well", status, inherited)
 	}
 }
+
+func TestACopyCannotClaimAnotherWorksEdition(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewCopyRepo(pool)
+
+	var libraryID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT library_id, book_id FROM copies WHERE deleted_at IS NULL LIMIT 1`).
+		Scan(&libraryID, &bookID); err != nil {
+		t.Skipf("no copies: %v", err)
+	}
+
+	var foreignEdition uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM book_editions WHERE book_id <> $1 LIMIT 1`, bookID).Scan(&foreignEdition); err != nil {
+		t.Skipf("need an edition of another work: %v", err)
+	}
+
+	// The bug an outside reviewer found: a plain foreign key on edition_id lets
+	// a copy claim Dune the work with a Neuromancer edition, silently.
+	got, err := repo.Create(ctx, CreateCopyInput{
+		LibraryID: libraryID,
+		BookID:    bookID,
+		EditionID: &foreignEdition,
+	})
+	if !errors.Is(err, ErrEditionNotOfBook) {
+		t.Errorf("creating a mismatched copy returned %v, want ErrEditionNotOfBook", err)
+		if got != nil {
+			_ = repo.Delete(ctx, got.ID)
+		}
+	}
+}
+
+func TestACopyCannotUseAnotherLibrarysLocation(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	copies := NewCopyRepo(pool)
+	locations := NewCopyLocationRepo(pool)
+
+	var libA, libB uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries ORDER BY created_at LIMIT 1`).Scan(&libA); err != nil {
+		t.Skipf("no libraries: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM libraries WHERE id <> $1 LIMIT 1`, libA).Scan(&libB); err != nil {
+		t.Skipf("need a second library: %v", err)
+	}
+	var bookID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT book_id FROM copies WHERE library_id = $1 AND deleted_at IS NULL LIMIT 1`, libA).Scan(&bookID); err != nil {
+		t.Skipf("no copies in the first library: %v", err)
+	}
+
+	elsewhere, err := locations.Create(ctx, libB, "test shelf in the other library", nil)
+	if err != nil {
+		t.Fatalf("creating a location: %v", err)
+	}
+	defer func() { _ = locations.Delete(ctx, elsewhere.ID) }()
+
+	got, err := copies.Create(ctx, CreateCopyInput{
+		LibraryID:  libA,
+		BookID:     bookID,
+		LocationID: &elsewhere.ID,
+	})
+	if !errors.Is(err, ErrLocationNotInLibrary) {
+		t.Errorf("filing a copy at another library's shelf returned %v, want ErrLocationNotInLibrary", err)
+		if got != nil {
+			_ = copies.Delete(ctx, got.ID)
+		}
+	}
+}
+
+func TestLocationTreeRefusesLoopsAndKeepsFullShelves(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	locations := NewCopyLocationRepo(pool)
+	copies := NewCopyRepo(pool)
+
+	var libraryID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT library_id, book_id FROM copies WHERE deleted_at IS NULL LIMIT 1`).
+		Scan(&libraryID, &bookID); err != nil {
+		t.Skipf("no copies: %v", err)
+	}
+
+	office, err := locations.Create(ctx, libraryID, "test office", nil)
+	if err != nil {
+		t.Fatalf("creating parent location: %v", err)
+	}
+	defer func() { _ = locations.Delete(ctx, office.ID) }()
+
+	shelf, err := locations.Create(ctx, libraryID, "test top shelf", &office.ID)
+	if err != nil {
+		t.Fatalf("creating child location: %v", err)
+	}
+	defer func() { _ = locations.Delete(ctx, shelf.ID) }()
+
+	// Moving the parent under its own child is the loop that hangs every tree
+	// walk, and nothing in the schema stops it on its own.
+	if _, err := locations.Rename(ctx, office.ID, "test office", &shelf.ID, true); !errors.Is(err, ErrLocationCycle) {
+		t.Errorf("reparenting under a descendant returned %v, want ErrLocationCycle", err)
+	}
+
+	// A shelf with something on it must not vanish: a copy whose location
+	// silently became null is a book you cannot find.
+	copy, err := copies.Create(ctx, CreateCopyInput{
+		LibraryID: libraryID, BookID: bookID, LocationID: &shelf.ID,
+	})
+	if err != nil {
+		t.Fatalf("creating a copy at the shelf: %v", err)
+	}
+	defer func() { _ = copies.Delete(ctx, copy.ID) }()
+
+	if err := locations.Delete(ctx, shelf.ID); !errors.Is(err, ErrLocationInUse) {
+		t.Errorf("deleting an occupied shelf returned %v, want ErrLocationInUse", err)
+	}
+
+	if copy.LocationName != "test top shelf" {
+		t.Errorf("copy location name = %q, want the shelf it was filed at", copy.LocationName)
+	}
+}
