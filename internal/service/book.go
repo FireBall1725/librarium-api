@@ -83,7 +83,7 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 	// If an ISBN is provided and already exists globally (in any library or
 	// floating), we reuse the existing book + edition and bump the copy count
 	// for *this* library via the junction. If this library didn't already
-	// hold the book, the library_books junction row gets added too.
+	// hold the book, a copy gets recorded too.
 	if req.Edition != nil {
 		isbn := req.Edition.ISBN13
 		if isbn == "" {
@@ -263,7 +263,7 @@ func (s *BookService) UpdateBook(ctx context.Context, id uuid.UUID, req BookRequ
 	return s.books.FindByID(ctx, id, uuid.Nil, uuid.Nil)
 }
 
-// DeleteBook permanently deletes a book. Cascades through library_books,
+// DeleteBook permanently deletes a book. Cascades through copies,
 // book_editions, user_book_interactions, loans, ai_suggestions, and every
 // other FK that references the book. Admin-only at the handler layer.
 func (s *BookService) DeleteBook(ctx context.Context, id uuid.UUID) error {
@@ -271,7 +271,7 @@ func (s *BookService) DeleteBook(ctx context.Context, id uuid.UUID) error {
 }
 
 // AddBookToLibrary attaches an existing book to a library via the
-// library_books junction. Idempotent — re-adding a book already in the
+// library by recording a copy. Idempotent: re-adding a book already in the
 // library is a no-op.
 //
 // Remove-on-action: when the caller just added a book, any `buy`
@@ -291,7 +291,7 @@ func (s *BookService) AddBookToLibrary(ctx context.Context, libraryID, bookID uu
 	return nil
 }
 
-// RemoveBookFromLibrary drops the library_books junction row for this
+// RemoveBookFromLibrary retires this library's copies of
 // (library, book). The book row itself stays.
 func (s *BookService) RemoveBookFromLibrary(ctx context.Context, libraryID, bookID uuid.UUID) error {
 	return s.libraryBooks.RemoveBookFromLibrary(ctx, libraryID, bookID)

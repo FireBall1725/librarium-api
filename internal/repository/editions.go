@@ -176,7 +176,7 @@ func (r *EditionRepo) ListMissingFiles(ctx context.Context, libraryID uuid.UUID)
 	q := `SELECT ` + beEditionColumns + `
 		FROM book_editions be
 		JOIN books b ON b.id = be.book_id
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1
 		  AND be.format IN ('ebook','digital','audiobook')
 		  AND NOT EXISTS (SELECT 1 FROM edition_files ef WHERE ef.edition_id = be.id)
@@ -199,7 +199,7 @@ func (r *EditionRepo) ListMissingFiles(ctx context.Context, libraryID uuid.UUID)
 
 // FindByISBN returns the edition (globally, regardless of library) whose
 // isbn_10 or isbn_13 matches the given value. Returns ErrNotFound if none
-// match. Callers that need library scoping can check library_book_editions
+// match. Callers that need library scoping can check for a copy
 // afterwards.
 func (r *EditionRepo) FindByISBN(ctx context.Context, isbn string) (*models.BookEdition, error) {
 	q := `SELECT ` + editionColumns + `
@@ -217,14 +217,22 @@ func (r *EditionRepo) FindByISBN(ctx context.Context, isbn string) (*models.Book
 	return e, nil
 }
 
-// FindByISBNInLibrary returns the edition with the given ISBN, but only if
-// the given library holds it via library_book_editions. Returns ErrNotFound
-// if the edition doesn't exist or isn't held by that library.
+// FindByISBNInLibrary returns the edition with the given ISBN, but only if the
+// given library holds a copy of it. Returns ErrNotFound otherwise.
+//
+// EXISTS rather than a join: a library holding three copies of a printing must
+// still return one edition, and a join would return it three times.
+//
+// The ISBN comparison still reads the isbn_10 and isbn_13 columns rather than
+// edition_identifiers. Both are populated and agree, and moving this lookup is
+// part of retiring those columns rather than of moving holdings.
 func (r *EditionRepo) FindByISBNInLibrary(ctx context.Context, libraryID uuid.UUID, isbn string) (*models.BookEdition, error) {
 	q := `SELECT ` + beEditionColumns + `
 		FROM book_editions be
-		JOIN library_book_editions lbe ON lbe.book_edition_id = be.id
-		WHERE lbe.library_id = $1 AND (be.isbn_10 = $2 OR be.isbn_13 = $2)
+		WHERE (be.isbn_10 = $2 OR be.isbn_13 = $2)
+		  AND EXISTS (SELECT 1 FROM copies c
+		               WHERE c.edition_id = be.id AND c.library_id = $1
+		                 AND c.deleted_at IS NULL)
 		LIMIT 1`
 	e, err := scanEdition(r.db.QueryRow(ctx, q, libraryID, isbn))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -236,15 +244,16 @@ func (r *EditionRepo) FindByISBNInLibrary(ctx context.Context, libraryID uuid.UU
 	return e, nil
 }
 
-// IncrementCopyCount bumps the copy count for an edition in a specific
-// library. Upserts — if the (library, edition) row doesn't exist, creates
-// it with copy_count = 1.
+// IncrementCopyCount records one more copy of an edition in a library.
+//
+// Now literally what the name says: it adds a row rather than raising a number.
+// The new copy carries no condition, price or location, which is right for the
+// path that calls this (a scan that found a duplicate), and whoever wants to
+// say the second one is signed can do that against the copy afterwards.
 func (r *EditionRepo) IncrementCopyCount(ctx context.Context, libraryID, editionID uuid.UUID) error {
 	const q = `
-		INSERT INTO library_book_editions (library_id, book_edition_id, copy_count)
-		VALUES ($1, $2, 1)
-		ON CONFLICT (library_id, book_edition_id)
-		DO UPDATE SET copy_count = library_book_editions.copy_count + 1`
+		INSERT INTO copies (library_id, book_id, edition_id)
+		SELECT $1, e.book_id, e.id FROM book_editions e WHERE e.id = $2`
 	_, err := r.db.Exec(ctx, q, libraryID, editionID)
 	if err != nil {
 		return fmt.Errorf("incrementing copy count: %w", err)

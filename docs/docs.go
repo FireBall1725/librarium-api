@@ -6175,7 +6175,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Inserts the library_books junction row. Idempotent. Used by\nthe suggestions-as-books \"Add to library\" CTA and any other\nflow that wants to attach a floating book to a real library.",
+                "description": "Records a copy in this library. Idempotent. Used by\nthe suggestions-as-books \"Add to library\" CTA and any other\nflow that wants to attach a floating book to a real library.",
                 "tags": [
                     "books"
                 ],
@@ -6241,7 +6241,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Drops the library_books junction row for this library/book.\nThe book row itself stays (may be held by other libraries or\nreferenced by AI suggestions). Use the admin endpoint to\ndelete a book entirely.",
+                "description": "Retires this library's copies of the book.\nThe book row itself stays (may be held by other libraries or\nreferenced by AI suggestions). Use the admin endpoint to\ndelete a book entirely.",
                 "tags": [
                     "books"
                 ],

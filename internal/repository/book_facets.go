@@ -168,7 +168,7 @@ func (r *BookRepo) Facets(
 	}
 
 	if len(sel.Libraries) > 0 {
-		mLib = fmt.Sprintf(`EXISTS (SELECT 1 FROM library_books lb2 WHERE lb2.book_id = s.id
+		mLib = fmt.Sprintf(`EXISTS (SELECT 1 FROM held_books lb2 WHERE lb2.book_id = s.id
                  AND lb2.deleted_at IS NULL AND lb2.library_id = ANY(%s))`, arg(sel.Libraries))
 	}
 	if len(sel.ReadStatus) > 0 {
@@ -242,7 +242,7 @@ SELECT 'ownership' AS dim, f.ownership AS value, f.ownership AS label, COUNT(*) 
 FROM f WHERE %s GROUP BY f.ownership
 UNION ALL
 SELECT 'library', l.id::text, l.name, COUNT(DISTINCT f.id)
-FROM f JOIN library_books lb3 ON lb3.book_id = f.id AND lb3.deleted_at IS NULL
+FROM f JOIN held_books lb3 ON lb3.book_id = f.id AND lb3.deleted_at IS NULL
        JOIN libraries l ON l.id = lb3.library_id
 WHERE lb3.library_id = ANY($1) AND %s
 GROUP BY l.id, l.name

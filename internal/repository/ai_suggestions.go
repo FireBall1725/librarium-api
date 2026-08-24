@@ -194,7 +194,7 @@ func (r *AISuggestionsRepo) ListLibraryTitles(ctx context.Context, libraryID, us
 			) AS has_cover,
 			b.updated_at
 		FROM books b
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		LEFT JOIN media_types mt ON mt.id = b.media_type_id
 		WHERE lb.library_id = $1
 		ORDER BY b.title`
@@ -231,7 +231,7 @@ func (r *AISuggestionsRepo) BookExistsInLibrary(ctx context.Context, libraryID u
 			SELECT EXISTS (
 				SELECT 1 FROM book_editions be
 				JOIN books b ON b.id = be.book_id
-				JOIN library_books lb ON lb.book_id = b.id
+				JOIN held_books lb ON lb.book_id = b.id
 				WHERE lb.library_id = $1 AND (be.isbn_13 = $2 OR be.isbn_10 = $2)
 			)`
 		var ok bool
@@ -248,7 +248,7 @@ func (r *AISuggestionsRepo) BookExistsInLibrary(ctx context.Context, libraryID u
 	const qTitle = `
 		SELECT EXISTS (
 			SELECT 1 FROM books b
-			JOIN library_books lb ON lb.book_id = b.id
+			JOIN held_books lb ON lb.book_id = b.id
 			WHERE lb.library_id = $1 AND lower(b.title) = lower($2)
 		)`
 	var ok bool
@@ -574,7 +574,7 @@ func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUI
 		JOIN books b ON b.id = s.book_id
 		LEFT JOIN LATERAL (
 		    SELECT lb.library_id
-		    FROM library_books lb
+		    FROM held_books lb
 		    JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = s.user_id
 		    WHERE lb.book_id = s.book_id
 		    ORDER BY lb.added_at ASC

@@ -786,3 +786,98 @@ func TestReadableLibrariesMatchesWhatTheOldMembershipQuerySaid(t *testing.T) {
 		}
 	}
 }
+
+// TestHeldBooksMatchesTheJunctionItReplaced pins the switch from library_books
+// to copies.
+//
+// Every list query that used to join the junction now joins held_books, which
+// collapses copies back to one row per work. If those two disagree, books
+// appear or vanish from people's libraries, so the equivalence is asserted
+// rather than assumed. The old table is still present and still holds what it
+// held before the tiers migration, which is what makes this comparison possible
+// at all; it stops being possible at contract.
+func TestHeldBooksMatchesTheJunctionItReplaced(t *testing.T) {
+	pool, ctx := tiersPool(t)
+
+	var junction, held int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM library_books WHERE deleted_at IS NULL`).Scan(&junction); err != nil {
+		t.Skipf("no library_books table: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM held_books`).Scan(&held); err != nil {
+		t.Fatalf("querying held_books: %v", err)
+	}
+	if junction != held {
+		t.Errorf("held_books has %d rows, library_books has %d", held, junction)
+	}
+
+	// Counts agreeing is weaker than the sets agreeing, and the sets are what
+	// a list renders.
+	var onlyOld, onlyNew int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM (
+		    SELECT library_id, book_id FROM library_books WHERE deleted_at IS NULL
+		    EXCEPT SELECT library_id, book_id FROM held_books) t`).Scan(&onlyOld); err != nil {
+		t.Fatalf("comparing sets: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM (
+		    SELECT library_id, book_id FROM held_books
+		    EXCEPT SELECT library_id, book_id FROM library_books WHERE deleted_at IS NULL) t`).Scan(&onlyNew); err != nil {
+		t.Fatalf("comparing sets: %v", err)
+	}
+	if onlyOld != 0 {
+		t.Errorf("%d holdings exist in library_books but not in held_books; those books vanished from their library", onlyOld)
+	}
+	if onlyNew != 0 {
+		t.Errorf("%d holdings exist in held_books but not in library_books; those books appeared from nowhere", onlyNew)
+	}
+}
+
+// TestHeldBooksCollapsesDuplicateCopies is the failure mode a naive swap of
+// library_books for copies would have shipped: copies is one row per object, so
+// owning two of something would list it twice.
+func TestHeldBooksCollapsesDuplicateCopies(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewCopyRepo(pool)
+
+	var libraryID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT library_id, book_id FROM copies WHERE deleted_at IS NULL LIMIT 1`).
+		Scan(&libraryID, &bookID); err != nil {
+		t.Skipf("no copies: %v", err)
+	}
+
+	count := func() int {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM held_books WHERE library_id = $1 AND book_id = $2`,
+			libraryID, bookID).Scan(&n); err != nil {
+			t.Fatalf("counting held_books: %v", err)
+		}
+		return n
+	}
+
+	if before := count(); before != 1 {
+		t.Fatalf("held_books already reports %d rows for one holding, want 1", before)
+	}
+
+	second, err := repo.Create(ctx, CreateCopyInput{LibraryID: libraryID, BookID: bookID})
+	if err != nil {
+		t.Fatalf("creating a second copy: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, second.ID) }()
+
+	if after := count(); after != 1 {
+		t.Errorf("held_books reports %d rows after a second copy was added, want 1; "+
+			"every list joining it would show the book twice", after)
+	}
+
+	// And retiring the extra must not remove the holding entirely.
+	if err := repo.Delete(ctx, second.ID); err != nil {
+		t.Fatalf("deleting the second copy: %v", err)
+	}
+	if after := count(); after != 1 {
+		t.Errorf("held_books reports %d rows after the extra copy was retired, want 1", after)
+	}
+}

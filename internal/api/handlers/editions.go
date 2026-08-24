@@ -431,7 +431,8 @@ func editionBody(e *models.BookEdition) map[string]any {
 		"narrator_contributor_name": e.NarratorContributorName,
 		"files":                     files,
 	}
-	// copy_count and acquired_at are now per-library (library_book_editions).
+	// copy_count and acquired_at are now per-copy: the count is how many copy
+	// rows exist, and each carries its own acquisition.
 	// Callers that need those for a specific library should query that
 	// junction directly. Left out of the legacy per-edition body.
 	if e.NarratorContributorID != nil {

@@ -5100,7 +5100,7 @@ paths:
   /libraries/{library_id}/books/{book_id}:
     delete:
       description: |-
-        Drops the library_books junction row for this library/book.
+        Retires this library's copies of the book.
         The book row itself stays (may be held by other libraries or
         referenced by AI suggestions). Use the admin endpoint to
         delete a book entirely.
@@ -5193,7 +5193,7 @@ paths:
       - books
     post:
       description: |-
-        Inserts the library_books junction row. Idempotent. Used by
+        Records a copy in this library. Idempotent. Used by
         the suggestions-as-books "Add to library" CTA and any other
         flow that wants to attach a floating book to a real library.
       parameters:

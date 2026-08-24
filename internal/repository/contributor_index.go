@@ -113,7 +113,7 @@ WITH scope AS (
     SELECT DISTINCT bc.contributor_id, b.id AS book_id
     FROM book_contributors bc
     JOIN books b ON b.id = bc.book_id
-    JOIN library_books lb ON lb.book_id = b.id AND lb.deleted_at IS NULL
+    JOIN held_books lb ON lb.book_id = b.id AND lb.deleted_at IS NULL
     WHERE lb.library_id = ANY($1) AND bc.role = ANY($2)
 )
 SELECT c.id,
@@ -136,7 +136,7 @@ SELECT c.id,
                                AND ci2.is_primary = true) AS has_cover
                FROM book_contributors bc2
                JOIN books b2 ON b2.id = bc2.book_id
-               JOIN library_books lb2 ON lb2.book_id = b2.id AND lb2.deleted_at IS NULL
+               JOIN held_books lb2 ON lb2.book_id = b2.id AND lb2.deleted_at IS NULL
                WHERE bc2.contributor_id = c.id AND bc2.role = ANY($2)
                  AND lb2.library_id = ANY($1)
                ORDER BY b2.title
@@ -145,7 +145,7 @@ SELECT c.id,
        ) AS spines,
        (
            SELECT COALESCE(json_agg(DISTINCT jsonb_build_object('id', l.id, 'name', l.name)), '[]'::json)
-           FROM library_books lb3
+           FROM held_books lb3
            JOIN libraries l ON l.id = lb3.library_id
            JOIN book_contributors bc3 ON bc3.book_id = lb3.book_id
            WHERE bc3.contributor_id = c.id AND bc3.role = ANY($2)
