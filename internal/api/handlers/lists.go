@@ -54,6 +54,32 @@ func (h *ListHandler) ListMyLists(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]any{"items": lists})
 }
 
+// ListsHoldingBook godoc
+//
+// @Summary     List my lists that hold a book
+// @Description Which of the caller's lists a book is on. Manual lists only: a smart list's membership is whatever its filter matches right now, and answering for one would mean running every stored filter to draw a label.
+// @Tags        me
+// @Produce     json
+// @Security    BearerAuth
+// @Param       book_id  path  string  true  "Book UUID"
+// @Success     200  {object}  object{items=[]object{id=string,name=string,icon=string,color=string,visibility=string}}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /books/{book_id}/lists [get]
+func (h *ListHandler) ListsHoldingBook(w http.ResponseWriter, r *http.Request) {
+	bookID, ok := bookIDOf(r)
+	if !ok {
+		respond.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+	items, err := h.lists.ContainingBook(r.Context(), callerOf(r), bookID)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 type listBody struct {
 	Name            string          `json:"name"`
 	Description     string          `json:"description"`

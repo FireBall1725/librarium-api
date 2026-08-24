@@ -405,6 +405,47 @@ func (r *ListRepo) RemoveBook(ctx context.Context, listID, bookID uuid.UUID) err
 	return nil
 }
 
+// ContainingBook returns the caller's lists that hold a book.
+//
+// The reverse of BookIDs, and the one a book page asks: "which of my lists is
+// this on". Manual lists only, because a smart list's membership is whatever
+// its filter matches right now and answering for one would mean running every
+// stored filter to draw a label.
+//
+// Scoped to the caller's own lists plus anything shared into a library they can
+// reach, the same visibility rule the filter and the facet follow.
+func (r *ListRepo) ContainingBook(ctx context.Context, userID, bookID uuid.UUID) ([]*models.List, error) {
+	q := `
+		SELECT ` + listColumns + `
+		  FROM lists l
+		  JOIN list_books lb ON lb.list_id = l.id AND lb.book_id = $2
+		 WHERE l.kind = 'manual'
+		   AND (l.owner_user_id = $1
+		        OR (l.visibility = 'library' AND EXISTS (
+		              SELECT 1 FROM user_permissions up
+		               WHERE up.user_id = $1
+		                 AND (up.library_id IS NULL OR up.library_id = l.shared_library_id))))
+		 ORDER BY l.display_order, l.name`
+
+	rows, err := r.db.Query(ctx, q, userID, bookID)
+	if err != nil {
+		return nil, fmt.Errorf("listing the lists holding a book: %w", err)
+	}
+	defer rows.Close()
+
+	// Initialised rather than nil: a nil slice marshals to null and the React
+	// client crashes where it expects an array.
+	out := make([]*models.List, 0)
+	for rows.Next() {
+		l, err := scanList(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning list: %w", err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 // BookIDs returns a manual list's contents in order. A smart list's contents
 // come from running its filter, which is the caller's job.
 func (r *ListRepo) BookIDs(ctx context.Context, listID uuid.UUID) ([]uuid.UUID, error) {

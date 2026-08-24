@@ -236,6 +236,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 
 	// Lists are what shelves and saved views became.
 	mux.Handle("GET /api/v1/me/lists", requireAuth(http.HandlerFunc(listHandler.ListMyLists)))
+	mux.Handle("GET /api/v1/books/{book_id}/lists", requireAuth(http.HandlerFunc(listHandler.ListsHoldingBook)))
 	mux.Handle("POST /api/v1/me/lists", requireAuth(http.HandlerFunc(listHandler.CreateList)))
 	mux.Handle("PATCH /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.UpdateList)))
 	mux.Handle("DELETE /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.DeleteList)))
