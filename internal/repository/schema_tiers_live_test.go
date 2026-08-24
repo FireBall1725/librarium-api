@@ -1038,11 +1038,17 @@ func TestShelfWritesLandInLists(t *testing.T) {
 	}
 
 	shelfID := uuid.New()
+	// Registered before Create, not after. Create inserts and then reads back,
+	// so a failure in the read leaves the row behind, and a cleanup that only
+	// runs on success leaks it into the sidebar of whoever owns this database.
+	defer func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM lists WHERE id = $1`, shelfID)
+	}()
+
 	shelf, err := repo.Create(ctx, shelfID, libraryID, "test shelf", "desc", "#fff", "star", 3, userID)
 	if err != nil {
 		t.Fatalf("creating a shelf: %v", err)
 	}
-	defer func() { _ = repo.Delete(ctx, shelfID) }()
 	if shelf.Name != "test shelf" {
 		t.Errorf("shelf name = %q, want the one written", shelf.Name)
 	}
@@ -1331,5 +1337,71 @@ func TestSessionUpdateKeepsPageProgressHonest(t *testing.T) {
 	}
 	if after.EditionID == nil {
 		t.Error("the refused update cleared the edition anyway")
+	}
+}
+
+// TestListFilterRefusesSomebodyElsesList is the reason the filter carries a
+// visibility arm. List ids arrive from a query string, so filtering on one
+// without checking who owns it would let anyone read the contents of a private
+// list by guessing at an id.
+func TestListFilterRefusesSomebodyElsesList(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	lists := NewListRepo(pool)
+	books := NewBookRepo(pool)
+
+	var owner, stranger, bookID uuid.UUID
+	rows, err := pool.Query(ctx, `SELECT id FROM users LIMIT 2`)
+	if err != nil {
+		t.Skipf("no users: %v", err)
+	}
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scanning: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if len(ids) < 2 {
+		t.Skip("need two users to test one hiding a list from the other")
+	}
+	owner, stranger = ids[0], ids[1]
+	// Picked from copies rather than books: the filter runs inside a
+	// library-scoped list, so a book nothing holds would return zero for both
+	// callers and the test would pass without testing anything.
+	var libraryID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT book_id, library_id FROM copies WHERE deleted_at IS NULL LIMIT 1`).
+		Scan(&bookID, &libraryID); err != nil {
+		t.Skipf("no copies: %v", err)
+	}
+
+	l, err := lists.Create(ctx, CreateListInput{
+		OwnerUserID: owner, Name: "test private list", Kind: "manual", Visibility: "private",
+	})
+	if err != nil {
+		t.Fatalf("creating: %v", err)
+	}
+	defer func() { _ = lists.Delete(ctx, l.ID) }()
+	if err := lists.AddBook(ctx, l.ID, bookID, 0); err != nil {
+		t.Fatalf("adding a book: %v", err)
+	}
+
+	count := func(caller uuid.UUID) int {
+		_, total, err := books.List(ctx, libraryID, ListBooksOpts{
+			CallerID: caller, ShelfIDs: []uuid.UUID{l.ID}, PerPage: 50,
+		})
+		if err != nil {
+			t.Fatalf("listing as %s: %v", caller, err)
+		}
+		return total
+	}
+
+	if got := count(owner); got != 1 {
+		t.Errorf("the owner sees %d books in their own list, want 1", got)
+	}
+	if got := count(stranger); got != 0 {
+		t.Errorf("a stranger filtering on someone else's private list sees %d books, want 0", got)
 	}
 }

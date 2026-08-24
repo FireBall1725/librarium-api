@@ -485,7 +485,7 @@ type ListBooksOpts struct {
 	Letter     string           // single char: 'a'-'z' matches LIKE 'letter%'
 	TagFilter  string           // filter to books that have a tag with this exact name (case-insensitive)
 	SeriesIDs  []uuid.UUID      // filter to books in any of these series; how a collapsed series group is opened
-	ShelfIDs   []uuid.UUID      // filter to books on any of these shelves
+	ShelfIDs   []uuid.UUID      // filter to books on any of these lists (shelves are lists)
 	TypeFilter string           // filter by media type display name (case-insensitive), e.g. "Novel"
 	IsRegex    bool             // if true, use b.title ~* $query instead of ILIKE
 	Groups     []ConditionGroup // from query language parser; groups are ANDed together
@@ -561,16 +561,31 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 		argIdx++
 	}
 
-	// A shelf is a hand-picked set rather than a property of the book, but it
-	// narrows the list the same way a tag does, so it lives with the rest of
+	// A list is a hand-picked set rather than a property of the book, but it
+	// narrows the results the same way a tag does, so it lives with the rest of
 	// the conditions and the facet counts pick it up for free.
+	//
+	// Reads list_books rather than the shelf-shaped view over it. A shelf is a
+	// list shared with a library, so the view only sees those; filtering
+	// through it would silently return nothing for a private list, which is the
+	// ordinary case now that saved views and shelves are one thing.
+	//
+	// The visibility arm is load-bearing rather than defensive: list ids reach
+	// this from a query string, so without it anyone could read the contents of
+	// somebody else's list by guessing at one.
 	if len(opts.ShelfIDs) > 0 {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
-            SELECT 1 FROM library_shelf_books bsh
-            WHERE bsh.book_id = b.id AND bsh.shelf_id = ANY($%d)
-        )`, argIdx))
-		args = append(args, opts.ShelfIDs)
-		argIdx++
+            SELECT 1 FROM list_books lb2
+            JOIN lists l2 ON l2.id = lb2.list_id
+            WHERE lb2.book_id = b.id AND lb2.list_id = ANY($%d)
+              AND (l2.owner_user_id = $%d
+                   OR (l2.visibility = 'library' AND EXISTS (
+                         SELECT 1 FROM user_permissions up2
+                          WHERE up2.user_id = $%d
+                            AND (up2.library_id IS NULL OR up2.library_id = l2.shared_library_id))))
+        )`, argIdx, argIdx+1, argIdx+1))
+		args = append(args, opts.ShelfIDs, opts.CallerID)
+		argIdx += 2
 	}
 
 	if opts.TagFilter != "" {
