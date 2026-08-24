@@ -1612,3 +1612,85 @@ func TestLegacySyncIDsStillResolve(t *testing.T) {
 		t.Errorf("an unknown id returned %q, want not_found", status)
 	}
 }
+
+// TestListsHoldingBookRespectsVisibility covers the reverse lookup a book page
+// asks. It reads across every list in the table, so the visibility rule matters
+// as much here as it does in the filter.
+func TestListsHoldingBookRespectsVisibility(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewListRepo(pool)
+
+	var owner, stranger, bookID uuid.UUID
+	rows, err := pool.Query(ctx, `SELECT id FROM users LIMIT 2`)
+	if err != nil {
+		t.Skipf("no users: %v", err)
+	}
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scanning: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if len(ids) < 2 {
+		t.Skip("need two users")
+	}
+	owner, stranger = ids[0], ids[1]
+	if err := pool.QueryRow(ctx, `SELECT id FROM books LIMIT 1`).Scan(&bookID); err != nil {
+		t.Skipf("no books: %v", err)
+	}
+
+	manual, err := repo.Create(ctx, CreateListInput{
+		OwnerUserID: owner, Name: "test holding list", Kind: "manual", Visibility: "private",
+	})
+	if err != nil {
+		t.Fatalf("creating a manual list: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, manual.ID) }()
+	if err := repo.AddBook(ctx, manual.ID, bookID, 0); err != nil {
+		t.Fatalf("adding the book: %v", err)
+	}
+
+	// A smart list is deliberately absent even when its filter would match:
+	// answering for one would mean running every stored filter to draw a label.
+	smart, err := repo.Create(ctx, CreateListInput{
+		OwnerUserID: owner, Name: "test holding smart", Kind: "smart",
+		Filter: []byte(`{"query":""}`),
+	})
+	if err != nil {
+		t.Fatalf("creating a smart list: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, smart.ID) }()
+
+	mine, err := repo.ContainingBook(ctx, owner, bookID)
+	if err != nil {
+		t.Fatalf("reading as the owner: %v", err)
+	}
+	var sawManual, sawSmart bool
+	for _, l := range mine {
+		if l.ID == manual.ID {
+			sawManual = true
+		}
+		if l.ID == smart.ID {
+			sawSmart = true
+		}
+	}
+	if !sawManual {
+		t.Error("the owner cannot see their own list holding the book")
+	}
+	if sawSmart {
+		t.Error("a smart list was reported as holding a book; its membership is a filter, not a set")
+	}
+
+	theirs, err := repo.ContainingBook(ctx, stranger, bookID)
+	if err != nil {
+		t.Fatalf("reading as a stranger: %v", err)
+	}
+	for _, l := range theirs {
+		if l.ID == manual.ID {
+			t.Error("a stranger can see someone else's private list holding a book")
+		}
+	}
+}

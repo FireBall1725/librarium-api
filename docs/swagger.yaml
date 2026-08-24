@@ -3424,6 +3424,59 @@ paths:
       summary: Re-enrich metadata for a single book
       tags:
       - books
+  /books/{book_id}/lists:
+    get:
+      description: 'Which of the caller''s lists a book is on. Manual lists only:
+        a smart list''s membership is whatever its filter matches right now, and answering
+        for one would mean running every stored filter to draw a label.'
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    color:
+                      type: string
+                    icon:
+                      type: string
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    visibility:
+                      type: string
+                  type: object
+                type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List my lists that hold a book
+      tags:
+      - me
   /books/{book_id}/me:
     delete:
       description: Soft-deletes the caller's opinion. The review and notes history
