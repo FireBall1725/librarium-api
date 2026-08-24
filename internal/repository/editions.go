@@ -5,6 +5,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -176,7 +177,7 @@ func (r *EditionRepo) ListMissingFiles(ctx context.Context, libraryID uuid.UUID)
 	q := `SELECT ` + beEditionColumns + `
 		FROM book_editions be
 		JOIN books b ON b.id = be.book_id
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1
 		  AND be.format IN ('ebook','digital','audiobook')
 		  AND NOT EXISTS (SELECT 1 FROM edition_files ef WHERE ef.edition_id = be.id)
@@ -199,7 +200,7 @@ func (r *EditionRepo) ListMissingFiles(ctx context.Context, libraryID uuid.UUID)
 
 // FindByISBN returns the edition (globally, regardless of library) whose
 // isbn_10 or isbn_13 matches the given value. Returns ErrNotFound if none
-// match. Callers that need library scoping can check library_book_editions
+// match. Callers that need library scoping can check for a copy
 // afterwards.
 func (r *EditionRepo) FindByISBN(ctx context.Context, isbn string) (*models.BookEdition, error) {
 	q := `SELECT ` + editionColumns + `
@@ -217,14 +218,22 @@ func (r *EditionRepo) FindByISBN(ctx context.Context, isbn string) (*models.Book
 	return e, nil
 }
 
-// FindByISBNInLibrary returns the edition with the given ISBN, but only if
-// the given library holds it via library_book_editions. Returns ErrNotFound
-// if the edition doesn't exist or isn't held by that library.
+// FindByISBNInLibrary returns the edition with the given ISBN, but only if the
+// given library holds a copy of it. Returns ErrNotFound otherwise.
+//
+// EXISTS rather than a join: a library holding three copies of a printing must
+// still return one edition, and a join would return it three times.
+//
+// The ISBN comparison still reads the isbn_10 and isbn_13 columns rather than
+// edition_identifiers. Both are populated and agree, and moving this lookup is
+// part of retiring those columns rather than of moving holdings.
 func (r *EditionRepo) FindByISBNInLibrary(ctx context.Context, libraryID uuid.UUID, isbn string) (*models.BookEdition, error) {
 	q := `SELECT ` + beEditionColumns + `
 		FROM book_editions be
-		JOIN library_book_editions lbe ON lbe.book_edition_id = be.id
-		WHERE lbe.library_id = $1 AND (be.isbn_10 = $2 OR be.isbn_13 = $2)
+		WHERE (be.isbn_10 = $2 OR be.isbn_13 = $2)
+		  AND EXISTS (SELECT 1 FROM copies c
+		               WHERE c.edition_id = be.id AND c.library_id = $1
+		                 AND c.deleted_at IS NULL)
 		LIMIT 1`
 	e, err := scanEdition(r.db.QueryRow(ctx, q, libraryID, isbn))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -236,15 +245,16 @@ func (r *EditionRepo) FindByISBNInLibrary(ctx context.Context, libraryID uuid.UU
 	return e, nil
 }
 
-// IncrementCopyCount bumps the copy count for an edition in a specific
-// library. Upserts — if the (library, edition) row doesn't exist, creates
-// it with copy_count = 1.
+// IncrementCopyCount records one more copy of an edition in a library.
+//
+// Now literally what the name says: it adds a row rather than raising a number.
+// The new copy carries no condition, price or location, which is right for the
+// path that calls this (a scan that found a duplicate), and whoever wants to
+// say the second one is signed can do that against the copy afterwards.
 func (r *EditionRepo) IncrementCopyCount(ctx context.Context, libraryID, editionID uuid.UUID) error {
 	const q = `
-		INSERT INTO library_book_editions (library_id, book_edition_id, copy_count)
-		VALUES ($1, $2, 1)
-		ON CONFLICT (library_id, book_edition_id)
-		DO UPDATE SET copy_count = library_book_editions.copy_count + 1`
+		INSERT INTO copies (library_id, book_id, edition_id)
+		SELECT $1, e.book_id, e.id FROM book_editions e WHERE e.id = $2`
 	_, err := r.db.Exec(ctx, q, libraryID, editionID)
 	if err != nil {
 		return fmt.Errorf("incrementing copy count: %w", err)
@@ -254,194 +264,242 @@ func (r *EditionRepo) IncrementCopyCount(ctx context.Context, libraryID, edition
 
 // ─── User interactions ────────────────────────────────────────────────────────
 
-const interactionColumns = `
-	id, user_id, book_edition_id, read_status, rating, COALESCE(notes,''), COALESCE(review,''),
-	date_started, date_finished, is_favorite, reread_count, progress, created_at, updated_at
-`
+// ─── Reading state, via the edition-shaped API ────────────────────────────
+//
+// These keep their old signatures because the old routes still use them, and
+// they now read and write user_books like everything else. That is the point:
+// if this path still wrote user_book_interactions, marking a book read through
+// the old endpoint would be invisible to the new one, and the two would drift
+// apart the moment a client moved.
+//
+// The edition in the signature is resolved to its work. Callers pass an edition
+// because that is the shape the old URL has; the answer belongs to the book.
+//
+// Dates and progress live in reading_sessions now, so a call carrying them
+// writes a session as well as the verdict.
 
-func (r *EditionRepo) GetInteraction(ctx context.Context, userID, editionID uuid.UUID) (*models.UserBookInteraction, error) {
-	q := `SELECT ` + interactionColumns + `FROM user_book_interactions WHERE user_id = $1 AND book_edition_id = $2`
-	i, err := scanInteraction(r.db.QueryRow(ctx, q, userID, editionID))
+// bookOfEdition resolves the work an edition belongs to.
+func (r *EditionRepo) bookOfEdition(ctx context.Context, editionID uuid.UUID) (uuid.UUID, error) {
+	var bookID uuid.UUID
+	err := r.db.QueryRow(ctx, `SELECT book_id FROM book_editions WHERE id = $1`, editionID).Scan(&bookID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("resolving edition's book: %w", err)
+	}
+	return bookID, nil
+}
+
+// readInteraction builds the edition-shaped view of a work's reading state.
+// The session supplies the dates, which is where a date belongs: it describes a
+// pass through the book, not the verdict on it.
+func (r *EditionRepo) readInteraction(ctx context.Context, userID, editionID, bookID uuid.UUID) (*models.UserBookInteraction, error) {
+	const q = `
+		SELECT ub.user_id, ub.read_status, ub.rating, COALESCE(ub.notes,''), COALESCE(ub.review,''),
+		       ub.is_favorite, ub.created_at, ub.updated_at,
+		       (SELECT min(rs.started_at) FROM reading_sessions rs
+		         WHERE rs.user_id = ub.user_id AND rs.book_id = ub.book_id),
+		       (SELECT max(rs.finished_at) FROM reading_sessions rs
+		         WHERE rs.user_id = ub.user_id AND rs.book_id = ub.book_id),
+		       (SELECT count(*) FROM reading_sessions rs
+		         WHERE rs.user_id = ub.user_id AND rs.book_id = ub.book_id
+		           AND rs.status = 'finished')
+		  FROM user_books ub
+		 WHERE ub.user_id = $1 AND ub.book_id = $2 AND ub.deleted_at IS NULL`
+
+	var i models.UserBookInteraction
+	var sessions int
+	err := r.db.QueryRow(ctx, q, userID, bookID).Scan(
+		&i.UserID, &i.ReadStatus, &i.Rating, &i.Notes, &i.Review,
+		&i.IsFavorite, &i.CreatedAt, &i.UpdatedAt,
+		&i.DateStarted, &i.DateFinished, &sessions)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("getting interaction: %w", err)
+		return nil, fmt.Errorf("reading interaction: %w", err)
 	}
-	return i, nil
+
+	i.BookEditionID = editionID
+	// A reread is a second finished session, so the count is derived rather
+	// than stored. Sessions before the migration could not be reconstructed, so
+	// an old reread_count of 3 reads as 1 here; that loss is in the release
+	// notes rather than hidden.
+	if sessions > 1 {
+		i.RereadCount = sessions - 1
+	}
+	return &i, nil
 }
 
-// UpsertInteraction creates or fully overwrites a user's interaction
-// with an edition. progress is the JSONB body for reading-progress
-// ({pages_read?, percent?, position?}) — pass nil or empty []byte to
-// clear the column.
+// GetInteraction returns the caller's reading state for the work this edition
+// belongs to.
+func (r *EditionRepo) GetInteraction(ctx context.Context, userID, editionID uuid.UUID) (*models.UserBookInteraction, error) {
+	bookID, err := r.bookOfEdition(ctx, editionID)
+	if err != nil {
+		return nil, err
+	}
+	return r.readInteraction(ctx, userID, editionID, bookID)
+}
+
+// UpsertInteraction replaces the caller's reading state for the work.
 func (r *EditionRepo) UpsertInteraction(ctx context.Context, userID, editionID uuid.UUID, readStatus string, rating any, notes, review string, dateStarted, dateFinished any, isFavorite bool, progress []byte) (*models.UserBookInteraction, error) {
-	const q = `
-		INSERT INTO user_book_interactions
-			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite, progress)
-		VALUES
-			($1, $2, $3, $4, $5, NULLIF($6,''), NULLIF($7,''), $8,
-			 -- $4::varchar, not bare $4. The same parameter fills read_status,
-			 -- which is varchar, and comparing it to a bare literal here made
-			 -- Postgres deduce text for it as well — "inconsistent types
-			 -- deduced for parameter $4: text versus character varying" — which
-			 -- rejects the whole statement. Every save through this form failed,
-			 -- and silently, because the client swallowed the error.
-			 --
-			 -- Casting the literal instead ('read'::varchar) does not work: the
-			 -- parameter is still deduced from both positions. The cast has to
-			 -- be on the parameter.
-			 COALESCE($9, CASE WHEN $4::varchar = 'read' THEN CURRENT_DATE END), $10, $11)
-		ON CONFLICT (user_id, book_edition_id) DO UPDATE
-		SET read_status   = EXCLUDED.read_status,
-		    rating        = EXCLUDED.rating,
-		    notes         = EXCLUDED.notes,
-		    review        = EXCLUDED.review,
-		    date_started  = EXCLUDED.date_started,
-		    -- Marking a book read without naming a day stamps today. The
-		    -- dashboard counts finished books by date_finished alone, so a
-		    -- read row with no date is invisible to it. See migration 000022.
-		    date_finished = COALESCE(
-		        EXCLUDED.date_finished,
-		        CASE WHEN EXCLUDED.read_status = 'read' THEN CURRENT_DATE END
-		    ),
-		    is_favorite   = EXCLUDED.is_favorite,
-		    progress      = EXCLUDED.progress,
-		    updated_at    = NOW()
-		RETURNING ` + interactionColumns
-
-	var progressArg any
-	if len(progress) > 0 {
-		progressArg = progress
-	}
-	i, err := scanInteraction(r.db.QueryRow(ctx, q, uuid.New(), userID, editionID, readStatus, rating, notes, review, dateStarted, dateFinished, isFavorite, progressArg))
+	bookID, err := r.bookOfEdition(ctx, editionID)
 	if err != nil {
-		return nil, fmt.Errorf("upserting interaction: %w", err)
+		return nil, err
 	}
-	return i, nil
+	if readStatus == "" {
+		readStatus = "unread"
+	}
+
+	const q = `
+		INSERT INTO user_books (user_id, book_id, read_status, rating, notes, review, is_favorite,
+		                        read_status_updated_at, rating_updated_at, is_favorite_updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), NOW())
+		ON CONFLICT (user_id, book_id) DO UPDATE SET
+		    read_status = EXCLUDED.read_status,
+		    rating      = EXCLUDED.rating,
+		    notes       = EXCLUDED.notes,
+		    review      = EXCLUDED.review,
+		    is_favorite = EXCLUDED.is_favorite,
+		    read_status_updated_at = CASE WHEN EXCLUDED.read_status IS DISTINCT FROM user_books.read_status
+		                                 THEN NOW() ELSE user_books.read_status_updated_at END,
+		    rating_updated_at      = CASE WHEN EXCLUDED.rating IS DISTINCT FROM user_books.rating
+		                                 THEN NOW() ELSE user_books.rating_updated_at END,
+		    is_favorite_updated_at = CASE WHEN EXCLUDED.is_favorite IS DISTINCT FROM user_books.is_favorite
+		                                 THEN NOW() ELSE user_books.is_favorite_updated_at END,
+		    updated_at  = NOW(),
+		    deleted_at  = NULL`
+
+	if _, err := r.db.Exec(ctx, q, userID, bookID, readStatus, rating, notes, review, isFavorite); err != nil {
+		return nil, fmt.Errorf("writing reading state: %w", err)
+	}
+	if err := r.recordSession(ctx, userID, bookID, editionID, readStatus, dateStarted, dateFinished, progress); err != nil {
+		return nil, err
+	}
+	return r.readInteraction(ctx, userID, editionID, bookID)
 }
 
-// MergeInteraction is the import-safe variant of UpsertInteraction:
-// every argument is a pointer (or nullable any) and a nil value
-// preserves whatever the existing row holds. The full-overwrite
-// version is correct for the manual edit flow (the client always sends
-// the complete record), but is destructive for CSV imports where a
-// blank column means "no data" rather than "set to empty".
-//
-// String columns treat empty as no-input via NULLIF; nullable columns
-// treat nil the same way. is_favorite has to be tri-state, so it
-// takes a *bool — pass nil to leave the existing flag alone.
-// MergeInteraction is the import-safe variant — pass nil progress to
-// preserve whatever the existing row holds.
-func (r *EditionRepo) MergeInteraction(
-	ctx context.Context,
-	userID, editionID uuid.UUID,
-	readStatus *string,
-	rating any,
-	notes, review *string,
-	dateStarted, dateFinished any,
-	isFavorite *bool,
-	progress []byte,
-) (*models.UserBookInteraction, error) {
-	const q = `
-		INSERT INTO user_book_interactions
-			(id, user_id, book_edition_id, read_status, rating, notes, review, date_started, date_finished, is_favorite, progress)
-		VALUES
-			($1, $2, $3, COALESCE(NULLIF($4,''),''), $5, NULLIF($6,''), NULLIF($7,''), $8,
-			 COALESCE($9, CASE WHEN NULLIF($4,'') = 'read' THEN CURRENT_DATE END), COALESCE($10, false), $11)
-		ON CONFLICT (user_id, book_edition_id) DO UPDATE
-		SET read_status   = COALESCE(NULLIF(EXCLUDED.read_status,''), user_book_interactions.read_status),
-		    rating        = COALESCE(EXCLUDED.rating, user_book_interactions.rating),
-		    notes         = COALESCE(EXCLUDED.notes, user_book_interactions.notes),
-		    review        = COALESCE(EXCLUDED.review, user_book_interactions.review),
-		    date_started  = COALESCE(EXCLUDED.date_started, user_book_interactions.date_started),
-		    -- Same rule as UpsertInteraction: a row that ends up read with no
-		    -- date gets today, so the dashboard can see it. Only fires on the
-		    -- transition, since an existing date_finished wins first.
-		    date_finished = COALESCE(
-		        EXCLUDED.date_finished,
-		        user_book_interactions.date_finished,
-		        CASE WHEN COALESCE(NULLIF(EXCLUDED.read_status,''), user_book_interactions.read_status) = 'read'
-		             THEN CURRENT_DATE END
-		    ),
-		    is_favorite   = COALESCE($10, user_book_interactions.is_favorite),
-		    progress      = COALESCE(EXCLUDED.progress, user_book_interactions.progress),
-		    updated_at    = NOW()
-		RETURNING ` + interactionColumns
+// MergeInteraction updates only the fields the caller supplied, leaving the
+// rest as they were.
+func (r *EditionRepo) MergeInteraction(ctx context.Context, userID, editionID uuid.UUID, readStatus *string, rating any, notes, review any, dateStarted, dateFinished any, isFavorite *bool, progress []byte) (*models.UserBookInteraction, error) {
+	bookID, err := r.bookOfEdition(ctx, editionID)
+	if err != nil {
+		return nil, err
+	}
 
-	rs := ""
+	const q = `
+		INSERT INTO user_books (user_id, book_id, read_status, rating, notes, review, is_favorite,
+		                        read_status_updated_at, rating_updated_at, is_favorite_updated_at)
+		VALUES ($1, $2, COALESCE(NULLIF($3,''), 'unread'), $4, COALESCE($5,''), COALESCE($6,''),
+		        COALESCE($7, FALSE),
+		        CASE WHEN NULLIF($3,'') IS NOT NULL THEN NOW() END,
+		        CASE WHEN $4 IS NOT NULL THEN NOW() END,
+		        CASE WHEN $7 IS NOT NULL THEN NOW() END)
+		ON CONFLICT (user_id, book_id) DO UPDATE SET
+		    read_status = COALESCE(NULLIF($3,''), user_books.read_status),
+		    rating      = COALESCE($4, user_books.rating),
+		    notes       = COALESCE($5, user_books.notes),
+		    review      = COALESCE($6, user_books.review),
+		    is_favorite = COALESCE($7, user_books.is_favorite),
+		    read_status_updated_at = CASE WHEN NULLIF($3,'') IS DISTINCT FROM NULL
+		                                  AND NULLIF($3,'') IS DISTINCT FROM user_books.read_status
+		                                 THEN NOW() ELSE user_books.read_status_updated_at END,
+		    rating_updated_at      = CASE WHEN $4 IS NOT NULL AND $4 IS DISTINCT FROM user_books.rating
+		                                 THEN NOW() ELSE user_books.rating_updated_at END,
+		    is_favorite_updated_at = CASE WHEN $7 IS NOT NULL AND $7 IS DISTINCT FROM user_books.is_favorite
+		                                 THEN NOW() ELSE user_books.is_favorite_updated_at END,
+		    updated_at  = NOW(),
+		    deleted_at  = NULL`
+
+	if _, err := r.db.Exec(ctx, q, userID, bookID, readStatus, rating, notes, review, isFavorite); err != nil {
+		return nil, fmt.Errorf("merging reading state: %w", err)
+	}
+	status := ""
 	if readStatus != nil {
-		rs = *readStatus
+		status = *readStatus
 	}
-	nt := ""
-	if notes != nil {
-		nt = *notes
+	if err := r.recordSession(ctx, userID, bookID, editionID, status, dateStarted, dateFinished, progress); err != nil {
+		return nil, err
 	}
-	rv := ""
-	if review != nil {
-		rv = *review
-	}
-	var progressArg any
-	if len(progress) > 0 {
-		progressArg = progress
-	}
-	i, err := scanInteraction(r.db.QueryRow(ctx, q, uuid.New(), userID, editionID, rs, rating, nt, rv, dateStarted, dateFinished, isFavorite, progressArg))
-	if err != nil {
-		return nil, fmt.Errorf("merging interaction: %w", err)
-	}
-	return i, nil
+	return r.readInteraction(ctx, userID, editionID, bookID)
 }
 
+// recordSession keeps one open session per work in step with a caller that only
+// knows about dates and progress.
+//
+// It updates the most recent session rather than always adding one, because the
+// old API has no notion of a session: a client setting a finish date twice means
+// one reading that got corrected, not two readings. Deliberately logging a
+// reread is what the sessions endpoint is for.
+func (r *EditionRepo) recordSession(ctx context.Context, userID, bookID, editionID uuid.UUID, readStatus string, dateStarted, dateFinished any, progress []byte) error {
+	if dateStarted == nil && dateFinished == nil && len(progress) == 0 {
+		return nil
+	}
+
+	status := "reading"
+	switch readStatus {
+	case "read":
+		status = "finished"
+	case "did_not_finish":
+		status = "abandoned"
+	}
+
+	const q = `
+		WITH latest AS (
+		    SELECT id FROM reading_sessions
+		     WHERE user_id = $1 AND book_id = $2
+		     ORDER BY COALESCE(started_at, created_at) DESC, created_at DESC
+		     LIMIT 1
+		), updated AS (
+		    UPDATE reading_sessions rs
+		       SET started_at     = COALESCE($4::timestamptz, rs.started_at),
+		           finished_at    = COALESCE($5::timestamptz, rs.finished_at),
+		           status         = $6,
+		           progress_unit  = COALESCE($7, rs.progress_unit),
+		           progress_value = COALESCE($8, rs.progress_value)
+		      FROM latest WHERE rs.id = latest.id
+		    RETURNING rs.id
+		)
+		INSERT INTO reading_sessions (user_id, book_id, edition_id, started_at, finished_at,
+		                              status, progress_unit, progress_value)
+		SELECT $1, $2, $3, $4::timestamptz, $5::timestamptz, $6, $7, $8
+		 WHERE NOT EXISTS (SELECT 1 FROM updated)`
+
+	var unit, value any
+	if len(progress) > 0 {
+		// The old column was an unvalidated blob. Only a percentage survives
+		// the move, because that is the one shape that means the same thing
+		// without knowing which printing it counts.
+		var parsed struct {
+			Percent *float64 `json:"percent"`
+		}
+		if err := json.Unmarshal(progress, &parsed); err == nil && parsed.Percent != nil {
+			unit, value = "percent", *parsed.Percent
+		}
+	}
+
+	if _, err := r.db.Exec(ctx, q, userID, bookID, editionID, dateStarted, dateFinished, status, unit, value); err != nil {
+		return fmt.Errorf("recording reading session: %w", err)
+	}
+	return nil
+}
+
+// DeleteInteraction forgets the caller's reading state for the work.
 func (r *EditionRepo) DeleteInteraction(ctx context.Context, userID, editionID uuid.UUID) error {
-	result, err := r.db.Exec(ctx,
-		`DELETE FROM user_book_interactions WHERE user_id = $1 AND book_edition_id = $2`,
-		userID, editionID,
-	)
+	bookID, err := r.bookOfEdition(ctx, editionID)
 	if err != nil {
-		return fmt.Errorf("deleting interaction: %w", err)
+		return err
+	}
+	result, err := r.db.Exec(ctx,
+		`UPDATE user_books SET deleted_at = NOW(), updated_at = NOW()
+		  WHERE user_id = $1 AND book_id = $2 AND deleted_at IS NULL`,
+		userID, bookID)
+	if err != nil {
+		return fmt.Errorf("deleting reading state: %w", err)
 	}
 	if result.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 	return nil
-}
-
-func scanInteraction(s scanner) (*models.UserBookInteraction, error) {
-	var (
-		pgID           pgtype.UUID
-		pgUserID       pgtype.UUID
-		pgEditionID    pgtype.UUID
-		pgRating       pgtype.Int4
-		pgDateStarted  pgtype.Date
-		pgDateFinished pgtype.Date
-		progress       []byte
-		i              models.UserBookInteraction
-	)
-	err := s.Scan(
-		&pgID, &pgUserID, &pgEditionID,
-		&i.ReadStatus, &pgRating, &i.Notes, &i.Review,
-		&pgDateStarted, &pgDateFinished,
-		&i.IsFavorite, &i.RereadCount, &progress,
-		&i.CreatedAt, &i.UpdatedAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-	i.ID = uuid.UUID(pgID.Bytes)
-	i.UserID = uuid.UUID(pgUserID.Bytes)
-	i.BookEditionID = uuid.UUID(pgEditionID.Bytes)
-	if pgRating.Valid {
-		v := int(pgRating.Int32)
-		i.Rating = &v
-	}
-	if pgDateStarted.Valid {
-		t := pgDateStarted.Time
-		i.DateStarted = &t
-	}
-	if pgDateFinished.Valid {
-		t := pgDateFinished.Time
-		i.DateFinished = &t
-	}
-	i.Progress = progress
-	return &i, nil
 }

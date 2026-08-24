@@ -33,24 +33,22 @@ const libraryColumns = `id, name, description, slug, owner_id, is_public, create
 func libraryListColumns(callerArg int) string {
 	if callerArg <= 0 {
 		return libraryColumns + `,
-		COALESCE((SELECT COUNT(*) FROM library_books lb WHERE lb.library_id = l.id), 0) AS book_count,
+		COALESCE((SELECT COUNT(*) FROM held_books lb WHERE lb.library_id = l.id), 0) AS book_count,
 		0 AS reading_count,
 		0 AS read_count`
 	}
 	return libraryColumns + `,
-		COALESCE((SELECT COUNT(*) FROM library_books lb WHERE lb.library_id = l.id), 0) AS book_count,
+		COALESCE((SELECT COUNT(*) FROM held_books lb WHERE lb.library_id = l.id), 0) AS book_count,
 		COALESCE((
 			SELECT COUNT(DISTINCT lb.book_id)
-			FROM library_books lb
-			JOIN book_editions be ON be.book_id = lb.book_id
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
+			FROM held_books lb
+			JOIN user_books ubi ON ubi.book_id = lb.book_id AND ubi.deleted_at IS NULL
 			WHERE lb.library_id = l.id AND ubi.user_id = $` + fmt.Sprint(callerArg) + ` AND ubi.read_status = 'reading'
 		), 0) AS reading_count,
 		COALESCE((
 			SELECT COUNT(DISTINCT lb.book_id)
-			FROM library_books lb
-			JOIN book_editions be ON be.book_id = lb.book_id
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
+			FROM held_books lb
+			JOIN user_books ubi ON ubi.book_id = lb.book_id AND ubi.deleted_at IS NULL
 			WHERE lb.library_id = l.id AND ubi.user_id = $` + fmt.Sprint(callerArg) + ` AND ubi.read_status = 'read'
 		), 0) AS read_count`
 }
@@ -139,7 +137,7 @@ func (r *LibraryRepo) ListForUser(ctx context.Context, userID uuid.UUID) ([]*mod
 	q := `
 		SELECT l.` + libraryListColumns(1) + `
 		FROM libraries l
-		JOIN library_memberships lm ON lm.library_id = l.id
+		JOIN library_members lm ON lm.library_id = l.id
 		WHERE lm.user_id = $1
 		ORDER BY l.name`
 

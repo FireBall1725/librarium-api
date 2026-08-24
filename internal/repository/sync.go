@@ -46,16 +46,15 @@ func (r *SyncRepo) UserBookInteractionChanges(ctx context.Context, userID uuid.U
 		SELECT id,
 		       rating, rating_updated_at,
 		       read_status, read_status_updated_at,
-		       progress, progress_updated_at,
+		       NULL::jsonb AS progress, NULL::timestamptz AS progress_updated_at,
 		       is_favorite, is_favorite_updated_at,
 		       updated_at, deleted_at
-		  FROM user_book_interactions
+		  FROM user_books
 		 WHERE user_id = $1
 		   AND (
 		           updated_at             > $2
 		        OR rating_updated_at      > $2
 		        OR read_status_updated_at > $2
-		        OR progress_updated_at    > $2
 		        OR is_favorite_updated_at > $2
 		        OR deleted_at             > $2
 		       )
@@ -156,9 +155,13 @@ func (r *SyncRepo) UserBookInteractionChanges(ctx context.Context, userID uuid.U
 	return ops, nil
 }
 
-// ApplyUserBookInteractionOp applies a single op against
-// user_book_interactions. The caller's user_id is enforced as the row
-// owner; ops targeting other users' rows return not_found.
+// ApplyUserBookInteractionOp applies a single op against user_books. The
+// caller's user_id is enforced as the row owner; ops targeting other users'
+// rows return not_found.
+//
+// The entity type stays user_book_interaction because it is what iOS sends and
+// the id it addresses is still one the server handed it. Reading state moved
+// underneath; the protocol did not.
 //
 // Returns one of SyncApplyStatus* constants describing what happened.
 func (r *SyncRepo) ApplyUserBookInteractionOp(ctx context.Context, userID uuid.UUID, op responses.SyncApplyOp) (string, error) {
@@ -196,15 +199,18 @@ func (r *SyncRepo) ApplyUserBookInteractionOp(ctx context.Context, userID uuid.U
 		}
 		return r.applyUBIField(ctx, userID, op.EntityID, op.UpdatedAt, "is_favorite", "is_favorite_updated_at", b)
 	case "progress":
-		var progressJSON interface{}
-		if op.Value != nil {
-			b, err := json.Marshal(op.Value)
-			if err != nil {
-				return SyncApplyStatusInvalid, nil
-			}
-			progressJSON = string(b)
-		}
-		return r.applyUBIField(ctx, userID, op.EntityID, op.UpdatedAt, "progress", "progress_updated_at", progressJSON)
+		// Progress moved to reading_sessions, where it is a unit and a value
+		// describing one pass through a book rather than an unvalidated blob on
+		// the verdict. It has no per-field timestamp there, so it cannot take
+		// part in per-field last-writer-wins, and pretending otherwise would
+		// mean inventing a timestamp to compare against.
+		//
+		// Rejected rather than silently accepted: a client that is told invalid
+		// stops sending it, where one told applied would keep pushing a value
+		// that goes nowhere. No collection seen so far has ever had a non-null
+		// progress, so this drops nothing real. Progress syncs again when the
+		// protocol gains a sessions entity.
+		return SyncApplyStatusInvalid, nil
 	default:
 		return SyncApplyStatusInvalid, nil
 	}
@@ -216,7 +222,7 @@ func (r *SyncRepo) ApplyUserBookInteractionOp(ctx context.Context, userID uuid.U
 // discarded_stale unless the row doesn't exist at all (not_found).
 func (r *SyncRepo) applyUBIField(ctx context.Context, userID, entityID uuid.UUID, opTS time.Time, valueCol, tsCol string, value interface{}) (string, error) {
 	q := fmt.Sprintf(`
-		UPDATE user_book_interactions
+		UPDATE user_books
 		   SET %s = $3, %s = $4, updated_at = NOW()
 		 WHERE id = $1 AND user_id = $2
 		   AND (%s IS NULL OR %s < $4)
@@ -240,7 +246,7 @@ func (r *SyncRepo) applyUBIField(ctx context.Context, userID, entityID uuid.UUID
 // discarded_stale (the existing deletion wins).
 func (r *SyncRepo) applyUBITombstone(ctx context.Context, userID, entityID uuid.UUID, opTS time.Time) (string, error) {
 	const q = `
-		UPDATE user_book_interactions
+		UPDATE user_books
 		   SET deleted_at = $3, updated_at = NOW()
 		 WHERE id = $1 AND user_id = $2
 		   AND (deleted_at IS NULL OR deleted_at < $3)
@@ -260,7 +266,7 @@ func (r *SyncRepo) applyUBITombstone(ctx context.Context, userID, entityID uuid.
 // distinguishes "row doesn't exist (or wrong owner)" from "row exists
 // but the LWW comparison rejected the write."
 func (r *SyncRepo) classifyUBIMiss(ctx context.Context, userID, entityID uuid.UUID) (string, error) {
-	const q = `SELECT EXISTS(SELECT 1 FROM user_book_interactions WHERE id = $1 AND user_id = $2)`
+	const q = `SELECT EXISTS(SELECT 1 FROM user_books WHERE id = $1 AND user_id = $2)`
 	var exists bool
 	if err := r.db.QueryRow(ctx, q, entityID, userID).Scan(&exists); err != nil {
 		return "", fmt.Errorf("classify miss: %w", err)

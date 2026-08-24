@@ -69,20 +69,30 @@ func Migrate(databaseURL string) error {
 	}()
 
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		// If the DB is dirty (a previous migration was interrupted), force-reset
-		// the dirty flag to the current version so Up() can retry.
+		// A dirty version means a migration started and did not finish. This
+		// used to auto-recover by calling Force(dirtyVersion) and retrying Up(),
+		// which is wrong in a way that hides itself: Force marks that version
+		// APPLIED, so the retry resumes at the next one and the failed migration
+		// never runs. golang-migrate wraps each file in a transaction, so its
+		// changes were rolled back — the schema then claims work that is not
+		// there. Survivable when a migration only adds a column; not survivable
+		// when one moves data.
+		//
+		// So: refuse to start, and make the operator decide. Recovery is either
+		// restoring the backup taken before the upgrade, or forcing to the
+		// version BEFORE the failed one so it runs again, and the difference
+		// depends on whether the file is idempotent. Neither is a choice a boot
+		// sequence should make on someone's behalf.
 		var dirtyErr migrate.ErrDirty
 		if errors.As(err, &dirtyErr) {
-			slog.Warn("dirty migration state detected — forcing version to retry", "version", dirtyErr.Version)
-			if ferr := m.Force(dirtyErr.Version); ferr != nil {
-				return fmt.Errorf("forcing dirty migration version: %w", ferr)
-			}
-			if rerr := m.Up(); rerr != nil && !errors.Is(rerr, migrate.ErrNoChange) {
-				return fmt.Errorf("running migrations after force: %w", rerr)
-			}
-		} else {
-			return fmt.Errorf("running migrations: %w", err)
+			return fmt.Errorf(
+				"database is in a dirty migration state at version %d: migration %d started and did not complete, "+
+					"so the schema may not match what schema_migrations reports. Refusing to continue. "+
+					"Restore the backup taken before the upgrade, or if you are certain migration %d applied nothing, "+
+					"force the version to %d and restart to retry it",
+				dirtyErr.Version, dirtyErr.Version, dirtyErr.Version, dirtyErr.Version-1)
 		}
+		return fmt.Errorf("running migrations: %w", err)
 	}
 
 	version, dirty, err := m.Version()

@@ -219,10 +219,9 @@ func (r *BookRepo) seriesGroups(
 		readExpr = `(
 			SELECT count(DISTINCT bs_r.book_id)::int
 			FROM book_series bs_r
-			JOIN library_books lb_r ON lb_r.book_id = bs_r.book_id
+			JOIN held_books lb_r ON lb_r.book_id = bs_r.book_id
 				AND lb_r.library_id = ANY($2) AND lb_r.deleted_at IS NULL
-			JOIN book_editions be_r ON be_r.book_id = bs_r.book_id
-			JOIN user_book_interactions ubi_r ON ubi_r.book_edition_id = be_r.id
+			JOIN user_books ubi_r ON ubi_r.book_id = bs_r.book_id AND ubi_r.deleted_at IS NULL
 				AND ubi_r.user_id = $3 AND ubi_r.read_status = 'read'
 			WHERE bs_r.series_id = s.id
 		)`
@@ -233,7 +232,7 @@ func (r *BookRepo) seriesGroups(
 		(
 			SELECT count(DISTINCT bs_o.book_id)::int
 			FROM book_series bs_o
-			JOIN library_books lb_o ON lb_o.book_id = bs_o.book_id
+			JOIN held_books lb_o ON lb_o.book_id = bs_o.book_id
 				AND lb_o.library_id = ANY($2) AND lb_o.deleted_at IS NULL
 			WHERE bs_o.series_id = s.id
 		) AS owned,
@@ -241,7 +240,7 @@ func (r *BookRepo) seriesGroups(
 		(
 			SELECT bs_c.book_id
 			FROM book_series bs_c
-			JOIN library_books lb_c ON lb_c.book_id = bs_c.book_id
+			JOIN held_books lb_c ON lb_c.book_id = bs_c.book_id
 				AND lb_c.library_id = ANY($2) AND lb_c.deleted_at IS NULL
 			WHERE bs_c.series_id = s.id
 			  AND EXISTS (

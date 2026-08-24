@@ -15,9 +15,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// LibraryBookRepo manages the library_books and library_book_editions
-// junction tables — i.e., which libraries hold which works (and copy
-// counts at the edition level).
+// LibraryBookRepo answers which libraries hold which works.
+//
+// Writes go to copies, one row per physical object. Reads go through the
+// held_books view, which collapses those copies back to one row per work so a
+// list does not show a book twice because someone owns two of it.
+//
+// The old library_books and library_book_editions tables still exist and still
+// hold what they held before the tiers migration. Nothing writes to them now,
+// and contract drops them once this shape has proven itself.
 type LibraryBookRepo struct {
 	db *pgxpool.Pool
 }
@@ -26,14 +32,24 @@ func NewLibraryBookRepo(db *pgxpool.Pool) *LibraryBookRepo {
 	return &LibraryBookRepo{db: db}
 }
 
-// AddBookToLibrary inserts a library_books row if one doesn't already
-// exist for the (library, book) pair. Idempotent — re-adding a book
-// that's already in the library is a no-op.
+// AddBookToLibrary records that a library holds a work, by creating a copy.
+//
+// Idempotent in the sense that matters: adding a book already in the library
+// does nothing rather than quietly giving you a second copy. Someone who
+// genuinely owns two says so through the copies endpoint, where they can also
+// say which one is signed. A junction row could not tell those cases apart at
+// all, which is why it stopped being a junction row.
+//
+// The copy carries no edition, condition or location. That is the ordinary
+// case: adding a book is one action, and nobody meets the word "copy" until
+// they own two.
 func (r *LibraryBookRepo) AddBookToLibrary(ctx context.Context, tx pgx.Tx, libraryID, bookID uuid.UUID, addedBy *uuid.UUID) error {
 	const q = `
-		INSERT INTO library_books (library_id, book_id, added_by)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (library_id, book_id) DO NOTHING`
+		INSERT INTO copies (library_id, book_id, acquired_by)
+		SELECT $1, $2, $3
+		 WHERE NOT EXISTS (
+		     SELECT 1 FROM copies
+		      WHERE library_id = $1 AND book_id = $2 AND deleted_at IS NULL)`
 	var err error
 	if tx != nil {
 		_, err = tx.Exec(ctx, q, libraryID, bookID, addedBy)
@@ -46,11 +62,17 @@ func (r *LibraryBookRepo) AddBookToLibrary(ctx context.Context, tx pgx.Tx, libra
 	return nil
 }
 
-// RemoveBookFromLibrary drops the library_books row for the given
-// (library, book). Returns ErrNotFound if no such row exists.
+// RemoveBookFromLibrary stops a library holding a work, by soft-deleting every
+// copy of it there. Returns ErrNotFound if the library did not hold it.
+//
+// Soft rather than hard: a copy carries condition, provenance and price that
+// someone typed, and losing that to a misclick is the expensive mistake. The
+// old junction row held nothing worth keeping, so deleting it outright was
+// fine; a copy is not.
 func (r *LibraryBookRepo) RemoveBookFromLibrary(ctx context.Context, libraryID, bookID uuid.UUID) error {
 	result, err := r.db.Exec(ctx,
-		`DELETE FROM library_books WHERE library_id = $1 AND book_id = $2`,
+		`UPDATE copies SET deleted_at = NOW(), updated_at = NOW()
+		  WHERE library_id = $1 AND book_id = $2 AND deleted_at IS NULL`,
 		libraryID, bookID,
 	)
 	if err != nil {
@@ -62,12 +84,11 @@ func (r *LibraryBookRepo) RemoveBookFromLibrary(ctx context.Context, libraryID, 
 	return nil
 }
 
-// IsBookInLibrary returns true if the (library, book) pair exists in
-// library_books.
+// IsBookInLibrary reports whether a library holds a work.
 func (r *LibraryBookRepo) IsBookInLibrary(ctx context.Context, libraryID, bookID uuid.UUID) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM library_books WHERE library_id = $1 AND book_id = $2)`,
+		`SELECT EXISTS(SELECT 1 FROM held_books WHERE library_id = $1 AND book_id = $2)`,
 		libraryID, bookID,
 	).Scan(&exists)
 	if err != nil {
@@ -77,11 +98,11 @@ func (r *LibraryBookRepo) IsBookInLibrary(ctx context.Context, libraryID, bookID
 }
 
 // LibrariesForBook returns lightweight references to every library that
-// holds the given book (via the library_books junction).
+// holds the given book.
 func (r *LibraryBookRepo) LibrariesForBook(ctx context.Context, bookID uuid.UUID) ([]models.BookLibraryRef, error) {
 	const q = `
 		SELECT l.id, l.name
-		FROM library_books lb
+		FROM held_books lb
 		JOIN libraries l ON l.id = lb.library_id
 		WHERE lb.book_id = $1
 		ORDER BY lb.added_at ASC`
@@ -103,12 +124,13 @@ func (r *LibraryBookRepo) LibrariesForBook(ctx context.Context, bookID uuid.UUID
 	return out, rows.Err()
 }
 
-// FindLibraryBook returns the junction row for a (library, book) pair,
-// or ErrNotFound.
+// FindLibraryBook returns the holding for a (library, book) pair, or
+// ErrNotFound. The id is the earliest copy's; a holding is now a set of copies
+// and the thing worth addressing individually is a copy.
 func (r *LibraryBookRepo) FindLibraryBook(ctx context.Context, libraryID, bookID uuid.UUID) (*models.LibraryBook, error) {
 	const q = `
 		SELECT id, library_id, book_id, added_by, added_at
-		FROM library_books
+		FROM held_books
 		WHERE library_id = $1 AND book_id = $2`
 	var (
 		lb        models.LibraryBook
@@ -134,51 +156,79 @@ func (r *LibraryBookRepo) FindLibraryBook(ctx context.Context, libraryID, bookID
 	return &lb, nil
 }
 
-// SetEditionCopyCount sets the copy count for an edition in a specific
-// library. If copyCount is 0, the junction row is deleted. Upserts
-// otherwise.
+// SetEditionCopyCount makes a library hold exactly copyCount copies of an
+// edition, adding or retiring rows to get there.
+//
+// A count is no longer a column, so this reconciles rather than assigns. That
+// distinction is the whole point of the change: setting the count to 1 when
+// there are two must retire one specific object, and the one it keeps should be
+// the one someone bothered to describe.
+//
+// So the copies retired first are the ones carrying the least: no condition,
+// not signed, no note, no price. A signed first printing survives a careless
+// edit to the number in a form.
 func (r *LibraryBookRepo) SetEditionCopyCount(ctx context.Context, tx pgx.Tx, libraryID, editionID uuid.UUID, copyCount int, acquiredAt *any) error {
-	if copyCount <= 0 {
-		q := `DELETE FROM library_book_editions WHERE library_id = $1 AND book_edition_id = $2`
+	exec := func(q string, args ...any) error {
 		var err error
 		if tx != nil {
-			_, err = tx.Exec(ctx, q, libraryID, editionID)
+			_, err = tx.Exec(ctx, q, args...)
 		} else {
-			_, err = r.db.Exec(ctx, q, libraryID, editionID)
+			_, err = r.db.Exec(ctx, q, args...)
 		}
 		return err
 	}
 
-	const q = `
-		INSERT INTO library_book_editions (library_id, book_edition_id, copy_count, acquired_at)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (library_id, book_edition_id)
-		DO UPDATE SET copy_count = EXCLUDED.copy_count,
-		              acquired_at = COALESCE(EXCLUDED.acquired_at, library_book_editions.acquired_at)`
+	if copyCount <= 0 {
+		// Soft, because a copy carries things someone typed. The old junction
+		// row held nothing worth keeping; this does.
+		return exec(`
+			UPDATE copies SET deleted_at = NOW(), updated_at = NOW()
+			 WHERE library_id = $1 AND edition_id = $2 AND deleted_at IS NULL`,
+			libraryID, editionID)
+	}
+
 	var acq any
 	if acquiredAt != nil {
 		acq = *acquiredAt
 	}
-	var err error
-	if tx != nil {
-		_, err = tx.Exec(ctx, q, libraryID, editionID, copyCount, acq)
-	} else {
-		_, err = r.db.Exec(ctx, q, libraryID, editionID, copyCount, acq)
+
+	// Retire the surplus, least-described first. describedness orders by how
+	// much a person put into the row, so the plain ones go before the signed one.
+	if err := exec(`
+		UPDATE copies SET deleted_at = NOW(), updated_at = NOW()
+		 WHERE id IN (
+		     SELECT id FROM copies
+		      WHERE library_id = $1 AND edition_id = $2 AND deleted_at IS NULL
+		      ORDER BY (is_signed::int
+		                + (condition IS NOT NULL)::int
+		                + (COALESCE(notes, '') <> '')::int
+		                + (price_minor IS NOT NULL)::int) ASC,
+		               created_at DESC, id DESC
+		     OFFSET $3)`, libraryID, editionID, copyCount); err != nil {
+		return fmt.Errorf("retiring surplus copies: %w", err)
 	}
-	if err != nil {
-		return fmt.Errorf("setting edition copy count: %w", err)
+
+	// Then top up to the requested number. generate_series makes the shortfall
+	// one statement rather than a loop.
+	if err := exec(`
+		INSERT INTO copies (library_id, book_id, edition_id, acquired_at)
+		SELECT $1, e.book_id, $2, $4::date
+		  FROM book_editions e
+		  CROSS JOIN generate_series(1, GREATEST($3 - (
+		         SELECT count(*) FROM copies
+		          WHERE library_id = $1 AND edition_id = $2 AND deleted_at IS NULL), 0)) AS n
+		 WHERE e.id = $2`, libraryID, editionID, copyCount, acq); err != nil {
+		return fmt.Errorf("adding copies: %w", err)
 	}
 	return nil
 }
 
-// GetEditionCopyCount returns the copy count for an edition in a
-// specific library. Returns 0 if the junction row doesn't exist.
+// GetEditionCopyCount counts how many copies of an edition a library holds.
+// A count rather than a stored number, so it cannot drift from the rows.
 func (r *LibraryBookRepo) GetEditionCopyCount(ctx context.Context, libraryID, editionID uuid.UUID) (int, error) {
 	const q = `
-		SELECT COALESCE((
-			SELECT copy_count FROM library_book_editions
-			WHERE library_id = $1 AND book_edition_id = $2
-		), 0)`
+		SELECT count(*) FROM copies
+		 WHERE library_id = $1 AND edition_id = $2 AND deleted_at IS NULL`
 	var count int
 	err := r.db.QueryRow(ctx, q, libraryID, editionID).Scan(&count)
 	if err != nil {

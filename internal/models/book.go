@@ -33,7 +33,7 @@ type BookShelfRef struct {
 }
 
 // Book represents a work — the abstract creative entity. Library ownership
-// is expressed via the library_books junction (see LibraryBook); a book row
+// is expressed by holding a copy (see LibraryBook); a book row
 // no longer carries a single library_id.
 type Book struct {
 	ID             uuid.UUID
@@ -79,7 +79,7 @@ type BookLibraryRef struct {
 	Name string    `json:"name"`
 }
 
-// LibraryBook is a row in the library_books junction — "library X holds book Y".
+// LibraryBook is one library holding one work, collapsed from its copies.
 type LibraryBook struct {
 	ID        uuid.UUID
 	LibraryID uuid.UUID

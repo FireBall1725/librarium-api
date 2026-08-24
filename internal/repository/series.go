@@ -46,30 +46,14 @@ func readStateSubqueries(callerArg int) string {
        (SELECT COUNT(*)::int FROM book_series bs2
           JOIN books b ON b.id = bs2.book_id
           WHERE bs2.series_id = s.id AND (
-              SELECT ubi.read_status FROM book_editions be
-              JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-              WHERE be.book_id = b.id AND ubi.user_id = $%d
-              ORDER BY CASE ubi.read_status
-                  WHEN 'read' THEN 1
-                  WHEN 'reading' THEN 2
-                  WHEN 'did_not_finish' THEN 3
-                  ELSE 4
-              END
-              LIMIT 1
+              SELECT ubi.read_status FROM user_books ubi
+              WHERE ubi.book_id = b.id AND ubi.user_id = $%d AND ubi.deleted_at IS NULL
           ) = 'read') AS read_count,
        (SELECT COUNT(*)::int FROM book_series bs2
           JOIN books b ON b.id = bs2.book_id
           WHERE bs2.series_id = s.id AND (
-              SELECT ubi.read_status FROM book_editions be
-              JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-              WHERE be.book_id = b.id AND ubi.user_id = $%d
-              ORDER BY CASE ubi.read_status
-                  WHEN 'read' THEN 1
-                  WHEN 'reading' THEN 2
-                  WHEN 'did_not_finish' THEN 3
-                  ELSE 4
-              END
-              LIMIT 1
+              SELECT ubi.read_status FROM user_books ubi
+              WHERE ubi.book_id = b.id AND ubi.user_id = $%d AND ubi.deleted_at IS NULL
           ) = 'reading') AS reading_count`, callerArg, callerArg)
 }
 
@@ -83,13 +67,13 @@ func readStateSubqueries(callerArg int) string {
 // while the Books page, which filters on ownership, disagreed about the same
 // series in the same session.
 //
-// Holding is a row in library_books, matching the shelf arm of bookScopeCTE. The
+// Holding is a row in held_books, matching the shelf arm of bookScopeCTE. The
 // series' own library is the one asked about: a series record belongs to one
 // library and its counts describe that library's copies, which is why a series
 // held twice is two rows rather than a merged total.
 const seriesBookCountExpr = `COUNT(bs.book_id) FILTER (
 	           WHERE EXISTS (
-	               SELECT 1 FROM library_books lb
+	               SELECT 1 FROM held_books lb
 	               WHERE lb.book_id = bs.book_id
 	                 AND lb.library_id = s.library_id
 	                 AND lb.deleted_at IS NULL
@@ -314,16 +298,8 @@ func (r *SeriesRepo) ListBooks(ctx context.Context, seriesID, callerID uuid.UUID
 		args = append(args, callerID)
 		userStatusExpr = fmt.Sprintf(`COALESCE((
 			SELECT ubi.read_status
-			FROM book_editions be
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-			WHERE be.book_id = b.id AND ubi.user_id = $%d
-			ORDER BY CASE ubi.read_status
-				WHEN 'read' THEN 1
-				WHEN 'reading' THEN 2
-				WHEN 'did_not_finish' THEN 3
-				ELSE 4
-			END
-			LIMIT 1
+			FROM user_books ubi
+			WHERE ubi.book_id = b.id AND ubi.user_id = $%d AND ubi.deleted_at IS NULL
 		), '') AS user_read_status`, len(args))
 	}
 	q := `
@@ -397,7 +373,7 @@ func (r *SeriesRepo) ListMatchCandidates(ctx context.Context, libraryID, seriesI
 				'[]'::json
 			) AS other_series
 		FROM books b
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1
 		  AND NOT EXISTS (
 		      SELECT 1 FROM book_series bs
@@ -467,7 +443,7 @@ func (r *SeriesRepo) ListOrphanBooks(ctx context.Context, libraryID uuid.UUID, m
 			) AS has_cover
 		FROM books b
 		JOIN media_types mt ON mt.id = b.media_type_id
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1
 		  AND (cardinality($2::text[]) = 0 OR mt.name = ANY($2))
 		  AND NOT EXISTS (SELECT 1 FROM book_series bs WHERE bs.book_id = b.id)

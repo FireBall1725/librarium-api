@@ -17,6 +17,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
+	"github.com/fireball1725/librarium-api/internal/version"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -49,6 +50,20 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	libraryRepo := repository.NewLibraryRepo(db)
 	membershipRepo := repository.NewMembershipRepo(db)
 	roleRepo := repository.NewRoleRepo(db)
+
+	// Schema tiers. These read the new tables; the old repositories still
+	// compile and still serve the routes that have not moved, and contract
+	// deletes them once this shape has proven itself on real collections.
+	userRoleRepo := repository.NewUserRoleRepo(db)
+	copyRepo := repository.NewCopyRepo(db)
+	copyLocationRepo := repository.NewCopyLocationRepo(db)
+	userBookRepo := repository.NewUserBookRepo(db)
+	readingSessionRepo := repository.NewReadingSessionRepo(db)
+	listRepo := repository.NewListRepo(db)
+	wishlistRepo := repository.NewWishlistRepo(db)
+	editionIdentifierRepo := repository.NewEditionIdentifierRepo(db)
+	bookContentsRepo := repository.NewBookContentsRepo(db)
+	vocabularyRepo := repository.NewVocabularyRepo(db)
 	bookRepo := repository.NewBookRepo(db)
 	libraryBookRepo := repository.NewLibraryBookRepo(db)
 	contributorRepo := repository.NewContributorRepo(db)
@@ -134,7 +149,21 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
 	go releaseChecker.Start(ctx)
 
-	requireAuth := middleware.RequireAuth(jwtSvc, denylistRepo, apiTokenRepo)
+	// The client version gate sits inside auth, not in the global chain, for two
+	// reasons: it needs the claims to tell a personal access token apart from an
+	// interactive session, and the global chain also wraps /health, the setup
+	// routes and login, which are exactly what a rejected client still has to
+	// reach to find out why and to recover.
+	readingStateHandler := handlers.NewReadingStateHandler(userBookRepo, readingSessionRepo)
+	listHandler := handlers.NewListHandler(listRepo, wishlistRepo)
+	copyHandler := handlers.NewCopyHandler(copyRepo, copyLocationRepo, userRoleRepo)
+	catalogueHandler := handlers.NewCatalogueHandler(editionIdentifierRepo, bookContentsRepo, vocabularyRepo)
+
+	clientGate := middleware.RequireClientVersion(version.MinClients)
+	authOnly := middleware.RequireAuth(jwtSvc, denylistRepo, apiTokenRepo)
+	requireAuth := func(h http.Handler) http.Handler {
+		return authOnly(clientGate(h))
+	}
 	// requireAdmin chains auth validation then instance-admin check
 	requireAdmin := func(h http.Handler) http.Handler {
 		return requireAuth(middleware.RequireInstanceAdmin(h))
@@ -193,6 +222,53 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.GetPreferences)))
 	mux.Handle("GET /api/v1/me/libraries", requireAuth(http.HandlerFunc(libraryHandler.ListMyAccess)))
 	mux.Handle("GET /api/v1/me/books", requireAuth(http.HandlerFunc(bookHandler.ListMyBooks)))
+
+	// ── Schema tiers ──────────────────────────────────────────────────────
+	// Reading state is keyed to the work, so there is no library_id or
+	// edition_id in the path: an opinion belongs to neither.
+	mux.Handle("GET /api/v1/books/{book_id}/me", requireAuth(http.HandlerFunc(readingStateHandler.GetMyBook)))
+	mux.Handle("PUT /api/v1/books/{book_id}/me", requireAuth(http.HandlerFunc(readingStateHandler.PutMyBook)))
+	mux.Handle("DELETE /api/v1/books/{book_id}/me", requireAuth(http.HandlerFunc(readingStateHandler.DeleteMyBook)))
+	mux.Handle("GET /api/v1/books/{book_id}/sessions", requireAuth(http.HandlerFunc(readingStateHandler.ListSessions)))
+	mux.Handle("POST /api/v1/books/{book_id}/sessions", requireAuth(http.HandlerFunc(readingStateHandler.CreateSession)))
+	mux.Handle("DELETE /api/v1/sessions/{session_id}", requireAuth(http.HandlerFunc(readingStateHandler.DeleteSession)))
+
+	// Lists are what shelves and saved views became.
+	mux.Handle("GET /api/v1/me/lists", requireAuth(http.HandlerFunc(listHandler.ListMyLists)))
+	mux.Handle("POST /api/v1/me/lists", requireAuth(http.HandlerFunc(listHandler.CreateList)))
+	mux.Handle("PATCH /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.UpdateList)))
+	mux.Handle("DELETE /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.DeleteList)))
+	mux.Handle("POST /api/v1/me/lists/{list_id}/books/{book_id}", requireAuth(http.HandlerFunc(listHandler.AddBookToList)))
+	mux.Handle("DELETE /api/v1/me/lists/{list_id}/books/{book_id}", requireAuth(http.HandlerFunc(listHandler.RemoveBookFromList)))
+
+	// Wishlist had no routes at all before; wants lived only as a facet value.
+	mux.Handle("GET /api/v1/me/wishlist", requireAuth(http.HandlerFunc(listHandler.ListMyWishlist)))
+	mux.Handle("POST /api/v1/me/wishlist", requireAuth(http.HandlerFunc(listHandler.AddToWishlist)))
+	mux.Handle("DELETE /api/v1/me/wishlist/{entry_id}", requireAuth(http.HandlerFunc(listHandler.RemoveFromWishlist)))
+
+	// Copies and where they live. The library-scoped routes carry a permission;
+	// the id-scoped ones resolve the library through the copy.
+	mux.Handle("GET /api/v1/books/{book_id}/copies", requireAuth(http.HandlerFunc(copyHandler.ListCopiesForBook)))
+	mux.Handle("GET /api/v1/libraries/{library_id}/copies", requireLibraryPerm("books:read", http.HandlerFunc(copyHandler.ListCopiesForLibrary)))
+	mux.Handle("POST /api/v1/libraries/{library_id}/copies", requireLibraryPerm("books:create", http.HandlerFunc(copyHandler.CreateCopy)))
+	mux.Handle("PATCH /api/v1/copies/{copy_id}", requireAuth(http.HandlerFunc(copyHandler.UpdateCopy)))
+	mux.Handle("DELETE /api/v1/copies/{copy_id}", requireAuth(http.HandlerFunc(copyHandler.DeleteCopy)))
+	mux.Handle("GET /api/v1/libraries/{library_id}/locations", requireLibraryPerm("books:read", http.HandlerFunc(copyHandler.ListLocations)))
+	mux.Handle("POST /api/v1/libraries/{library_id}/locations", requireLibraryPerm("books:update", http.HandlerFunc(copyHandler.CreateLocation)))
+	mux.Handle("DELETE /api/v1/locations/{location_id}", requireAuth(http.HandlerFunc(copyHandler.DeleteLocation)))
+
+	// Identifiers and containment: world tier, so no library in the path.
+	mux.Handle("GET /api/v1/identifier-schemes", requireAuth(http.HandlerFunc(catalogueHandler.ListIdentifierSchemes)))
+	mux.Handle("GET /api/v1/edition-formats", requireAuth(http.HandlerFunc(catalogueHandler.ListEditionFormats)))
+	mux.Handle("GET /api/v1/copy-conditions", requireAuth(http.HandlerFunc(catalogueHandler.ListCopyConditions)))
+	mux.Handle("GET /api/v1/contributor-roles", requireAuth(http.HandlerFunc(catalogueHandler.ListContributorRoles)))
+	mux.Handle("GET /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.ListEditionIdentifiers)))
+	mux.Handle("POST /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.AddEditionIdentifier)))
+	mux.Handle("DELETE /api/v1/editions/{edition_id}/identifiers/{scheme}/{value}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveEditionIdentifier)))
+	mux.Handle("GET /api/v1/books/{book_id}/contents", requireAuth(http.HandlerFunc(catalogueHandler.ListBookContents)))
+	mux.Handle("POST /api/v1/books/{book_id}/contents", requireAuth(http.HandlerFunc(catalogueHandler.AddBookContent)))
+	mux.Handle("DELETE /api/v1/books/{book_id}/contents/{contained_id}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveBookContent)))
+	mux.Handle("GET /api/v1/books/{book_id}/containers", requireAuth(http.HandlerFunc(catalogueHandler.ListBookContainers)))
 	mux.Handle("GET /api/v1/me/loans", requireAuth(http.HandlerFunc(meBrowseHandler.MyLoans)))
 	mux.Handle("GET /api/v1/me/shelves", requireAuth(http.HandlerFunc(meBrowseHandler.MyShelves)))
 	mux.Handle("GET /api/v1/me/books/grouped", requireAuth(http.HandlerFunc(bookHandler.ListMyBooksGrouped)))

@@ -113,7 +113,7 @@ func (r *ContributorRepo) ListForLibrary(ctx context.Context, libraryID uuid.UUI
 		FROM contributors c
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1
 		GROUP BY c.id
 		ORDER BY c.name`
@@ -160,7 +160,7 @@ func (r *ContributorRepo) ListForLibraryPaged(ctx context.Context, libraryID uui
 		FROM contributors c
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		` + where
 	if err := r.db.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting contributors: %w", err)
@@ -197,7 +197,7 @@ func (r *ContributorRepo) ListForLibraryPaged(ctx context.Context, libraryID uui
 		FROM contributors c
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		` + where + `
 		GROUP BY c.id
 		ORDER BY ` + sortCol + ` ` + dir + secondary + `
@@ -228,7 +228,7 @@ func (r *ContributorRepo) LettersForLibrary(ctx context.Context, libraryID uuid.
 		FROM contributors c
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1
 		  AND c.name ~ '^[A-Za-z]'
 		ORDER BY letter`
@@ -440,7 +440,7 @@ func (r *ContributorRepo) ListWorks(ctx context.Context, contributorID, libraryI
 			    SELECT b.id
 			    FROM books b
 			    JOIN book_editions be ON be.book_id = b.id
-			    JOIN library_books lbj ON lbj.book_id = b.id
+			    JOIN held_books lbj ON lbj.book_id = b.id
 			    WHERE lbj.library_id = $2
 			      AND (
 			           (cw.isbn_13 <> '' AND be.isbn_13 = cw.isbn_13) OR

@@ -60,7 +60,7 @@ type BookEdition struct {
 	Files []*EditionFile
 }
 
-// LibraryBookEdition is a row in the library_book_editions junction — how
+// LibraryBookEdition is how
 // many copies of a given edition a specific library holds, and when that
 // library acquired them.
 type LibraryBookEdition struct {

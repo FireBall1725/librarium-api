@@ -510,7 +510,7 @@ func (h *BookHandler) FindByISBN(w http.ResponseWriter, r *http.Request) {
 // DeleteBook godoc
 //
 // @Summary     Remove a book from a library
-// @Description Drops the library_books junction row for this library/book.
+// @Description Retires this library's copies of the book.
 // @Description The book row itself stays (may be held by other libraries or
 // @Description referenced by AI suggestions). Use the admin endpoint to
 // @Description delete a book entirely.
@@ -578,7 +578,7 @@ func (h *BookHandler) AdminDeleteBook(w http.ResponseWriter, r *http.Request) {
 // AddBookToLibrary godoc
 //
 // @Summary     Add an existing book to a library
-// @Description Inserts the library_books junction row. Idempotent. Used by
+// @Description Records a copy in this library. Idempotent. Used by
 // @Description the suggestions-as-books "Add to library" CTA and any other
 // @Description flow that wants to attach a floating book to a real library.
 // @Tags        books

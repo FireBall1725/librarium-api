@@ -60,6 +60,22 @@ import (
 )
 
 func main() {
+	// Subcommands run and exit before any server wiring. preflight in
+	// particular has to work when the server cannot start, which is exactly
+	// when a migration has refused.
+	//
+	// Unknown arguments are an error rather than being ignored: a mistyped
+	// subcommand silently booting the server is a worse failure than a message.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "preflight":
+			os.Exit(runPreflight(os.Args[2:]))
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command %q (known commands: preflight)\n", os.Args[1])
+			os.Exit(2)
+		}
+	}
+
 	cfg := config.Load()
 
 	// Refuse to start without a JWT signing secret. An empty secret would

@@ -69,7 +69,7 @@ func bookScopeCTE(libraryArg, callerArg int) string {
 	return fmt.Sprintf(`
     SELECT DISTINCT ON (o.book_id) o.book_id, o.ownership
     FROM (
-        SELECT lb.book_id, '%s' AS ownership FROM library_books lb
+        SELECT lb.book_id, '%s' AS ownership FROM held_books lb
         WHERE lb.library_id = ANY($%d) AND lb.deleted_at IS NULL%s
         UNION ALL
         -- A gap is a book already recorded against a series in one of your

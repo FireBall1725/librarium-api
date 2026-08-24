@@ -653,13 +653,13 @@ type floatingBookMetadata struct {
 
 // resolveFloatingBook looks up an existing book + edition by ISBN (global,
 // not library-scoped) and returns its IDs. If no edition with this ISBN
-// exists, creates a new floating book (no library_books rows) populated
+// exists, creates a new floating book (no copies anywhere) populated
 // with every metadata field we already have from the enrichment result —
 // description, publisher, contributors (authors as book_contributors rows),
 // language, publish date, page count — so the BookDetailPage renders
 // something meaningful immediately rather than a bare title.
 //
-// A "floating" book is one with zero rows in the library_books junction —
+// A "floating" book is one no library holds a copy of:
 // it's a real work in the catalog that simply hasn't been added to any
 // library yet. Suggestions-as-books uses this to hang full BookPage
 // metadata + BookFinder affordances off a `buy` suggestion.

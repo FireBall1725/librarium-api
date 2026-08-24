@@ -43,7 +43,7 @@ func (r *AISuggestionsRepo) ListOptedInUsers(ctx context.Context) ([]*OptedInUse
 		SELECT u.id, s.taste_profile,
 			(
 				SELECT lm.library_id
-				FROM library_memberships lm
+				FROM library_members lm
 				WHERE lm.user_id = u.id
 				ORDER BY lm.joined_at ASC
 				LIMIT 1
@@ -95,7 +95,7 @@ func (r *AISuggestionsRepo) GetOptedInUser(ctx context.Context, userID uuid.UUID
 		SELECT u.id, s.taste_profile,
 			(
 				SELECT lm.library_id
-				FROM library_memberships lm
+				FROM library_members lm
 				WHERE lm.user_id = u.id
 				ORDER BY lm.joined_at ASC
 				LIMIT 1
@@ -162,25 +162,21 @@ func (r *AISuggestionsRepo) ListLibraryTitles(ctx context.Context, libraryID, us
 				WHERE bg.book_id = b.id
 			), ''),
 			(
-				SELECT ubi.rating FROM book_editions be
-				JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-				WHERE be.book_id = b.id AND ubi.user_id = $2 AND ubi.rating IS NOT NULL
-				ORDER BY ubi.rating DESC
-				LIMIT 1
+				SELECT ubi.rating FROM user_books ubi
+				WHERE ubi.book_id = b.id AND ubi.user_id = $2
+				  AND ubi.deleted_at IS NULL AND ubi.rating IS NOT NULL
 			),
 			COALESCE((
-				SELECT ubi.read_status FROM book_editions be
-				JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-				WHERE be.book_id = b.id AND ubi.user_id = $2
+				SELECT ubi.read_status FROM user_books ubi
+				WHERE ubi.book_id = b.id AND ubi.user_id = $2 AND ubi.deleted_at IS NULL
 				ORDER BY CASE ubi.read_status
 					WHEN 'read' THEN 1 WHEN 'reading' THEN 2
 					WHEN 'did_not_finish' THEN 3 ELSE 4 END
 				LIMIT 1
 			), 'unread'),
 			COALESCE((
-				SELECT bool_or(ubi.is_favorite) FROM book_editions be
-				JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-				WHERE be.book_id = b.id AND ubi.user_id = $2
+				SELECT ubi.is_favorite FROM user_books ubi
+				WHERE ubi.book_id = b.id AND ubi.user_id = $2 AND ubi.deleted_at IS NULL
 			), FALSE),
 			COALESCE((
 				SELECT s.name FROM book_series bs
@@ -194,7 +190,7 @@ func (r *AISuggestionsRepo) ListLibraryTitles(ctx context.Context, libraryID, us
 			) AS has_cover,
 			b.updated_at
 		FROM books b
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		LEFT JOIN media_types mt ON mt.id = b.media_type_id
 		WHERE lb.library_id = $1
 		ORDER BY b.title`
@@ -231,7 +227,7 @@ func (r *AISuggestionsRepo) BookExistsInLibrary(ctx context.Context, libraryID u
 			SELECT EXISTS (
 				SELECT 1 FROM book_editions be
 				JOIN books b ON b.id = be.book_id
-				JOIN library_books lb ON lb.book_id = b.id
+				JOIN held_books lb ON lb.book_id = b.id
 				WHERE lb.library_id = $1 AND (be.isbn_13 = $2 OR be.isbn_10 = $2)
 			)`
 		var ok bool
@@ -248,7 +244,7 @@ func (r *AISuggestionsRepo) BookExistsInLibrary(ctx context.Context, libraryID u
 	const qTitle = `
 		SELECT EXISTS (
 			SELECT 1 FROM books b
-			JOIN library_books lb ON lb.book_id = b.id
+			JOIN held_books lb ON lb.book_id = b.id
 			WHERE lb.library_id = $1 AND lower(b.title) = lower($2)
 		)`
 	var ok bool
@@ -574,8 +570,8 @@ func (r *AISuggestionsRepo) ListSuggestions(ctx context.Context, userID uuid.UUI
 		JOIN books b ON b.id = s.book_id
 		LEFT JOIN LATERAL (
 		    SELECT lb.library_id
-		    FROM library_books lb
-		    JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = s.user_id
+		    FROM held_books lb
+		    JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = s.user_id
 		    WHERE lb.book_id = s.book_id
 		    ORDER BY lb.added_at ASC
 		    LIMIT 1

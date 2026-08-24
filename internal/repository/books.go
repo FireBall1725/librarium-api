@@ -74,43 +74,33 @@ func (r *BookRepo) ListMediaTypes(ctx context.Context) ([]*models.MediaType, err
 // "operator does not exist: uuid = uuid[]", not a compile error, so it is a
 // parameter rather than something inferred.
 func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) string {
-	// All three caller-scoped subqueries (status / rating / progress) use
-	// the same ORDER BY so they pick the same interaction row, keeping the
-	// returned values internally consistent for users who own multiple
-	// editions of the same book.
-	const interactionPickOrder = `ORDER BY CASE ubi.read_status
-		WHEN 'read' THEN 1
-		WHEN 'reading' THEN 2
-		WHEN 'did_not_finish' THEN 3
-		ELSE 4
-	END`
-
+	// Reading state is one row per work now, so these are lookups rather than
+	// picks. The three subqueries used to share an ORDER BY so they agreed with
+	// each other when someone owned several editions of a book; there is
+	// nothing left to disagree about, and the ordering is gone with it.
 	var userReadStatusExpr, userRatingExpr, userProgressExpr string
 	if userStatusArg > 0 {
 		userReadStatusExpr = fmt.Sprintf(`COALESCE((
-		SELECT ubi.read_status
-		FROM book_editions be_rs
-		JOIN user_book_interactions ubi ON ubi.book_edition_id = be_rs.id
-		WHERE be_rs.book_id = b.id AND ubi.user_id = $%d
-		%s
-		LIMIT 1
-	), '') AS user_read_status`, userStatusArg, interactionPickOrder)
+		SELECT ub.read_status
+		FROM user_books ub
+		WHERE ub.book_id = b.id AND ub.user_id = $%d AND ub.deleted_at IS NULL
+	), '') AS user_read_status`, userStatusArg)
 		userRatingExpr = fmt.Sprintf(`COALESCE((
-		SELECT ubi.rating
-		FROM book_editions be_rt
-		JOIN user_book_interactions ubi ON ubi.book_edition_id = be_rt.id
-		WHERE be_rt.book_id = b.id AND ubi.user_id = $%d
-		%s
-		LIMIT 1
-	), 0) AS user_rating`, userStatusArg, interactionPickOrder)
+		SELECT ub.rating
+		FROM user_books ub
+		WHERE ub.book_id = b.id AND ub.user_id = $%d AND ub.deleted_at IS NULL
+	), 0) AS user_rating`, userStatusArg)
+		// Progress moved to reading_sessions, where it is a unit and a value
+		// rather than an unvalidated blob. The most recent percentage is what a
+		// progress bar wants; a page count belongs to one printing and cannot be
+		// rendered as a fraction without knowing which.
 		userProgressExpr = fmt.Sprintf(`COALESCE((
-		SELECT (ubi.progress->>'percent')::numeric
-		FROM book_editions be_pg
-		JOIN user_book_interactions ubi ON ubi.book_edition_id = be_pg.id
-		WHERE be_pg.book_id = b.id AND ubi.user_id = $%d
-		%s
+		SELECT rs.progress_value
+		FROM reading_sessions rs
+		WHERE rs.book_id = b.id AND rs.user_id = $%d AND rs.progress_unit = 'percent'
+		ORDER BY COALESCE(rs.started_at, rs.created_at) DESC, rs.created_at DESC
 		LIMIT 1
-	), 0) AS user_progress_pct`, userStatusArg, interactionPickOrder)
+	), 0) AS user_progress_pct`, userStatusArg)
 	} else {
 		userReadStatusExpr = `'' AS user_read_status`
 		userRatingExpr = `0 AS user_rating`
@@ -168,7 +158,7 @@ func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) strin
 	librariesExpr := `(
 		SELECT COALESCE(json_agg(json_build_object('id', l.id, 'name', l.name)
 			ORDER BY lower(l.name)), '[]'::json)
-		FROM library_books lb_h
+		FROM held_books lb_h
 		JOIN libraries l ON l.id = lb_h.library_id
 		WHERE lb_h.book_id = b.id`
 	if loanLibraryArg > 0 {
@@ -250,8 +240,8 @@ func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) strin
 				),
 				'[]'::json
 			)
-			FROM book_shelves bsh
-			JOIN shelves sh ON sh.id = bsh.shelf_id
+			FROM library_shelf_books bsh
+			JOIN library_shelves sh ON sh.id = bsh.shelf_id
 			WHERE bsh.book_id = b.id
 		) AS shelves,
 		COALESCE((
@@ -283,7 +273,7 @@ func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) strin
 
 // Create inserts a new book (work). Library ownership is a separate concern —
 // call AddToLibrary on the LibraryBookRepo after creating to associate the
-// book with a library. A book with no library_books rows is a floating book
+// book with a library. A book no library holds a copy of is a floating book
 // (e.g. an un-owned suggestion).
 func (r *BookRepo) Create(ctx context.Context, tx pgx.Tx, id uuid.UUID, title, subtitle string, mediaTypeID uuid.UUID, description string) error {
 	const q = `
@@ -387,7 +377,7 @@ func (r *BookRepo) ListByContributor(ctx context.Context, libraryID, contributor
 	var args []any
 	var q string
 	const scope = `
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1
 		  AND EXISTS (
 		    SELECT 1 FROM book_contributors bc2
@@ -432,7 +422,7 @@ func (r *BookRepo) Fingerprint(ctx context.Context, libraryID uuid.UUID) (BookFi
 	const q = `
 		SELECT COUNT(*), MAX(b.updated_at)
 		FROM books b
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1`
 	var fp BookFingerprint
 	var maxTS pgtype.Timestamptz
@@ -452,7 +442,7 @@ func (r *BookRepo) ListBookLetters(ctx context.Context, libraryID uuid.UUID) ([]
 	const q = `
 		SELECT DISTINCT upper(substr(sort_title(b.title), 1, 1)) AS letter
 		FROM books b
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1
 		  AND sort_title(b.title) ~ '^[A-Za-z]'
 		ORDER BY letter`
@@ -508,19 +498,6 @@ type ListBooksOpts struct {
 	// conditions have been flattened into one WHERE string.
 	Selection FacetSelection
 }
-
-// bestReadStatusExpr collapses a user's per-edition statuses to one per work:
-// read beats reading beats did_not_finish beats unread. It aggregates, so it
-// belongs under a GROUP BY or in a scalar subquery.
-//
-// Declared once because the list filter and the facet counts both need it, and
-// any disagreement between them surfaces as a facet count that does not match
-// the rows sitting next to it.
-const bestReadStatusExpr = `CASE min(CASE i.read_status
-            WHEN 'read' THEN 1 WHEN 'reading' THEN 2
-            WHEN 'did_not_finish' THEN 3 ELSE 4 END)
-        WHEN 1 THEN 'read' WHEN 2 THEN 'reading'
-        WHEN 3 THEN 'did_not_finish' ELSE 'unread' END`
 
 // bookFilter is the WHERE clause for a book query, plus the args it binds.
 // List and Facets must build this identically: a facet count that disagrees
@@ -589,7 +566,7 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 	// the conditions and the facet counts pick it up for free.
 	if len(opts.ShelfIDs) > 0 {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
-            SELECT 1 FROM book_shelves bsh
+            SELECT 1 FROM library_shelf_books bsh
             WHERE bsh.book_id = b.id AND bsh.shelf_id = ANY($%d)
         )`, argIdx))
 		args = append(args, opts.ShelfIDs)
@@ -725,14 +702,14 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 				switch cond.Op {
 				case "equals":
 					parts = append(parts, fmt.Sprintf(`EXISTS (
-                    SELECT 1 FROM book_shelves bsh2 JOIN shelves sh2 ON sh2.id = bsh2.shelf_id
+                    SELECT 1 FROM library_shelf_books bsh2 JOIN library_shelves sh2 ON sh2.id = bsh2.shelf_id
                     WHERE bsh2.book_id = b.id AND LOWER(sh2.name) = LOWER($%d)
                 )`, argIdx))
 					args = append(args, cond.Value)
 					argIdx++
 				case "not_equals":
 					parts = append(parts, fmt.Sprintf(`NOT EXISTS (
-                    SELECT 1 FROM book_shelves bsh2 JOIN shelves sh2 ON sh2.id = bsh2.shelf_id
+                    SELECT 1 FROM library_shelf_books bsh2 JOIN library_shelves sh2 ON sh2.id = bsh2.shelf_id
                     WHERE bsh2.book_id = b.id AND LOWER(sh2.name) = LOWER($%d)
                 )`, argIdx))
 					args = append(args, cond.Value)
@@ -833,10 +810,11 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 		argIdx++
 	}
 
-	// Read status and rating live on user_book_interactions, which is keyed on
-	// book_edition_id. A correlated scalar subquery per book, rather than a
-	// join: joining editions directly would multiply a work with three editions
-	// into three rows and inflate the count.
+	// Reading state is one row per work, so these are direct lookups. They were
+	// correlated subqueries collapsing per-edition rows, because joining
+	// editions would multiply a work with three printings into three rows and
+	// inflate the count. Keyed to the work there is nothing to collapse, and
+	// nothing to inflate.
 	if len(sel.ReadStatus) > 0 {
 		if opts.CallerID == uuid.Nil {
 			// No caller means no interactions, so every book reads as unread.
@@ -846,10 +824,9 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 			argIdx++
 		} else {
 			conditions = append(conditions, fmt.Sprintf(`COALESCE((
-            SELECT %s
-            FROM user_book_interactions i JOIN book_editions e ON e.id = i.book_edition_id
-            WHERE i.user_id = $%d AND i.deleted_at IS NULL AND e.book_id = b.id
-        ), 'unread') = ANY($%d)`, bestReadStatusExpr, argIdx, argIdx+1))
+            SELECT ub.read_status FROM user_books ub
+            WHERE ub.user_id = $%d AND ub.deleted_at IS NULL AND ub.book_id = b.id
+        ), 'unread') = ANY($%d)`, argIdx, argIdx+1))
 			args = append(args, opts.CallerID, sel.ReadStatus)
 			argIdx += 2
 		}
@@ -860,9 +837,8 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 			conditions = append(conditions, "FALSE") // nobody's ratings to match
 		} else {
 			conditions = append(conditions, fmt.Sprintf(`(
-            SELECT max(i.rating)
-            FROM user_book_interactions i JOIN book_editions e ON e.id = i.book_edition_id
-            WHERE i.user_id = $%d AND i.deleted_at IS NULL AND e.book_id = b.id
+            SELECT ub.rating FROM user_books ub
+            WHERE ub.user_id = $%d AND ub.deleted_at IS NULL AND ub.book_id = b.id
         ) = ANY($%d)`, argIdx, argIdx+1))
 			args = append(args, opts.CallerID, sel.Ratings)
 			argIdx += 2
@@ -878,13 +854,15 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 			args = append(args, sel.Favourites)
 			argIdx++
 		} else {
-			// COALESCE because a book the caller has never opened has no
-			// interaction row at all, and that means not a favourite rather
-			// than unknown.
+			// COALESCE because a book the caller has said nothing about has no
+			// row at all, and that means not a favourite rather than unknown.
+			//
+			// This used to be bool_or over every edition, which is how starring
+			// one printing quietly starred the work. Now there is one answer to
+			// star.
 			conditions = append(conditions, fmt.Sprintf(`COALESCE((
-            SELECT bool_or(i.is_favorite)
-            FROM user_book_interactions i JOIN book_editions e ON e.id = i.book_edition_id
-            WHERE i.user_id = $%d AND i.deleted_at IS NULL AND e.book_id = b.id
+            SELECT ub.is_favorite FROM user_books ub
+            WHERE ub.user_id = $%d AND ub.deleted_at IS NULL AND ub.book_id = b.id
         ), false) = ANY($%d)`, argIdx, argIdx+1))
 			args = append(args, opts.CallerID, sel.Favourites)
 			argIdx += 2
@@ -893,7 +871,7 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 
 	// Scope is a union over the places a book can be yours to see, one row per
 	// book carrying the ownership state that won. It replaces the plain
-	// library_books join, which could only ever express "on the shelf" and so
+	// holdings join, which could only ever express "on the shelf" and so
 	// made every other ownership state unrepresentable.
 	//
 	// It still deduplicates, which the join needed too: under the m2m junction
@@ -1038,7 +1016,7 @@ func (r *BookRepo) SearchSuggestions(ctx context.Context, libraryID uuid.UUID, q
 	const q = `
 		SELECT DISTINCT ON (lower(b.title)) b.title
 		FROM books b
-		JOIN library_books lb ON lb.book_id = b.id
+		JOIN held_books lb ON lb.book_id = b.id
 		WHERE lb.library_id = $1
 		  AND lower(b.title || ' ' || COALESCE(b.subtitle, '')) % lower($2)
 		ORDER BY lower(b.title), lower(b.title || ' ' || COALESCE(b.subtitle, '')) <-> lower($2)
@@ -1305,8 +1283,8 @@ func (r *BookRepo) CurrentlyReading(ctx context.Context, userID uuid.UUID, limit
 		WITH user_book AS (
 			SELECT DISTINCT ON (lb.book_id)
 				lb.book_id, lb.library_id
-			FROM library_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			FROM held_books lb
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		)
 		SELECT
@@ -1326,15 +1304,13 @@ func (r *BookRepo) CurrentlyReading(ctx context.Context, userID uuid.UUID, limit
 		JOIN user_book ub ON ub.book_id = b.id
 		JOIN libraries l ON l.id = ub.library_id
 		WHERE EXISTS (
-			SELECT 1 FROM book_editions be
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-			WHERE be.book_id = b.id AND ubi.user_id = $1 AND ubi.read_status = 'reading'
+			SELECT 1 FROM user_books ubi
+			WHERE ubi.book_id = b.id AND ubi.user_id = $1 AND ubi.read_status = 'reading'
 		)
 		ORDER BY (
-			SELECT MAX(ubi.updated_at)
-			FROM book_editions be
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-			WHERE be.book_id = b.id AND ubi.user_id = $1
+			SELECT ubi.updated_at
+			FROM user_books ubi
+			WHERE ubi.book_id = b.id AND ubi.user_id = $1
 		) DESC NULLS LAST
 		LIMIT $2`
 
@@ -1381,8 +1357,8 @@ func (r *BookRepo) RecentlyAdded(ctx context.Context, userID uuid.UUID, limit in
 		WITH user_book AS (
 			SELECT DISTINCT ON (lb.book_id)
 				lb.book_id, lb.library_id, lb.added_at
-			FROM library_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			FROM held_books lb
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		)
 		SELECT
@@ -1399,17 +1375,8 @@ func (r *BookRepo) RecentlyAdded(ctx context.Context, userID uuid.UUID, limit in
 				WHERE bc.book_id = b.id
 			), '') AS authors,
 			COALESCE((
-				SELECT ubi.read_status
-				FROM book_editions be_rs
-				JOIN user_book_interactions ubi ON ubi.book_edition_id = be_rs.id
-				WHERE be_rs.book_id = b.id AND ubi.user_id = $1
-				ORDER BY CASE ubi.read_status
-					WHEN 'read'           THEN 1
-					WHEN 'reading'        THEN 2
-					WHEN 'did_not_finish' THEN 3
-					ELSE 4
-				END
-				LIMIT 1
+				SELECT ubi.read_status FROM user_books ubi
+				WHERE ubi.book_id = b.id AND ubi.user_id = $1 AND ubi.deleted_at IS NULL
 			), '') AS read_status
 		FROM books b
 		JOIN user_book ub ON ub.book_id = b.id
@@ -1451,8 +1418,8 @@ func (r *BookRepo) PicksOfTheDay(ctx context.Context, userID uuid.UUID, mediaTyp
 		WITH user_book AS (
 			SELECT DISTINCT ON (lb.book_id)
 				lb.book_id, lb.library_id, lb.added_at
-			FROM library_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			FROM held_books lb
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		)
 		SELECT
@@ -1475,10 +1442,10 @@ func (r *BookRepo) PicksOfTheDay(ctx context.Context, userID uuid.UUID, mediaTyp
 		JOIN media_types mt ON mt.id = b.media_type_id
 		WHERE (cardinality($2::text[]) = 0 OR mt.name = ANY($2))
 		  AND NOT EXISTS (
-			SELECT 1 FROM book_editions be
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id
-			WHERE be.book_id = b.id
+			SELECT 1 FROM user_books ubi
+			WHERE ubi.book_id = b.id
 			  AND ubi.user_id = $1
+			  AND ubi.deleted_at IS NULL
 			  AND ubi.read_status IN ('read', 'reading', 'did_not_finish')
 		  )
 		ORDER BY md5(b.id::text || $3)
@@ -1542,8 +1509,8 @@ func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*Da
 	err := r.db.QueryRow(ctx, `
 		WITH user_book AS (
 			SELECT DISTINCT ON (lb.book_id) lb.book_id, lb.added_at
-			FROM library_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			FROM held_books lb
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		)
 		SELECT
@@ -1553,14 +1520,14 @@ func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*Da
 			COUNT(DISTINCT CASE WHEN ub.added_at >= date_trunc('year', NOW()) THEN b.id END) AS added_this_year,
 			COUNT(DISTINCT CASE
 				WHEN ubi.read_status = 'read'
-				 AND ubi.date_finished IS NOT NULL
-				 AND ubi.date_finished::timestamptz >= date_trunc('year', NOW())
+				 AND EXISTS (SELECT 1 FROM reading_sessions rs
+				              WHERE rs.book_id = b.id AND rs.user_id = $1
+				                AND rs.finished_at >= date_trunc('year', NOW()))
 				THEN b.id END) AS read_this_year,
 			COUNT(DISTINCT CASE WHEN ubi.is_favorite THEN b.id END) AS favorites_count
 		FROM books b
 		JOIN user_book ub ON ub.book_id = b.id
-		LEFT JOIN book_editions be ON be.book_id = b.id
-		LEFT JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1`,
+		LEFT JOIN user_books ubi ON ubi.book_id = b.id AND ubi.user_id = $1 AND ubi.deleted_at IS NULL`,
 		userID,
 	).Scan(&s.TotalBooks, &s.BooksRead, &s.BooksReading, &s.BooksAddedThisYear,
 		&s.BooksReadThisYear, &s.FavoritesCount)
@@ -1580,16 +1547,14 @@ func (r *BookRepo) GetDashboardStats(ctx context.Context, userID uuid.UUID) (*Da
 		),
 		reads AS (
 			SELECT
-				date_trunc('month', ubi.date_finished::timestamptz) AS m,
+				date_trunc('month', rs.finished_at) AS m,
 				COUNT(DISTINCT b.id) AS c
 			FROM books b
-			JOIN library_books lb ON lb.book_id = b.id
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
-			JOIN book_editions be ON be.book_id = b.id
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1
-			WHERE ubi.read_status = 'read'
-			  AND ubi.date_finished IS NOT NULL
-			  AND ubi.date_finished::timestamptz >= date_trunc('month', NOW()) - INTERVAL '11 months'
+			JOIN held_books lb ON lb.book_id = b.id
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN reading_sessions rs ON rs.book_id = b.id AND rs.user_id = $1
+			WHERE rs.finished_at IS NOT NULL
+			  AND rs.finished_at >= date_trunc('month', NOW()) - INTERVAL '11 months'
 			GROUP BY 1
 		)
 		SELECT to_char(months.m, 'YYYY-MM'), COALESCE(reads.c, 0)
@@ -1645,10 +1610,9 @@ func (r *BookRepo) ContinueSeries(ctx context.Context, userID uuid.UUID, limit i
 			SELECT bs.series_id, MAX(bs.position) AS max_pos
 			FROM book_series bs
 			JOIN books b ON b.id = bs.book_id
-			JOIN library_books lb ON lb.book_id = b.id
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
-			JOIN book_editions be ON be.book_id = b.id
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1
+			JOIN held_books lb ON lb.book_id = b.id
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN user_books ubi ON ubi.book_id = b.id AND ubi.user_id = $1 AND ubi.deleted_at IS NULL
 			WHERE ubi.read_status = 'read'
 			GROUP BY bs.series_id
 		),
@@ -1660,15 +1624,15 @@ func (r *BookRepo) ContinueSeries(ctx context.Context, userID uuid.UUID, limit i
 			FROM book_series bs
 			JOIN user_read_positions urp ON urp.series_id = bs.series_id
 			JOIN books b ON b.id = bs.book_id
-			JOIN library_books lb ON lb.book_id = b.id
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			JOIN held_books lb ON lb.book_id = b.id
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			WHERE bs.position > urp.max_pos
 			  AND NOT EXISTS (
 				SELECT 1
-				FROM book_editions be2
-				JOIN user_book_interactions ubi2 ON ubi2.book_edition_id = be2.id
-				WHERE be2.book_id = bs.book_id
+				FROM user_books ubi2
+				WHERE ubi2.book_id = bs.book_id
 				  AND ubi2.user_id = $1
+				  AND ubi2.deleted_at IS NULL
 				  AND ubi2.read_status = 'read'
 			  )
 			ORDER BY bs.series_id, bs.position ASC
@@ -1687,16 +1651,8 @@ func (r *BookRepo) ContinueSeries(ctx context.Context, userID uuid.UUID, limit i
 				WHERE bc.book_id = b.id
 			), ''),
 			COALESCE((
-				SELECT ubi.read_status
-				FROM book_editions be_rs
-				JOIN user_book_interactions ubi ON ubi.book_edition_id = be_rs.id
-				WHERE be_rs.book_id = b.id AND ubi.user_id = $1
-				ORDER BY CASE ubi.read_status
-					WHEN 'reading' THEN 1
-					WHEN 'did_not_finish' THEN 2
-					ELSE 3
-				END
-				LIMIT 1
+				SELECT ubi.read_status FROM user_books ubi
+				WHERE ubi.book_id = b.id AND ubi.user_id = $1 AND ubi.deleted_at IS NULL
 			), '')
 		FROM next_books nb
 		JOIN series s  ON s.id  = nb.series_id
@@ -1753,8 +1709,8 @@ func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit
 	q := `
 		WITH user_book AS (
 			SELECT DISTINCT ON (lb.book_id) lb.book_id, lb.library_id
-			FROM library_books lb
-			JOIN library_memberships lm ON lm.library_id = lb.library_id AND lm.user_id = $1
+			FROM held_books lb
+			JOIN library_members lm ON lm.library_id = lb.library_id AND lm.user_id = $1
 			ORDER BY lb.book_id, lb.added_at ASC
 		),
 		finished AS (
@@ -1762,15 +1718,15 @@ func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit
 				b.id AS book_id,
 				ub.library_id,
 				b.title,
-				ubi.date_finished::timestamptz AS finished_at,
+				rs.finished_at,
 				ubi.rating,
 				ubi.is_favorite
 			FROM books b
 			JOIN user_book ub ON ub.book_id = b.id
-			JOIN book_editions be ON be.book_id = b.id
-			JOIN user_book_interactions ubi ON ubi.book_edition_id = be.id AND ubi.user_id = $1
-			WHERE ubi.read_status = 'read' AND ubi.date_finished IS NOT NULL
-			ORDER BY b.id, ubi.date_finished DESC
+			JOIN user_books ubi ON ubi.book_id = b.id AND ubi.user_id = $1 AND ubi.deleted_at IS NULL
+			JOIN reading_sessions rs ON rs.book_id = b.id AND rs.user_id = $1
+			WHERE ubi.read_status = 'read' AND rs.finished_at IS NOT NULL
+			ORDER BY b.id, rs.finished_at DESC
 		)
 		SELECT
 			f.book_id, f.library_id, l.name, f.title, f.finished_at, f.rating, f.is_favorite,
