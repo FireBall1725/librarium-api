@@ -3739,6 +3739,44 @@ paths:
       summary: List server components
       tags:
       - health
+  /contributor-roles:
+    get:
+      description: Author, translator, illustrator, and the rest. Each carries applies_to,
+        because an illustrator credited on one printing is a fact about that printing
+        rather than about the work.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    applies_to:
+                      type: string
+                    code:
+                      type: string
+                    is_active:
+                      type: boolean
+                    sort_order:
+                      type: integer
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List the contributor roles this server knows
+      tags:
+      - catalogue
   /contributors:
     get:
       description: Full-text search for contributors (authors, illustrators, etc.).
@@ -4136,6 +4174,78 @@ paths:
       summary: Update a copy
       tags:
       - copies
+  /copy-conditions:
+    get:
+      description: 'What state an object is in. Condition belongs to the object, not
+        to the printing: two copies of the same edition are rarely in the same shape.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    code:
+                      type: string
+                    is_active:
+                      type: boolean
+                    sort_order:
+                      type: integer
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List the copy conditions this server knows
+      tags:
+      - catalogue
+  /edition-formats:
+    get:
+      description: Hardback, trade paperback, and so on. A table rather than a CHECK
+        constraint, so adding a format is a row rather than a release; a client that
+        builds this list from a constant of its own has moved the hardcoding one layer
+        up.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    code:
+                      type: string
+                    is_active:
+                      type: boolean
+                    sort_order:
+                      type: integer
+                  type: object
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List the edition formats this server knows
+      tags:
+      - catalogue
   /editions/{edition_id}/identifiers:
     get:
       description: ISBN is one scheme among several. A 1957 Ace Double has no ISBN

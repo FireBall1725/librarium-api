@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/fireball1725/librarium-api/internal/models"
 	"os"
 	"sort"
 	"testing"
@@ -1083,5 +1084,49 @@ func TestShelfWritesLandInLists(t *testing.T) {
 	}
 	if members != 0 {
 		t.Errorf("list_books still holds %d rows after removal", members)
+	}
+}
+
+// TestVocabulariesAreReadableAndNonEmpty covers the point of making these
+// tables at all. A format list a client cannot read is a format list the client
+// hardcodes, which puts the vocabulary back in a release.
+func TestVocabulariesAreReadableAndNonEmpty(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewVocabularyRepo(pool)
+
+	cases := []struct {
+		name string
+		read func(context.Context) ([]*models.Vocabulary, error)
+		// appliesTo is set for the one vocabulary that carries it.
+		appliesTo bool
+	}{
+		{"edition formats", repo.EditionFormats, false},
+		{"copy conditions", repo.CopyConditions, false},
+		{"contributor roles", repo.ContributorRoles, true},
+	}
+	for _, c := range cases {
+		items, err := c.read(ctx)
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if len(items) == 0 {
+			t.Errorf("%s came back empty; the seed in 000025 should have filled it", c.name)
+			continue
+		}
+		for _, v := range items {
+			if v.Code == "" {
+				t.Errorf("%s: a row has no code", c.name)
+			}
+			if !v.IsActive {
+				t.Errorf("%s: %q is inactive but was offered anyway", c.name, v.Code)
+			}
+			if c.appliesTo && v.AppliesTo == "" {
+				t.Errorf("%s: %q has no applies_to, so a caller cannot tell whether it describes the work or the printing", c.name, v.Code)
+			}
+			if !c.appliesTo && v.AppliesTo != "" {
+				t.Errorf("%s: %q carries applies_to=%q, which only contributor roles have", c.name, v.Code, v.AppliesTo)
+			}
+		}
 	}
 }

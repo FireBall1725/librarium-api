@@ -3475,6 +3475,64 @@
                 }
             }
         },
+        "/contributor-roles": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Author, translator, illustrator, and the rest. Each carries applies_to, because an illustrator credited on one printing is a fact about that printing rather than about the work.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalogue"
+                ],
+                "summary": "List the contributor roles this server knows",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "applies_to": {
+                                                "type": "string"
+                                            },
+                                            "code": {
+                                                "type": "string"
+                                            },
+                                            "is_active": {
+                                                "type": "boolean"
+                                            },
+                                            "sort_order": {
+                                                "type": "integer"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/contributors": {
             "get": {
                 "security": [
@@ -4085,6 +4143,116 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/copy-conditions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "What state an object is in. Condition belongs to the object, not to the printing: two copies of the same edition are rarely in the same shape.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalogue"
+                ],
+                "summary": "List the copy conditions this server knows",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "code": {
+                                                "type": "string"
+                                            },
+                                            "is_active": {
+                                                "type": "boolean"
+                                            },
+                                            "sort_order": {
+                                                "type": "integer"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/edition-formats": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hardback, trade paperback, and so on. A table rather than a CHECK constraint, so adding a format is a row rather than a release; a client that builds this list from a constant of its own has moved the hardcoding one layer up.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalogue"
+                ],
+                "summary": "List the edition formats this server knows",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "code": {
+                                                "type": "string"
+                                            },
+                                            "is_active": {
+                                                "type": "boolean"
+                                            },
+                                            "sort_order": {
+                                                "type": "integer"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "properties": {

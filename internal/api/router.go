@@ -63,6 +63,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	wishlistRepo := repository.NewWishlistRepo(db)
 	editionIdentifierRepo := repository.NewEditionIdentifierRepo(db)
 	bookContentsRepo := repository.NewBookContentsRepo(db)
+	vocabularyRepo := repository.NewVocabularyRepo(db)
 	bookRepo := repository.NewBookRepo(db)
 	libraryBookRepo := repository.NewLibraryBookRepo(db)
 	contributorRepo := repository.NewContributorRepo(db)
@@ -156,7 +157,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	readingStateHandler := handlers.NewReadingStateHandler(userBookRepo, readingSessionRepo)
 	listHandler := handlers.NewListHandler(listRepo, wishlistRepo)
 	copyHandler := handlers.NewCopyHandler(copyRepo, copyLocationRepo, userRoleRepo)
-	catalogueHandler := handlers.NewCatalogueHandler(editionIdentifierRepo, bookContentsRepo)
+	catalogueHandler := handlers.NewCatalogueHandler(editionIdentifierRepo, bookContentsRepo, vocabularyRepo)
 
 	clientGate := middleware.RequireClientVersion(version.MinClients)
 	authOnly := middleware.RequireAuth(jwtSvc, denylistRepo, apiTokenRepo)
@@ -258,6 +259,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 
 	// Identifiers and containment: world tier, so no library in the path.
 	mux.Handle("GET /api/v1/identifier-schemes", requireAuth(http.HandlerFunc(catalogueHandler.ListIdentifierSchemes)))
+	mux.Handle("GET /api/v1/edition-formats", requireAuth(http.HandlerFunc(catalogueHandler.ListEditionFormats)))
+	mux.Handle("GET /api/v1/copy-conditions", requireAuth(http.HandlerFunc(catalogueHandler.ListCopyConditions)))
+	mux.Handle("GET /api/v1/contributor-roles", requireAuth(http.HandlerFunc(catalogueHandler.ListContributorRoles)))
 	mux.Handle("GET /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.ListEditionIdentifiers)))
 	mux.Handle("POST /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.AddEditionIdentifier)))
 	mux.Handle("DELETE /api/v1/editions/{edition_id}/identifiers/{scheme}/{value}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveEditionIdentifier)))

@@ -4,11 +4,13 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/fireball1725/librarium-api/internal/api/respond"
+	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/google/uuid"
 )
@@ -18,10 +20,11 @@ import (
 type CatalogueHandler struct {
 	identifiers *repository.EditionIdentifierRepo
 	contents    *repository.BookContentsRepo
+	vocab       *repository.VocabularyRepo
 }
 
-func NewCatalogueHandler(identifiers *repository.EditionIdentifierRepo, contents *repository.BookContentsRepo) *CatalogueHandler {
-	return &CatalogueHandler{identifiers: identifiers, contents: contents}
+func NewCatalogueHandler(identifiers *repository.EditionIdentifierRepo, contents *repository.BookContentsRepo, vocab *repository.VocabularyRepo) *CatalogueHandler {
+	return &CatalogueHandler{identifiers: identifiers, contents: contents, vocab: vocab}
 }
 
 // ListIdentifierSchemes godoc
@@ -41,6 +44,58 @@ func (h *CatalogueHandler) ListIdentifierSchemes(w http.ResponseWriter, r *http.
 		return
 	}
 	respond.JSON(w, http.StatusOK, map[string]any{"items": schemes})
+}
+
+// ListEditionFormats godoc
+//
+// @Summary     List the edition formats this server knows
+// @Description Hardback, trade paperback, and so on. A table rather than a CHECK constraint, so adding a format is a row rather than a release; a client that builds this list from a constant of its own has moved the hardcoding one layer up.
+// @Tags        catalogue
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  object{items=[]object{code=string,sort_order=int,is_active=bool}}
+// @Failure     401  {object}  object{error=string}
+// @Router      /edition-formats [get]
+func (h *CatalogueHandler) ListEditionFormats(w http.ResponseWriter, r *http.Request) {
+	h.respondVocabulary(w, r, h.vocab.EditionFormats)
+}
+
+// ListCopyConditions godoc
+//
+// @Summary     List the copy conditions this server knows
+// @Description What state an object is in. Condition belongs to the object, not to the printing: two copies of the same edition are rarely in the same shape.
+// @Tags        catalogue
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  object{items=[]object{code=string,sort_order=int,is_active=bool}}
+// @Failure     401  {object}  object{error=string}
+// @Router      /copy-conditions [get]
+func (h *CatalogueHandler) ListCopyConditions(w http.ResponseWriter, r *http.Request) {
+	h.respondVocabulary(w, r, h.vocab.CopyConditions)
+}
+
+// ListContributorRoles godoc
+//
+// @Summary     List the contributor roles this server knows
+// @Description Author, translator, illustrator, and the rest. Each carries applies_to, because an illustrator credited on one printing is a fact about that printing rather than about the work.
+// @Tags        catalogue
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  object{items=[]object{code=string,applies_to=string,sort_order=int,is_active=bool}}
+// @Failure     401  {object}  object{error=string}
+// @Router      /contributor-roles [get]
+func (h *CatalogueHandler) ListContributorRoles(w http.ResponseWriter, r *http.Request) {
+	h.respondVocabulary(w, r, h.vocab.ContributorRoles)
+}
+
+func (h *CatalogueHandler) respondVocabulary(w http.ResponseWriter, r *http.Request,
+	read func(context.Context) ([]*models.Vocabulary, error)) {
+	items, err := read(r.Context())
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 // ListEditionIdentifiers godoc
