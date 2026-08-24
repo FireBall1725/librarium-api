@@ -236,9 +236,9 @@ func Blocked(findings []Finding) bool {
 
 // Report writes the findings as a table meant to be read in a terminal.
 func Report(w io.Writer, findings []Finding) {
-	fmt.Fprintln(w, "Librarium schema preflight")
-	fmt.Fprintln(w, strings.Repeat("=", 72))
-	fmt.Fprintln(w)
+	line(w, "Librarium schema preflight")
+	line(w, strings.Repeat("=", 72))
+	line(w, "")
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	for _, f := range findings {
@@ -246,16 +246,25 @@ func Report(w io.Writer, findings []Finding) {
 		if f.Severity == Blocking && f.Count > 0 {
 			marker = "!"
 		}
-		fmt.Fprintf(tw, "%s %6d\t%s\t%s\n", marker, f.Count, f.Question, f.Meaning)
+		_, _ = fmt.Fprintf(tw, "%s %6d\t%s\t%s\n", marker, f.Count, f.Question, f.Meaning)
 	}
 	_ = tw.Flush()
 
-	fmt.Fprintln(w)
+	line(w, "")
 	if Blocked(findings) {
-		fmt.Fprintln(w, "BLOCKED. The lines marked ! have to be resolved before upgrading;")
-		fmt.Fprintln(w, "the migration refuses rather than guessing about them.")
+		line(w, "BLOCKED. The lines marked ! have to be resolved before upgrading;")
+		line(w, "the migration refuses rather than guessing about them.")
 		return
 	}
-	fmt.Fprintln(w, "Clear. Nothing here would stop the migration.")
-	fmt.Fprintln(w, "Take a backup anyway: the contract phase that drops the old tables is one-way.")
+	line(w, "Clear. Nothing here would stop the migration.")
+	line(w, "Take a backup anyway: the contract phase that drops the old tables is one-way.")
+}
+
+// line writes one line of the report.
+//
+// The error is dropped on purpose and in one place rather than nine: the writer
+// is stdout, a failed write there means the operator's terminal is gone, and
+// there is nowhere left to report that to.
+func line(w io.Writer, s string) {
+	_, _ = fmt.Fprintln(w, s)
 }

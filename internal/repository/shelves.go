@@ -46,13 +46,11 @@ func (r *ShelfRepo) List(ctx context.Context, libraryID uuid.UUID, search, tagFi
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
 		       COALESCE(s.color,''), COALESCE(s.icon,''), s.display_order,
-		       COUNT(bs.book_id) AS book_count,
+		       (SELECT count(*) FROM library_shelf_books bs WHERE bs.shelf_id = s.id) AS book_count,
 		       s.created_at, s.updated_at,
 		       ` + shelfTagsSubquery + ` AS tags
-		FROM shelves s
-		LEFT JOIN book_shelves bs ON bs.shelf_id = s.id
+		FROM library_shelves s
 		` + where + `
-		GROUP BY s.id
 		ORDER BY s.display_order, s.name`
 
 	rows, err := r.db.Query(ctx, q, args...)
@@ -85,14 +83,12 @@ func (r *ShelfRepo) ListAcross(ctx context.Context, libraryIDs []uuid.UUID) ([]*
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
 		       COALESCE(s.color,''), COALESCE(s.icon,''), s.display_order,
-		       COUNT(bs.book_id) AS book_count,
+		       (SELECT count(*) FROM library_shelf_books bs WHERE bs.shelf_id = s.id) AS book_count,
 		       s.created_at, s.updated_at,
 		       ` + shelfTagsSubquery + ` AS tags
-		FROM shelves s
-		LEFT JOIN book_shelves bs ON bs.shelf_id = s.id
+		FROM library_shelves s
 		JOIN libraries l ON l.id = s.library_id
 		WHERE s.library_id = ANY($1)
-		GROUP BY s.id, l.name
 		ORDER BY lower(l.name), s.display_order, s.name`
 
 	rows, err := r.db.Query(ctx, q, libraryIDs)
@@ -116,13 +112,11 @@ func (r *ShelfRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Shelf, 
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
 		       COALESCE(s.color,''), COALESCE(s.icon,''), s.display_order,
-		       COUNT(bs.book_id) AS book_count,
+		       (SELECT count(*) FROM library_shelf_books bs WHERE bs.shelf_id = s.id) AS book_count,
 		       s.created_at, s.updated_at,
 		       ` + shelfTagsSubquery + ` AS tags
-		FROM shelves s
-		LEFT JOIN book_shelves bs ON bs.shelf_id = s.id
-		WHERE s.id = $1
-		GROUP BY s.id`
+		FROM library_shelves s
+		WHERE s.id = $1`
 	s, err := scanShelf(r.db.QueryRow(ctx, q, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -134,9 +128,14 @@ func (r *ShelfRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Shelf, 
 }
 
 func (r *ShelfRepo) Create(ctx context.Context, id, libraryID uuid.UUID, name, description, color, icon string, displayOrder int, createdBy uuid.UUID) (*models.Shelf, error) {
+	// A shelf is a manual list shared with a library. Writing lists directly
+	// rather than through library_shelves, which is a view and not writable, and
+	// which would hide the kind and visibility that make it shelf-shaped at all.
 	const q = `
-		INSERT INTO shelves (id, library_id, name, description, color, icon, display_order, created_by)
-		VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), $7, $8)`
+		INSERT INTO lists (id, owner_user_id, shared_library_id, name, description,
+		                   color, icon, display_order, kind, visibility)
+		VALUES ($1, $8, $2, $3, COALESCE($4,''), COALESCE($5,''), COALESCE($6,''), $7,
+		        'manual', 'library')`
 	if _, err := r.db.Exec(ctx, q, id, libraryID, name, description, color, icon, displayOrder, createdBy); err != nil {
 		return nil, fmt.Errorf("inserting shelf: %w", err)
 	}
@@ -145,13 +144,14 @@ func (r *ShelfRepo) Create(ctx context.Context, id, libraryID uuid.UUID, name, d
 
 func (r *ShelfRepo) Update(ctx context.Context, id uuid.UUID, name, description, color, icon string, displayOrder int) (*models.Shelf, error) {
 	const q = `
-		UPDATE shelves
+		UPDATE lists
 		SET name          = $2,
-		    description   = NULLIF($3,''),
-		    color         = NULLIF($4,''),
-		    icon          = NULLIF($5,''),
-		    display_order = $6
-		WHERE id = $1`
+		    description   = COALESCE($3,''),
+		    color         = COALESCE($4,''),
+		    icon          = COALESCE($5,''),
+		    display_order = $6,
+		    updated_at    = NOW()
+		WHERE id = $1 AND kind = 'manual' AND visibility = 'library'`
 	result, err := r.db.Exec(ctx, q, id, name, description, color, icon, displayOrder)
 	if err != nil {
 		return nil, fmt.Errorf("updating shelf: %w", err)
@@ -163,7 +163,7 @@ func (r *ShelfRepo) Update(ctx context.Context, id uuid.UUID, name, description,
 }
 
 func (r *ShelfRepo) Delete(ctx context.Context, id uuid.UUID) error {
-	result, err := r.db.Exec(ctx, `DELETE FROM shelves WHERE id = $1`, id)
+	result, err := r.db.Exec(ctx, `DELETE FROM lists WHERE id = $1 AND kind = 'manual' AND visibility = 'library'`, id)
 	if err != nil {
 		return fmt.Errorf("deleting shelf: %w", err)
 	}
@@ -180,11 +180,11 @@ func (r *ShelfRepo) FindByBook(ctx context.Context, libraryID, bookID uuid.UUID)
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
 		       COALESCE(s.color,''), COALESCE(s.icon,''), s.display_order,
-		       (SELECT COUNT(*) FROM book_shelves bs2 WHERE bs2.shelf_id = s.id) AS book_count,
+		       (SELECT COUNT(*) FROM library_shelf_books bs2 WHERE bs2.shelf_id = s.id) AS book_count,
 		       s.created_at, s.updated_at,
 		       ` + shelfTagsSubquery + ` AS tags
-		FROM shelves s
-		JOIN book_shelves bs ON bs.shelf_id = s.id AND bs.book_id = $2
+		FROM library_shelves s
+		JOIN library_shelf_books bs ON bs.shelf_id = s.id AND bs.book_id = $2
 		WHERE s.library_id = $1
 		ORDER BY s.display_order, s.name`
 	rows, err := r.db.Query(ctx, q, libraryID, bookID)
@@ -208,7 +208,7 @@ func (r *ShelfRepo) FindByBook(ctx context.Context, libraryID, bookID uuid.UUID)
 
 func (r *ShelfRepo) ListBooks(ctx context.Context, shelfID uuid.UUID) ([]*models.Book, error) {
 	q := booksSelect(0, 0, false) + `
-		JOIN book_shelves bs ON bs.book_id = b.id
+		JOIN library_shelf_books bs ON bs.book_id = b.id
 		WHERE bs.shelf_id = $1
 		ORDER BY bs.added_at DESC`
 	rows, err := r.db.Query(ctx, q, shelfID)
@@ -228,10 +228,17 @@ func (r *ShelfRepo) ListBooks(ctx context.Context, shelfID uuid.UUID) ([]*models
 	return out, rows.Err()
 }
 
+// AddBook puts a book on a shelf.
+//
+// addedBy is accepted and unused: list_books records when a book joined a list
+// but not who put it there, because a list belongs to one person and that
+// question has one answer. The parameter stays so the shelf routes keep their
+// signature.
 func (r *ShelfRepo) AddBook(ctx context.Context, shelfID, bookID, addedBy uuid.UUID) error {
+	_ = addedBy
 	_, err := r.db.Exec(ctx,
-		`INSERT INTO book_shelves (book_id, shelf_id, added_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-		bookID, shelfID, addedBy,
+		`INSERT INTO list_books (book_id, list_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		bookID, shelfID,
 	)
 	if err != nil {
 		return fmt.Errorf("adding book to shelf: %w", err)
@@ -241,7 +248,7 @@ func (r *ShelfRepo) AddBook(ctx context.Context, shelfID, bookID, addedBy uuid.U
 
 func (r *ShelfRepo) RemoveBook(ctx context.Context, shelfID, bookID uuid.UUID) error {
 	result, err := r.db.Exec(ctx,
-		`DELETE FROM book_shelves WHERE shelf_id = $1 AND book_id = $2`,
+		`DELETE FROM list_books WHERE list_id = $1 AND book_id = $2`,
 		shelfID, bookID,
 	)
 	if err != nil {

@@ -9932,6 +9932,83 @@ paths:
       summary: Delete one of my lists
       tags:
       - me
+    patch:
+      consumes:
+      - application/json
+      description: 'Only the keys present are changed, so renaming a list does not
+        require sending the rest of it back. Kind is absent on purpose: a manual list
+        cannot become smart without its enumerated books becoming a lie.'
+      parameters:
+      - description: List UUID
+        in: path
+        name: list_id
+        required: true
+        type: string
+      - description: The changes
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            color:
+              type: string
+            description:
+              type: string
+            display_order:
+              type: integer
+            filter:
+              type: object
+            icon:
+              type: string
+            layout:
+              type: string
+            name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              book_count:
+                type: integer
+              id:
+                type: string
+              kind:
+                type: string
+              name:
+                type: string
+              visibility:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change one of my lists
+      tags:
+      - me
   /me/lists/{list_id}/books/{book_id}:
     delete:
       parameters:
@@ -10527,221 +10604,6 @@ paths:
       tags:
       - me
       - ai
-  /me/views:
-    get:
-      description: Every view belonging to the caller, in display order. The built-ins
-        are seeded on the first call, so a new account gets them without the client
-        having to write them.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              items:
-                items:
-                  properties:
-                    built_in:
-                      type: boolean
-                    display_order:
-                      type: integer
-                    hidden:
-                      type: boolean
-                    icon:
-                      type: string
-                    id:
-                      type: string
-                    layout:
-                      type: string
-                    name:
-                      type: string
-                    params:
-                      type: string
-                    permanent:
-                      type: boolean
-                  type: object
-                type: array
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: List my saved views
-      tags:
-      - me
-    put:
-      consumes:
-      - application/json
-      description: Writes a view under the caller's account, replacing one with the
-        same id. Used for saving a new view, renaming, and updating the Default so
-        Books opens where you want.
-      parameters:
-      - description: The view
-        in: body
-        name: body
-        required: true
-        schema:
-          properties:
-            display_order:
-              type: integer
-            icon:
-              type: string
-            id:
-              type: string
-            layout:
-              type: string
-            name:
-              type: string
-            params:
-              type: string
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              display_order:
-                type: integer
-              icon:
-                type: string
-              id:
-                type: string
-              layout:
-                type: string
-              name:
-                type: string
-              params:
-                type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Create or update one of my views
-      tags:
-      - me
-  /me/views/{view_id}:
-    delete:
-      parameters:
-      - description: View id
-        in: path
-        name: view_id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "401":
-          description: Unauthorized
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-        "404":
-          description: Not Found
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-        "409":
-          description: Conflict
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Delete one of my views
-      tags:
-      - me
-  /me/views/import:
-    post:
-      consumes:
-      - application/json
-      description: One-time migration for readers whose views were saved in the browser
-        before they lived on the server. Views whose id already exists are left alone,
-        so running it twice changes nothing.
-      parameters:
-      - description: Views to import
-        in: body
-        name: body
-        required: true
-        schema:
-          properties:
-            items:
-              items:
-                properties:
-                  display_order:
-                    type: integer
-                  icon:
-                    type: string
-                  id:
-                    type: string
-                  layout:
-                    type: string
-                  name:
-                    type: string
-                  params:
-                    type: string
-                type: object
-              type: array
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              imported:
-                type: integer
-              skipped:
-                type: integer
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Import views from a client's local storage
-      tags:
-      - me
   /me/wishlist:
     get:
       description: 'One list holding both shapes: entries pointing at a catalogue

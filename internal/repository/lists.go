@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,6 +33,52 @@ var ErrSmartListNotEnumerable = errors.New("a smart list computes its own conten
 // refuse rather than guess.
 const FilterVersionCurrent = 1
 
+// BuiltinList is a smart list this release ships with.
+//
+// These were saved views the browser seeded for itself, which raced: sign in on
+// a phone and a laptop the same afternoon and each seeded its own copy. The
+// server owns them now, and they are smart lists because that is what they
+// always were, a name over a filter.
+//
+// Filter is written in the versioned shape FilterVersionCurrent describes, so a
+// built-in is not a special case to any reader.
+type BuiltinList struct {
+	Key          string
+	Name         string
+	Query        string
+	Layout       string
+	Icon         string
+	DisplayOrder int
+	// Hidden keeps a list out of the rail. Default is what the books page opens
+	// on rather than something to click, and there has to be something to open
+	// on, which is also why it is Permanent.
+	Hidden    bool
+	Permanent bool
+}
+
+var BuiltinLists = []BuiltinList{
+	{Key: "default", Name: "Default", Query: "", Layout: "list", DisplayOrder: 0, Hidden: true, Permanent: true},
+	{Key: "reading", Name: "Reading now", Query: "status=reading", Layout: "grid", Icon: "next", DisplayOrder: 1},
+	{Key: "unread", Name: "Up next", Query: "status=unread", Layout: "grid", DisplayOrder: 2},
+	{Key: "read", Name: "Finished", Query: "status=read", Layout: "list", DisplayOrder: 3},
+	{Key: "favourites", Name: "Favourites", Query: "fav=true", Layout: "grid", Icon: "star", DisplayOrder: 4},
+	{Key: "five-stars", Name: "Five stars", Query: "rating=5", Layout: "grid", DisplayOrder: 5},
+	{Key: "signed", Name: "Signed copies", Query: "tag=signed", Layout: "list", DisplayOrder: 6},
+}
+
+var builtinByKey = func() map[string]BuiltinList {
+	m := make(map[string]BuiltinList, len(BuiltinLists))
+	for _, b := range BuiltinLists {
+		m[b.Key] = b
+	}
+	return m
+}()
+
+// ErrListPermanent is returned when a caller tries to delete a list that has to
+// exist. Handlers map it to 409, so a client showing a delete control on one
+// finds out rather than the delete quietly doing nothing.
+var ErrListPermanent = errors.New("list cannot be deleted")
+
 type ListRepo struct {
 	db *pgxpool.Pool
 }
@@ -45,7 +92,7 @@ const listColumns = `
 	l.kind, l.filter, l.filter_version, l.layout, l.display_order,
 	l.visibility, l.shared_library_id, COALESCE(l.share_token, ''),
 	(SELECT count(*) FROM list_books lb WHERE lb.list_id = l.id),
-	l.created_at, l.updated_at`
+	COALESCE(l.builtin_key, ''), l.created_at, l.updated_at`
 
 func scanList(row pgx.Row) (*models.List, error) {
 	var l models.List
@@ -53,10 +100,13 @@ func scanList(row pgx.Row) (*models.List, error) {
 		&l.ID, &l.OwnerUserID, &l.Name, &l.Description, &l.Icon, &l.Color,
 		&l.Kind, &l.Filter, &l.FilterVersion, &l.Layout, &l.DisplayOrder,
 		&l.Visibility, &l.SharedLibraryID, &l.ShareToken,
-		&l.BookCount, &l.CreatedAt, &l.UpdatedAt,
+		&l.BookCount, &l.BuiltinKey, &l.CreatedAt, &l.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if b, ok := builtinByKey[l.BuiltinKey]; ok {
+		l.Hidden, l.Permanent = b.Hidden, b.Permanent
 	}
 	return &l, nil
 }
@@ -201,8 +251,111 @@ func (r *ListRepo) Create(ctx context.Context, in CreateListInput) (*models.List
 	return r.FindByID(ctx, id)
 }
 
+// SeedBuiltIns gives a user the lists this release ships with.
+//
+// Safe to call on every read, which is the point: "has this user been seeded"
+// has no honest answer once deleting a built-in is allowed, so there is no flag
+// to check and the insert carries its own idempotency through
+// lists_builtin_key_idx. A built-in a user deleted stays deleted only until the
+// next seed, and that is a real limitation worth naming rather than a bug: the
+// alternative is a tombstone table for something nobody has asked to do yet.
+func (r *ListRepo) SeedBuiltIns(ctx context.Context, userID uuid.UUID) error {
+	for _, b := range BuiltinLists {
+		filter, err := json.Marshal(map[string]string{"query": b.Query})
+		if err != nil {
+			return fmt.Errorf("encoding built-in filter %q: %w", b.Key, err)
+		}
+		_, err = r.db.Exec(ctx, `
+			INSERT INTO lists (owner_user_id, name, icon, kind, filter, filter_version,
+			                   layout, display_order, visibility, builtin_key)
+			VALUES ($1, $2, $3, 'smart', $4, $5, $6, $7, 'private', $8)
+			ON CONFLICT DO NOTHING`,
+			userID, b.Name, b.Icon, filter, FilterVersionCurrent,
+			b.Layout, b.DisplayOrder, b.Key)
+		if err != nil {
+			return fmt.Errorf("seeding built-in list %q: %w", b.Key, err)
+		}
+	}
+	return nil
+}
+
+// UpdateListInput carries only what a person may change. Kind, owner and
+// builtin_key are absent on purpose: a manual list cannot become smart without
+// its enumerated books becoming a lie, and a list cannot start claiming to be
+// something this release shipped.
+type UpdateListInput struct {
+	Name         *string
+	Description  *string
+	Icon         *string
+	Color        *string
+	Layout       *string
+	DisplayOrder *int
+	Filter       []byte
+}
+
+// Update changes a list in place. A nil field is left alone rather than
+// cleared, so a client can send one key without having to send the row back.
+func (r *ListRepo) Update(ctx context.Context, id uuid.UUID, in UpdateListInput) (*models.List, error) {
+	kind, err := r.kindOf(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(in.Filter) > 0 && kind != "smart" {
+		return nil, ErrSmartListNotEnumerable
+	}
+	if in.Name != nil {
+		if *in.Name = strings.TrimSpace(*in.Name); *in.Name == "" {
+			return nil, fmt.Errorf("list name is required")
+		}
+	}
+	if in.Layout != nil && !validLayouts[*in.Layout] {
+		return nil, fmt.Errorf("unknown layout %q", *in.Layout)
+	}
+
+	// COALESCE rather than a built-up SET list: every column is named once, the
+	// query is a constant, and a nil argument means "keep" without the argument
+	// positions shifting under it.
+	q := `
+		UPDATE lists
+		SET name          = COALESCE($2, name),
+		    description   = COALESCE($3, description),
+		    icon          = COALESCE($4, icon),
+		    color         = COALESCE($5, color),
+		    layout        = COALESCE($6, layout),
+		    display_order = COALESCE($7, display_order),
+		    filter        = COALESCE($8, filter),
+		    updated_at    = NOW()
+		WHERE id = $1`
+	var filter any
+	if len(in.Filter) > 0 {
+		filter = in.Filter
+	}
+	tag, err := r.db.Exec(ctx, q, id, in.Name, in.Description, in.Icon,
+		in.Color, in.Layout, in.DisplayOrder, filter)
+	if err != nil {
+		return nil, fmt.Errorf("updating list: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return r.FindByID(ctx, id)
+}
+
+var validLayouts = map[string]bool{"grid": true, "list": true, "compact": true}
+
 // Delete removes a list and, by cascade, its membership rows.
 func (r *ListRepo) Delete(ctx context.Context, id uuid.UUID) error {
+	var key *string
+	if err := r.db.QueryRow(ctx,
+		`SELECT builtin_key FROM lists WHERE id = $1`, id).Scan(&key); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("finding list: %w", err)
+	}
+	if key != nil && builtinByKey[*key].Permanent {
+		return ErrListPermanent
+	}
 	tag, err := r.db.Exec(ctx, `DELETE FROM lists WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("deleting list: %w", err)

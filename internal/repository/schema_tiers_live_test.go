@@ -5,8 +5,10 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"sort"
 	"testing"
 
 	"github.com/google/uuid"
@@ -879,5 +881,207 @@ func TestHeldBooksCollapsesDuplicateCopies(t *testing.T) {
 	}
 	if after := count(); after != 1 {
 		t.Errorf("held_books reports %d rows after the extra copy was retired, want 1", after)
+	}
+}
+
+// TestBuiltInListsSeedOnceAndResistDeletion covers what the rail depends on: a
+// user who has never asked for lists gets the shipped ones, asking twice does
+// not double them, and the one the books page opens on cannot be deleted.
+func TestBuiltInListsSeedOnceAndResistDeletion(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewListRepo(pool)
+
+	var userID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(ctx,
+			`DELETE FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`, userID)
+	}()
+	// Start from a known state rather than assuming this user has none: the
+	// seed is idempotent, so a previous run leaving rows behind must not change
+	// what this measures.
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`, userID); err != nil {
+		t.Fatalf("clearing built-ins: %v", err)
+	}
+
+	if err := repo.SeedBuiltIns(ctx, userID); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	// Twice, because it runs on every read.
+	if err := repo.SeedBuiltIns(ctx, userID); err != nil {
+		t.Fatalf("seeding a second time: %v", err)
+	}
+
+	var seeded int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`,
+		userID).Scan(&seeded); err != nil {
+		t.Fatalf("counting built-ins: %v", err)
+	}
+	if seeded != len(BuiltinLists) {
+		t.Errorf("seeding twice left %d built-ins, want %d", seeded, len(BuiltinLists))
+	}
+
+	var defaultID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM lists WHERE owner_user_id = $1 AND builtin_key = 'default'`,
+		userID).Scan(&defaultID); err != nil {
+		t.Fatalf("finding the default list: %v", err)
+	}
+	list, err := repo.FindByID(ctx, defaultID)
+	if err != nil {
+		t.Fatalf("reading the default list: %v", err)
+	}
+	// Hidden and Permanent are looked up from the key, not stored, so a read
+	// that does not resolve them would return a deletable Default.
+	if !list.Hidden || !list.Permanent {
+		t.Errorf("default list: hidden=%v permanent=%v, want both true", list.Hidden, list.Permanent)
+	}
+	if list.Kind != "smart" || len(list.Filter) == 0 {
+		t.Errorf("default list kind=%q filter=%q, want a smart list with a filter", list.Kind, list.Filter)
+	}
+	if err := repo.Delete(ctx, defaultID); !errors.Is(err, ErrListPermanent) {
+		t.Errorf("deleting the default returned %v, want ErrListPermanent", err)
+	}
+
+	// A built-in that is not permanent goes, and a rename does not make it
+	// claim to be something else.
+	var readingID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM lists WHERE owner_user_id = $1 AND builtin_key = 'reading'`,
+		userID).Scan(&readingID); err != nil {
+		t.Fatalf("finding the reading list: %v", err)
+	}
+	renamed := "Currently reading"
+	updated, err := repo.Update(ctx, readingID, UpdateListInput{Name: &renamed})
+	if err != nil {
+		t.Fatalf("renaming a built-in: %v", err)
+	}
+	if updated.Name != renamed || updated.BuiltinKey != "reading" {
+		t.Errorf("after rename: name=%q key=%q, want %q and reading", updated.Name, updated.BuiltinKey, renamed)
+	}
+	if err := repo.Delete(ctx, readingID); err != nil {
+		t.Errorf("deleting a non-permanent built-in: %v", err)
+	}
+}
+
+// TestListFilterReachesTheWireAsJSON guards the shape clients are about to
+// adopt. Filter was []byte, which marshals to base64, so the filter arrived as
+// an opaque string a client had to decode before it could read the query it had
+// itself written.
+func TestListFilterReachesTheWireAsJSON(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewListRepo(pool)
+
+	var userID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+	l, err := repo.Create(ctx, CreateListInput{
+		OwnerUserID: userID, Name: "test wire shape", Kind: "smart",
+		Filter: []byte(`{"read_status":"unread"}`),
+	})
+	if err != nil {
+		t.Fatalf("creating: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, l.ID) }()
+
+	encoded, err := json.Marshal(l)
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatalf("unmarshalling: %v", err)
+	}
+	if _, ok := wire["id"]; !ok {
+		t.Errorf("no id key on the wire; keys are %v", keysOf(wire))
+	}
+	filter, ok := wire["filter"].(map[string]any)
+	if !ok {
+		t.Fatalf("filter came back as %T, want an object", wire["filter"])
+	}
+	if filter["read_status"] != "unread" {
+		t.Errorf("filter = %v, want the stored query", filter)
+	}
+}
+
+func keysOf(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestShelfWritesLandInLists covers the switch: shelf routes still exist and
+// still work, but the rows they write are lists, so a shelf made through the
+// old route is visible to the new one.
+func TestShelfWritesLandInLists(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewShelfRepo(pool)
+
+	var userID, libraryID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no libraries: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM books LIMIT 1`).Scan(&bookID); err != nil {
+		t.Skipf("no books: %v", err)
+	}
+
+	shelfID := uuid.New()
+	shelf, err := repo.Create(ctx, shelfID, libraryID, "test shelf", "desc", "#fff", "star", 3, userID)
+	if err != nil {
+		t.Fatalf("creating a shelf: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, shelfID) }()
+	if shelf.Name != "test shelf" {
+		t.Errorf("shelf name = %q, want the one written", shelf.Name)
+	}
+
+	var kind, visibility string
+	var sharedLibrary uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT kind, visibility, shared_library_id FROM lists WHERE id = $1`,
+		shelfID).Scan(&kind, &visibility, &sharedLibrary); err != nil {
+		t.Fatalf("the shelf did not land in lists: %v", err)
+	}
+	if kind != "manual" || visibility != "library" || sharedLibrary != libraryID {
+		t.Errorf("stored as kind=%q visibility=%q library=%v, want a manual list shared with %v",
+			kind, visibility, sharedLibrary, libraryID)
+	}
+
+	if _, err := repo.Update(ctx, shelfID, "renamed shelf", "", "", "", 5); err != nil {
+		t.Fatalf("updating a shelf: %v", err)
+	}
+	if err := repo.AddBook(ctx, shelfID, bookID, userID); err != nil {
+		t.Fatalf("adding a book to a shelf: %v", err)
+	}
+	var members int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM list_books WHERE list_id = $1 AND book_id = $2`,
+		shelfID, bookID).Scan(&members); err != nil {
+		t.Fatalf("counting membership: %v", err)
+	}
+	if members != 1 {
+		t.Errorf("list_books holds %d rows for the book, want 1", members)
+	}
+	if err := repo.RemoveBook(ctx, shelfID, bookID); err != nil {
+		t.Fatalf("removing a book from a shelf: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM list_books WHERE list_id = $1 AND book_id = $2`,
+		shelfID, bookID).Scan(&members); err != nil {
+		t.Fatalf("counting membership after removal: %v", err)
+	}
+	if members != 0 {
+		t.Errorf("list_books still holds %d rows after removal", members)
 	}
 }

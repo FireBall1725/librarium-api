@@ -240,8 +240,8 @@ func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) strin
 				),
 				'[]'::json
 			)
-			FROM book_shelves bsh
-			JOIN shelves sh ON sh.id = bsh.shelf_id
+			FROM library_shelf_books bsh
+			JOIN library_shelves sh ON sh.id = bsh.shelf_id
 			WHERE bsh.book_id = b.id
 		) AS shelves,
 		COALESCE((
@@ -566,7 +566,7 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 	// the conditions and the facet counts pick it up for free.
 	if len(opts.ShelfIDs) > 0 {
 		conditions = append(conditions, fmt.Sprintf(`EXISTS (
-            SELECT 1 FROM book_shelves bsh
+            SELECT 1 FROM library_shelf_books bsh
             WHERE bsh.book_id = b.id AND bsh.shelf_id = ANY($%d)
         )`, argIdx))
 		args = append(args, opts.ShelfIDs)
@@ -702,14 +702,14 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 				switch cond.Op {
 				case "equals":
 					parts = append(parts, fmt.Sprintf(`EXISTS (
-                    SELECT 1 FROM book_shelves bsh2 JOIN shelves sh2 ON sh2.id = bsh2.shelf_id
+                    SELECT 1 FROM library_shelf_books bsh2 JOIN library_shelves sh2 ON sh2.id = bsh2.shelf_id
                     WHERE bsh2.book_id = b.id AND LOWER(sh2.name) = LOWER($%d)
                 )`, argIdx))
 					args = append(args, cond.Value)
 					argIdx++
 				case "not_equals":
 					parts = append(parts, fmt.Sprintf(`NOT EXISTS (
-                    SELECT 1 FROM book_shelves bsh2 JOIN shelves sh2 ON sh2.id = bsh2.shelf_id
+                    SELECT 1 FROM library_shelf_books bsh2 JOIN library_shelves sh2 ON sh2.id = bsh2.shelf_id
                     WHERE bsh2.book_id = b.id AND LOWER(sh2.name) = LOWER($%d)
                 )`, argIdx))
 					args = append(args, cond.Value)

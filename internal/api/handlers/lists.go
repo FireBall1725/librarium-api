@@ -38,6 +38,14 @@ func NewListHandler(lists *repository.ListRepo, wishlist *repository.WishlistRep
 // @Failure     401  {object}  object{error=string}
 // @Router      /me/lists [get]
 func (h *ListHandler) ListMyLists(w http.ResponseWriter, r *http.Request) {
+	// Seed on read rather than at sign-up: an account made before this release
+	// never got them, and there is no other moment every user passes through.
+	// The insert is idempotent, so calling it on every read costs seven
+	// no-op statements and saves carrying a "has been seeded" flag.
+	if err := h.lists.SeedBuiltIns(r.Context(), callerOf(r)); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
 	lists, err := h.lists.ListForUser(r.Context(), callerOf(r))
 	if err != nil {
 		respond.ServerError(w, r, err)
@@ -122,11 +130,80 @@ func (h *ListHandler) DeleteList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.lists.Delete(r.Context(), list.ID); err != nil {
+	err := h.lists.Delete(r.Context(), list.ID)
+	switch {
+	case errors.Is(err, repository.ErrListPermanent):
+		respond.Error(w, http.StatusConflict,
+			"that list ships with Librarium and cannot be deleted")
+		return
+	case errors.Is(err, repository.ErrNotFound):
+		respond.Error(w, http.StatusNotFound, "list not found")
+		return
+	case err != nil:
 		respond.ServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type updateListBody struct {
+	Name         *string         `json:"name"`
+	Description  *string         `json:"description"`
+	Icon         *string         `json:"icon"`
+	Color        *string         `json:"color"`
+	Layout       *string         `json:"layout"`
+	DisplayOrder *int            `json:"display_order"`
+	Filter       json.RawMessage `json:"filter"`
+}
+
+// UpdateList godoc
+//
+// @Summary     Change one of my lists
+// @Description Only the keys present are changed, so renaming a list does not require sending the rest of it back. Kind is absent on purpose: a manual list cannot become smart without its enumerated books becoming a lie.
+// @Tags        me
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       list_id  path  string  true  "List UUID"
+// @Param       body  body  object{name=string,description=string,icon=string,color=string,layout=string,display_order=int,filter=object}  true  "The changes"
+// @Success     200  {object}  object{id=string,name=string,kind=string,visibility=string,book_count=int}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /me/lists/{list_id} [patch]
+func (h *ListHandler) UpdateList(w http.ResponseWriter, r *http.Request) {
+	list, ok := h.ownedList(w, r)
+	if !ok {
+		return
+	}
+	var body updateListBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	updated, err := h.lists.Update(r.Context(), list.ID, repository.UpdateListInput{
+		Name:         body.Name,
+		Description:  body.Description,
+		Icon:         body.Icon,
+		Color:        body.Color,
+		Layout:       body.Layout,
+		DisplayOrder: body.DisplayOrder,
+		Filter:       body.Filter,
+	})
+	switch {
+	case errors.Is(err, repository.ErrSmartListNotEnumerable):
+		respond.Error(w, http.StatusBadRequest,
+			"only a smart list has a filter to change")
+		return
+	case errors.Is(err, repository.ErrNotFound):
+		respond.Error(w, http.StatusNotFound, "list not found")
+		return
+	case err != nil:
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond.JSON(w, http.StatusOK, updated)
 }
 
 // AddBookToList godoc

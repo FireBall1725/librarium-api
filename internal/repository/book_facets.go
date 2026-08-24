@@ -190,7 +190,7 @@ func (r *BookRepo) Facets(
 	// By id, not name: a shelf name is only unique within its library, so two
 	// libraries can both have "Favourites" and they are different shelves.
 	if len(sel.Shelves) > 0 {
-		mShelf = fmt.Sprintf(`EXISTS (SELECT 1 FROM book_shelves bsh2
+		mShelf = fmt.Sprintf(`EXISTS (SELECT 1 FROM library_shelf_books bsh2
                  WHERE bsh2.book_id = s.id AND bsh2.shelf_id = ANY(%s))`, arg(sel.Shelves))
 	}
 	if len(sel.Ratings) > 0 {
@@ -264,8 +264,8 @@ FROM f JOIN book_tags bt ON bt.book_id = f.id AND bt.deleted_at IS NULL
 WHERE %s GROUP BY t.name
 UNION ALL
 SELECT 'shelf', sh.id::text, sh.name, COUNT(DISTINCT f.id)
-FROM f JOIN book_shelves bsh ON bsh.book_id = f.id
-       JOIN shelves sh ON sh.id = bsh.shelf_id
+FROM f JOIN library_shelf_books bsh ON bsh.book_id = f.id
+       JOIN library_shelves sh ON sh.id = bsh.shelf_id
 WHERE sh.library_id = ANY($1) AND %s
 GROUP BY sh.id, sh.name
 UNION ALL

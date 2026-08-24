@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/repository"
@@ -33,6 +34,16 @@ func NewReadingStateHandler(userBooks *repository.UserBookRepo, sessions *reposi
 func bookIDOf(r *http.Request) (uuid.UUID, bool) {
 	id, err := uuid.Parse(r.PathValue("book_id"))
 	return id, err == nil
+}
+
+// callerOf is who is asking. uuid.Nil when nobody is, which only happens off an
+// authenticated route: every caller of this sits behind requireAuth, so a Nil
+// here matches no rows rather than matching every row.
+func callerOf(r *http.Request) uuid.UUID {
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		return claims.UserID
+	}
+	return uuid.Nil
 }
 
 // GetMyBook godoc

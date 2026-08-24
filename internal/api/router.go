@@ -69,7 +69,6 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	editionRepo := repository.NewEditionRepo(db)
 	tagRepo := repository.NewTagRepo(db)
 	shelfRepo := repository.NewShelfRepo(db)
-	userViewRepo := repository.NewUserViewRepo(db)
 	loanRepo := repository.NewLoanRepo(db)
 	seriesRepo := repository.NewSeriesRepo(db)
 	seriesArcRepo := repository.NewSeriesArcRepo(db)
@@ -144,7 +143,6 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	contributorHandler := handlers.NewContributorHandler(contributorSvc)
 	dashboardHandler := handlers.NewDashboardHandler(bookRepo)
 	meLookupHandler := handlers.NewMeLookupHandler(libSvc, seriesRepo, tagRepo)
-	userViewHandler := handlers.NewUserViewHandler(userViewRepo)
 	meBrowseHandler := handlers.NewMeBrowseHandler(libraryRepo, seriesRepo, contributorRepo, shelfRepo, loanRepo)
 
 	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
@@ -223,8 +221,6 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/auth/me/preferences", requireAuth(http.HandlerFunc(authHandler.GetPreferences)))
 	mux.Handle("GET /api/v1/me/libraries", requireAuth(http.HandlerFunc(libraryHandler.ListMyAccess)))
 	mux.Handle("GET /api/v1/me/books", requireAuth(http.HandlerFunc(bookHandler.ListMyBooks)))
-	// Saved views, per user rather than per browser.
-	mux.Handle("GET /api/v1/me/views", requireAuth(http.HandlerFunc(userViewHandler.ListMyViews)))
 
 	// ── Schema tiers ──────────────────────────────────────────────────────
 	// Reading state is keyed to the work, so there is no library_id or
@@ -239,6 +235,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	// Lists are what shelves and saved views became.
 	mux.Handle("GET /api/v1/me/lists", requireAuth(http.HandlerFunc(listHandler.ListMyLists)))
 	mux.Handle("POST /api/v1/me/lists", requireAuth(http.HandlerFunc(listHandler.CreateList)))
+	mux.Handle("PATCH /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.UpdateList)))
 	mux.Handle("DELETE /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.DeleteList)))
 	mux.Handle("POST /api/v1/me/lists/{list_id}/books/{book_id}", requireAuth(http.HandlerFunc(listHandler.AddBookToList)))
 	mux.Handle("DELETE /api/v1/me/lists/{list_id}/books/{book_id}", requireAuth(http.HandlerFunc(listHandler.RemoveBookFromList)))
@@ -268,9 +265,6 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("POST /api/v1/books/{book_id}/contents", requireAuth(http.HandlerFunc(catalogueHandler.AddBookContent)))
 	mux.Handle("DELETE /api/v1/books/{book_id}/contents/{contained_id}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveBookContent)))
 	mux.Handle("GET /api/v1/books/{book_id}/containers", requireAuth(http.HandlerFunc(catalogueHandler.ListBookContainers)))
-	mux.Handle("PUT /api/v1/me/views", requireAuth(http.HandlerFunc(userViewHandler.SaveMyView)))
-	mux.Handle("DELETE /api/v1/me/views/{view_id}", requireAuth(http.HandlerFunc(userViewHandler.DeleteMyView)))
-	mux.Handle("POST /api/v1/me/views/import", requireAuth(http.HandlerFunc(userViewHandler.ImportMyViews)))
 	mux.Handle("GET /api/v1/me/loans", requireAuth(http.HandlerFunc(meBrowseHandler.MyLoans)))
 	mux.Handle("GET /api/v1/me/shelves", requireAuth(http.HandlerFunc(meBrowseHandler.MyShelves)))
 	mux.Handle("GET /api/v1/me/books/grouped", requireAuth(http.HandlerFunc(bookHandler.ListMyBooksGrouped)))
