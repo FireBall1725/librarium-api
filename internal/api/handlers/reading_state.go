@@ -88,6 +88,11 @@ func (h *ReadingStateHandler) GetMyBook(w http.ResponseWriter, r *http.Request) 
 // rated and never moves through containment.
 func readingStateBody(ub *models.UserBook) map[string]any {
 	return map[string]any{
+		// The row id, which sync addresses ops by. Absent from the default
+		// answer below, because a book nobody has said anything about has no
+		// row yet and inventing an id would have clients queue edits against
+		// one that does not exist.
+		"id":          ub.ID,
 		"book_id":     ub.BookID,
 		"read_status": ub.ReadStatus,
 		"rating":      ub.Rating,

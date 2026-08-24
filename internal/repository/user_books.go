@@ -37,14 +37,14 @@ func NewUserBookRepo(db *pgxpool.Pool) *UserBookRepo {
 }
 
 const userBookColumns = `
-	user_id, book_id, read_status, rating, is_favorite, review, notes, wants,
+	id, user_id, book_id, read_status, rating, is_favorite, review, notes, wants,
 	read_status_updated_at, rating_updated_at, is_favorite_updated_at,
 	created_at, updated_at, deleted_at`
 
 func scanUserBook(row pgx.Row) (*models.UserBook, error) {
 	var u models.UserBook
 	err := row.Scan(
-		&u.UserID, &u.BookID, &u.ReadStatus, &u.Rating, &u.IsFavorite,
+		&u.ID, &u.UserID, &u.BookID, &u.ReadStatus, &u.Rating, &u.IsFavorite,
 		&u.Review, &u.Notes, &u.Wants,
 		&u.ReadStatusUpdatedAt, &u.RatingUpdatedAt, &u.IsFavoriteUpdatedAt,
 		&u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
