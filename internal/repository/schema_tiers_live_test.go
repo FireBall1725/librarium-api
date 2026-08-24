@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/fireball1725/librarium-api/internal/api/responses"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"os"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -1403,5 +1405,98 @@ func TestListFilterRefusesSomebodyElsesList(t *testing.T) {
 	}
 	if got := count(stranger); got != 0 {
 		t.Errorf("a stranger filtering on someone else's private list sees %d books, want 0", got)
+	}
+}
+
+// TestSyncProgressRoundTrips covers a regression that lost real data.
+//
+// Progress moved from the interactions row to reading_sessions, and the sync
+// path briefly rejected the field on the reasoning that a client told invalid
+// would stop sending it. The shipping iOS client does the opposite: it treats
+// invalid as acknowledged and deletes the op, so a reader who set their page
+// count saw it save locally and never leave the device.
+func TestSyncProgressRoundTrips(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	sync := NewSyncRepo(pool)
+
+	// A book with an edition, since a page number needs a printing to count in.
+	var userID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT ub.user_id, ub.book_id FROM user_books ub
+		  WHERE ub.deleted_at IS NULL
+		    AND EXISTS (SELECT 1 FROM book_editions be WHERE be.book_id = ub.book_id)
+		  LIMIT 1`).Scan(&userID, &bookID); err != nil {
+		t.Skipf("no opinion on a book with an edition: %v", err)
+	}
+	var entityID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM user_books WHERE user_id = $1 AND book_id = $2`,
+		userID, bookID).Scan(&entityID); err != nil {
+		t.Fatalf("finding the row: %v", err)
+	}
+
+	defer func() {
+		_, _ = pool.Exec(ctx,
+			`DELETE FROM reading_sessions WHERE user_id = $1 AND book_id = $2 AND progress_updated_at IS NOT NULL`,
+			userID, bookID)
+	}()
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM reading_sessions WHERE user_id = $1 AND book_id = $2`, userID, bookID); err != nil {
+		t.Fatalf("clearing sessions: %v", err)
+	}
+
+	at := time.Now().Add(-time.Hour)
+	op := responses.SyncApplyOp{
+		EntityType: "user_book_interaction",
+		EntityID:   entityID,
+		Field:      "progress",
+		Value:      map[string]any{"pages_read": float64(120)},
+		UpdatedAt:  at,
+	}
+	status, err := sync.ApplyUserBookInteractionOp(ctx, userID, op)
+	if err != nil {
+		t.Fatalf("applying progress: %v", err)
+	}
+	if status != SyncApplyStatusApplied {
+		t.Fatalf("progress returned %q, want applied; invalid is what silently dropped it", status)
+	}
+
+	var unit string
+	var value float64
+	if err := pool.QueryRow(ctx,
+		`SELECT progress_unit, progress_value FROM reading_sessions
+		  WHERE user_id = $1 AND book_id = $2 AND finished_at IS NULL
+		  ORDER BY created_at DESC LIMIT 1`, userID, bookID).Scan(&unit, &value); err != nil {
+		t.Fatalf("progress was accepted but stored nowhere: %v", err)
+	}
+	if unit != "page" || value != 120 {
+		t.Errorf("stored %s=%v, want page=120", unit, value)
+	}
+
+	// An older op must not overwrite a newer value, the same rule every other
+	// synced field follows.
+	older := op
+	older.UpdatedAt = at.Add(-time.Hour)
+	older.Value = map[string]any{"pages_read": float64(5)}
+	if status, err := sync.ApplyUserBookInteractionOp(ctx, userID, older); err != nil {
+		t.Fatalf("applying an older op: %v", err)
+	} else if status != SyncApplyStatusDiscardedStale {
+		t.Errorf("an older progress op returned %q, want discarded_stale", status)
+	}
+
+	// And it comes back down, or a second device never learns it.
+	ops, err := sync.UserBookInteractionChanges(ctx, userID, at.Add(-2*time.Hour), 500)
+	if err != nil {
+		t.Fatalf("reading changes: %v", err)
+	}
+	// The feed is one op per changed field, so progress is its own row.
+	found := false
+	for _, o := range ops {
+		if o.EntityID == entityID && o.Field == "progress" && o.Value != nil {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("progress was stored but never sent back, so another device would never see it")
 	}
 }
