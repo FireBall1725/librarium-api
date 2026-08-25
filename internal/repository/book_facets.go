@@ -55,7 +55,18 @@ type FacetSelection struct {
 	// Shelves are hand-picked sets rather than a property of a book, but they
 	// narrow the list exactly like a tag does, so they are a facet dimension.
 	Shelves []uuid.UUID
-	Ratings []int32
+	// Contributors narrows to books someone worked on, by id.
+	//
+	// Not counted as a facet dimension: a collection has hundreds of them and a
+	// rail listing every author is a scrolling wall rather than a filter. It is
+	// a filter you reach by naming someone, which is what the search box is
+	// for.
+	//
+	// By id rather than by name, because the text search already matches
+	// contributor names loosely and that is a different question: "Tite" the
+	// author is not the same as a book with Tite in its title.
+	Contributors []uuid.UUID
+	Ratings      []int32
 	// Favourites filters on the starred flag. A slice rather than a *bool so
 	// it behaves like every other dimension: empty means not filtering.
 	Favourites []bool
@@ -126,6 +137,17 @@ func (r *BookRepo) Facets(
 		textWhere = fmt.Sprintf(`AND (b.title ILIKE %[1]s OR EXISTS (
             SELECT 1 FROM book_contributors bc JOIN contributors c ON c.id = bc.contributor_id
             WHERE bc.book_id = b.id AND c.name ILIKE %[1]s))`, p)
+	}
+
+	// Naming an author narrows every dimension, for the same reason the text
+	// search does: it is a filter rather than a counted dimension, so no
+	// dimension owns it and none may count around it. Leaving it out is how the
+	// rail ends up promising more than the page delivers.
+	if len(sel.Contributors) > 0 {
+		p := arg(sel.Contributors)
+		textWhere += fmt.Sprintf(` AND EXISTS (
+            SELECT 1 FROM book_contributors bc_f
+             WHERE bc_f.book_id = b.id AND bc_f.contributor_id = ANY(%s))`, p)
 	}
 
 	// Drilling into a series narrows every dimension, for the same reason the

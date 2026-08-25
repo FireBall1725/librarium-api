@@ -825,6 +825,17 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 		argIdx++
 	}
 
+	// Books someone worked on. EXISTS rather than a join, because a book with
+	// an author and an illustrator would otherwise appear once per credit.
+	if len(sel.Contributors) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM book_contributors bc3
+            WHERE bc3.book_id = b.id AND bc3.contributor_id = ANY($%d)
+        )`, argIdx))
+		args = append(args, sel.Contributors)
+		argIdx++
+	}
+
 	// Reading state is one row per work, so these are direct lookups. They were
 	// correlated subqueries collapsing per-edition rows, because joining
 	// editions would multiply a work with three printings into three rows and

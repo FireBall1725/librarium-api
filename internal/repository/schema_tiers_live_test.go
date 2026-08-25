@@ -1782,3 +1782,69 @@ func TestExampleListsAreSeededOnceAndStayDeleted(t *testing.T) {
 		t.Errorf("name = %q, want the rename to stick", after.Name)
 	}
 }
+
+// TestContributorFilterIsNotATextSearch covers the difference the search box
+// depends on: naming an author is a different question from searching for their
+// name. "Tite" the person is not a book with Tite in its title.
+func TestContributorFilterIsNotATextSearch(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	books := NewBookRepo(pool)
+
+	var contributorID, libraryID uuid.UUID
+	var name string
+	err := pool.QueryRow(ctx, `
+		SELECT c.id, c.name, cp.library_id
+		  FROM contributors c
+		  JOIN book_contributors bc ON bc.contributor_id = c.id
+		  JOIN copies cp ON cp.book_id = bc.book_id AND cp.deleted_at IS NULL
+		 GROUP BY c.id, c.name, cp.library_id
+		HAVING count(*) > 1
+		 LIMIT 1`).Scan(&contributorID, &name, &libraryID)
+	if err != nil {
+		t.Skipf("no contributor with more than one held book: %v", err)
+	}
+
+	_, total, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage:   200,
+		Selection: FacetSelection{Contributors: []uuid.UUID{contributorID}},
+	})
+	if err != nil {
+		t.Fatalf("filtering by contributor: %v", err)
+	}
+	if total == 0 {
+		t.Fatalf("%s has books but the filter matched none", name)
+	}
+
+	// Every row really is theirs, which a name match could not promise.
+	rows, _, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage:   200,
+		Selection: FacetSelection{Contributors: []uuid.UUID{contributorID}},
+	})
+	if err != nil {
+		t.Fatalf("re-reading: %v", err)
+	}
+	for _, b := range rows {
+		var linked bool
+		if err := pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM book_contributors
+			                WHERE book_id = $1 AND contributor_id = $2)`,
+			b.ID, contributorID).Scan(&linked); err != nil {
+			t.Fatalf("checking the credit: %v", err)
+		}
+		if !linked {
+			t.Errorf("%q came back for a contributor who is not credited on it", b.Title)
+		}
+	}
+
+	// An id nobody holds matches nothing, rather than everything.
+	_, none, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage:   10,
+		Selection: FacetSelection{Contributors: []uuid.UUID{uuid.New()}},
+	})
+	if err != nil {
+		t.Fatalf("filtering by an unknown contributor: %v", err)
+	}
+	if none != 0 {
+		t.Errorf("an unknown contributor matched %d books, want 0", none)
+	}
+}
