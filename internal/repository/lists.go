@@ -57,6 +57,9 @@ type BuiltinList struct {
 }
 
 var BuiltinLists = []BuiltinList{
+	// Not an example: it is what the books page opens on, so it is hidden from
+	// the rail and cannot be deleted. Everything below it is a suggestion the
+	// reader is free to rename, retarget or throw away.
 	{Key: "default", Name: "Default", Query: "", Layout: "list", DisplayOrder: 0, Hidden: true, Permanent: true},
 	{Key: "reading", Name: "Reading now", Query: "status=reading", Layout: "grid", Icon: "next", DisplayOrder: 1},
 	{Key: "unread", Name: "Up next", Query: "status=unread", Layout: "grid", DisplayOrder: 2},
@@ -236,8 +239,13 @@ func (r *ListRepo) Create(ctx context.Context, in CreateListInput) (*models.List
 	q := `
 		INSERT INTO lists (owner_user_id, name, description, icon, color, kind,
 		                   filter, filter_version, layout, visibility,
-		                   shared_library_id, share_token)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		                   shared_library_id, share_token, display_order)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+		        -- Last, not first. Order is something a reader arranges by hand
+		        -- now, so a new list appearing at the top would reshuffle a rail
+		        -- they had already put in the order they wanted.
+		        COALESCE((SELECT max(display_order) + 1 FROM lists
+		                   WHERE owner_user_id = $1), 0))
 		RETURNING id`
 
 	var id uuid.UUID
@@ -251,15 +259,33 @@ func (r *ListRepo) Create(ctx context.Context, in CreateListInput) (*models.List
 	return r.FindByID(ctx, id)
 }
 
-// SeedBuiltIns gives a user the lists this release ships with.
+// SeedBuiltIns gives a person the example lists, once.
 //
-// Safe to call on every read, which is the point: "has this user been seeded"
-// has no honest answer once deleting a built-in is allowed, so there is no flag
-// to check and the insert carries its own idempotency through
-// lists_builtin_key_idx. A built-in a user deleted stays deleted only until the
-// next seed, and that is a real limitation worth naming rather than a bug: the
-// alternative is a tombstone table for something nobody has asked to do yet.
+// Examples, not fixtures. Whoever gets them owns them: rename Five stars, point
+// it at something else, or throw it away, and that sticks. So this runs exactly
+// once per account and never touches those rows again.
+//
+// It used to run on every read, which made them undeletable in practice:
+// removing one worked and the next page load put it back. users.lists_seeded_at
+// is what makes "has this person been seeded" answerable, and the claim below
+// is what makes concurrent first reads insert one set rather than two.
 func (r *ListRepo) SeedBuiltIns(ctx context.Context, userID uuid.UUID) error {
+	// Claim the seed before writing anything. Two requests arriving together on
+	// a first load would otherwise both find NULL and both insert; only one
+	// UPDATE can move the column off NULL, and the loser does nothing.
+	const claim = `
+		UPDATE users SET lists_seeded_at = NOW()
+		 WHERE id = $1 AND lists_seeded_at IS NULL
+		 RETURNING id`
+	var claimed uuid.UUID
+	err := r.db.QueryRow(ctx, claim, userID).Scan(&claimed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // Already seeded. Their lists are their own now.
+	}
+	if err != nil {
+		return fmt.Errorf("claiming the list seed: %w", err)
+	}
+
 	for _, b := range BuiltinLists {
 		filter, err := json.Marshal(map[string]string{"query": b.Query})
 		if err != nil {

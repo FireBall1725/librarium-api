@@ -1694,3 +1694,111 @@ func TestListsHoldingBookRespectsVisibility(t *testing.T) {
 		}
 	}
 }
+
+// TestExampleListsAreSeededOnceAndStayDeleted covers what makes them examples
+// rather than fixtures.
+//
+// They used to be re-inserted on every read, so deleting one worked and the
+// next page load put it straight back. A reader who threw away Five stars had
+// to watch it return.
+func TestExampleListsAreSeededOnceAndStayDeleted(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewListRepo(pool)
+
+	var userID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
+		t.Skipf("no users: %v", err)
+	}
+
+	// Start from never-seeded, and put the account back afterwards.
+	var was *time.Time
+	if err := pool.QueryRow(ctx,
+		`SELECT lists_seeded_at FROM users WHERE id = $1`, userID).Scan(&was); err != nil {
+		t.Fatalf("reading the seed marker: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(ctx, `UPDATE users SET lists_seeded_at = $2 WHERE id = $1`, userID, was)
+	}()
+	if _, err := pool.Exec(ctx,
+		`UPDATE users SET lists_seeded_at = NULL WHERE id = $1`, userID); err != nil {
+		t.Fatalf("clearing the marker: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`, userID); err != nil {
+		t.Fatalf("clearing examples: %v", err)
+	}
+
+	count := func() int {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`,
+			userID).Scan(&n); err != nil {
+			t.Fatalf("counting: %v", err)
+		}
+		return n
+	}
+
+	if err := repo.SeedBuiltIns(ctx, userID); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	seeded := count()
+	if seeded != len(BuiltinLists) {
+		t.Fatalf("seeded %d, want %d", seeded, len(BuiltinLists))
+	}
+
+	// Throw one away, the way a reader would.
+	var fiveStars uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM lists WHERE owner_user_id = $1 AND builtin_key = 'five-stars'`,
+		userID).Scan(&fiveStars); err != nil {
+		t.Fatalf("finding five-stars: %v", err)
+	}
+	if err := repo.Delete(ctx, fiveStars); err != nil {
+		t.Fatalf("deleting an example: %v", err)
+	}
+
+	// Every later read seeds again. It must not come back.
+	for i := 0; i < 3; i++ {
+		if err := repo.SeedBuiltIns(ctx, userID); err != nil {
+			t.Fatalf("re-seeding: %v", err)
+		}
+	}
+	if got := count(); got != seeded-1 {
+		t.Errorf("after deleting one example and %d reads there are %d, want %d: it came back",
+			3, got, seeded-1)
+	}
+
+	// The default is machinery, not an example: the books page has to open on
+	// something, so it is still refused.
+	var dflt uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM lists WHERE owner_user_id = $1 AND builtin_key = 'default'`,
+		userID).Scan(&dflt); err != nil {
+		t.Fatalf("finding the default: %v", err)
+	}
+	if err := repo.Delete(ctx, dflt); !errors.Is(err, ErrListPermanent) {
+		t.Errorf("deleting the default returned %v, want ErrListPermanent", err)
+	}
+
+	// An example can be renamed and retargeted, because it belongs to whoever
+	// was given it.
+	var reading uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM lists WHERE owner_user_id = $1 AND builtin_key = 'reading'`,
+		userID).Scan(&reading); err != nil {
+		t.Fatalf("finding reading: %v", err)
+	}
+	name := "On the go"
+	if _, err := repo.Update(ctx, reading, UpdateListInput{
+		Name: &name, Filter: []byte(`{"query":"status=reading&fav=true"}`),
+	}); err != nil {
+		t.Fatalf("editing an example: %v", err)
+	}
+	after, err := repo.FindByID(ctx, reading)
+	if err != nil {
+		t.Fatalf("re-reading: %v", err)
+	}
+	if after.Name != name {
+		t.Errorf("name = %q, want the rename to stick", after.Name)
+	}
+}
