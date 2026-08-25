@@ -25,6 +25,31 @@ import (
 //
 // Set LIBRARIUM_TEST_DSN to a database that has run migration 000025.
 
+// scratchUser makes an account this test owns, removed when it finishes.
+//
+// Live tests run against a restored copy of a real collection, so a test that
+// writes has to own what it writes to. Picking whichever account
+// `SELECT id FROM users LIMIT 1` returns and deleting its rows destroys
+// somebody's actual data, which is not hypothetical: it happened.
+func scratchUser(t *testing.T, pool *pgxpool.Pool, ctx context.Context) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	tag := id.String()[:8]
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO users (id, username, email, display_name, is_active)
+		 VALUES ($1, $2, $3, 'Scratch', true)`,
+		id, "scratch-"+tag, "scratch-"+tag+"@example.invalid"); err != nil {
+		// Fatal rather than skipped. This named a password_hash column that
+		// does not exist, so every test built on a scratch user skipped itself
+		// and reported PASS. A skip is for "not configured to run here"; a
+		// query that does not match the schema is a broken test.
+		t.Fatalf("creating a scratch user: %v", err)
+	}
+	// Everything owned by a user cascades, so this takes the fixture with it.
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id) })
+	return id
+}
+
 func tiersPool(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("LIBRARIUM_TEST_DSN")
@@ -894,21 +919,8 @@ func TestBuiltInListsSeedOnceAndResistDeletion(t *testing.T) {
 	pool, ctx := tiersPool(t)
 	repo := NewListRepo(pool)
 
-	var userID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
-		t.Skipf("no users: %v", err)
-	}
-	defer func() {
-		_, _ = pool.Exec(ctx,
-			`DELETE FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`, userID)
-	}()
-	// Start from a known state rather than assuming this user has none: the
-	// seed is idempotent, so a previous run leaving rows behind must not change
-	// what this measures.
-	if _, err := pool.Exec(ctx,
-		`DELETE FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`, userID); err != nil {
-		t.Fatalf("clearing built-ins: %v", err)
-	}
+	// Its own account, so "start from none" needs no deleting.
+	userID := scratchUser(t, pool, ctx)
 
 	if err := repo.SeedBuiltIns(ctx, userID); err != nil {
 		t.Fatalf("seeding: %v", err)
@@ -1419,30 +1431,23 @@ func TestSyncProgressRoundTrips(t *testing.T) {
 	pool, ctx := tiersPool(t)
 	sync := NewSyncRepo(pool)
 
-	// A book with an edition, since a page number needs a printing to count in.
-	var userID, bookID uuid.UUID
+	// A scratch reader with an opinion of a real book, rather than a real
+	// reader whose sessions this would have to clear first. Clearing them is
+	// what an earlier version did, and reading history is not test scaffolding.
+	userID := scratchUser(t, pool, ctx)
+
+	// The book only has to have an edition, since a page number needs a
+	// printing to count in.
+	var bookID uuid.UUID
 	if err := pool.QueryRow(ctx,
-		`SELECT ub.user_id, ub.book_id FROM user_books ub
-		  WHERE ub.deleted_at IS NULL
-		    AND EXISTS (SELECT 1 FROM book_editions be WHERE be.book_id = ub.book_id)
-		  LIMIT 1`).Scan(&userID, &bookID); err != nil {
-		t.Skipf("no opinion on a book with an edition: %v", err)
+		`SELECT be.book_id FROM book_editions be LIMIT 1`).Scan(&bookID); err != nil {
+		t.Skipf("no editions: %v", err)
 	}
 	var entityID uuid.UUID
 	if err := pool.QueryRow(ctx,
-		`SELECT id FROM user_books WHERE user_id = $1 AND book_id = $2`,
-		userID, bookID).Scan(&entityID); err != nil {
-		t.Fatalf("finding the row: %v", err)
-	}
-
-	defer func() {
-		_, _ = pool.Exec(ctx,
-			`DELETE FROM reading_sessions WHERE user_id = $1 AND book_id = $2 AND progress_updated_at IS NOT NULL`,
-			userID, bookID)
-	}()
-	if _, err := pool.Exec(ctx,
-		`DELETE FROM reading_sessions WHERE user_id = $1 AND book_id = $2`, userID, bookID); err != nil {
-		t.Fatalf("clearing sessions: %v", err)
+		`INSERT INTO user_books (user_id, book_id, read_status)
+		 VALUES ($1, $2, 'reading') RETURNING id`, userID, bookID).Scan(&entityID); err != nil {
+		t.Fatalf("creating an opinion: %v", err)
 	}
 
 	at := time.Now().Add(-time.Hour)
@@ -1692,5 +1697,300 @@ func TestListsHoldingBookRespectsVisibility(t *testing.T) {
 		if l.ID == manual.ID {
 			t.Error("a stranger can see someone else's private list holding a book")
 		}
+	}
+}
+
+// TestExampleListsAreSeededOnceAndStayDeleted covers what makes them examples
+// rather than fixtures.
+//
+// They used to be re-inserted on every read, so deleting one worked and the
+// next page load put it straight back. A reader who threw away Five stars had
+// to watch it return.
+func TestExampleListsAreSeededOnceAndStayDeleted(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewListRepo(pool)
+
+	userID := scratchUser(t, pool, ctx)
+
+	count := func() int {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`,
+			userID).Scan(&n); err != nil {
+			t.Fatalf("counting: %v", err)
+		}
+		return n
+	}
+
+	if err := repo.SeedBuiltIns(ctx, userID); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	seeded := count()
+	if seeded != len(BuiltinLists) {
+		t.Fatalf("seeded %d, want %d", seeded, len(BuiltinLists))
+	}
+
+	// Throw one away, the way a reader would.
+	var fiveStars uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM lists WHERE owner_user_id = $1 AND builtin_key = 'five-stars'`,
+		userID).Scan(&fiveStars); err != nil {
+		t.Fatalf("finding five-stars: %v", err)
+	}
+	if err := repo.Delete(ctx, fiveStars); err != nil {
+		t.Fatalf("deleting an example: %v", err)
+	}
+
+	// Every later read seeds again. It must not come back.
+	for i := 0; i < 3; i++ {
+		if err := repo.SeedBuiltIns(ctx, userID); err != nil {
+			t.Fatalf("re-seeding: %v", err)
+		}
+	}
+	if got := count(); got != seeded-1 {
+		t.Errorf("after deleting one example and %d reads there are %d, want %d: it came back",
+			3, got, seeded-1)
+	}
+
+	// The default is machinery, not an example: the books page has to open on
+	// something, so it is still refused.
+	var dflt uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM lists WHERE owner_user_id = $1 AND builtin_key = 'default'`,
+		userID).Scan(&dflt); err != nil {
+		t.Fatalf("finding the default: %v", err)
+	}
+	if err := repo.Delete(ctx, dflt); !errors.Is(err, ErrListPermanent) {
+		t.Errorf("deleting the default returned %v, want ErrListPermanent", err)
+	}
+
+	// An example can be renamed and retargeted, because it belongs to whoever
+	// was given it.
+	var reading uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM lists WHERE owner_user_id = $1 AND builtin_key = 'reading'`,
+		userID).Scan(&reading); err != nil {
+		t.Fatalf("finding reading: %v", err)
+	}
+	name := "On the go"
+	if _, err := repo.Update(ctx, reading, UpdateListInput{
+		Name: &name, Filter: []byte(`{"query":"status=reading&fav=true"}`),
+	}); err != nil {
+		t.Fatalf("editing an example: %v", err)
+	}
+	after, err := repo.FindByID(ctx, reading)
+	if err != nil {
+		t.Fatalf("re-reading: %v", err)
+	}
+	if after.Name != name {
+		t.Errorf("name = %q, want the rename to stick", after.Name)
+	}
+}
+
+// TestContributorFilterIsNotATextSearch covers the difference the search box
+// depends on: naming an author is a different question from searching for their
+// name. "Tite" the person is not a book with Tite in its title.
+func TestContributorFilterIsNotATextSearch(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	books := NewBookRepo(pool)
+
+	var contributorID, libraryID uuid.UUID
+	var name string
+	err := pool.QueryRow(ctx, `
+		SELECT c.id, c.name, cp.library_id
+		  FROM contributors c
+		  JOIN book_contributors bc ON bc.contributor_id = c.id
+		  JOIN copies cp ON cp.book_id = bc.book_id AND cp.deleted_at IS NULL
+		 GROUP BY c.id, c.name, cp.library_id
+		HAVING count(*) > 1
+		 LIMIT 1`).Scan(&contributorID, &name, &libraryID)
+	if err != nil {
+		t.Skipf("no contributor with more than one held book: %v", err)
+	}
+
+	_, total, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage:   200,
+		Selection: FacetSelection{Contributors: []uuid.UUID{contributorID}},
+	})
+	if err != nil {
+		t.Fatalf("filtering by contributor: %v", err)
+	}
+	if total == 0 {
+		t.Fatalf("%s has books but the filter matched none", name)
+	}
+
+	// Every row really is theirs, which a name match could not promise.
+	rows, _, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage:   200,
+		Selection: FacetSelection{Contributors: []uuid.UUID{contributorID}},
+	})
+	if err != nil {
+		t.Fatalf("re-reading: %v", err)
+	}
+	for _, b := range rows {
+		var linked bool
+		if err := pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM book_contributors
+			                WHERE book_id = $1 AND contributor_id = $2)`,
+			b.ID, contributorID).Scan(&linked); err != nil {
+			t.Fatalf("checking the credit: %v", err)
+		}
+		if !linked {
+			t.Errorf("%q came back for a contributor who is not credited on it", b.Title)
+		}
+	}
+
+	// An id nobody holds matches nothing, rather than everything.
+	_, none, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage:   10,
+		Selection: FacetSelection{Contributors: []uuid.UUID{uuid.New()}},
+	})
+	if err != nil {
+		t.Fatalf("filtering by an unknown contributor: %v", err)
+	}
+	if none != 0 {
+		t.Errorf("an unknown contributor matched %d books, want 0", none)
+	}
+}
+
+// The rail and the rows have to answer the same question. The list runs a text
+// query through the parser, which makes one condition per word; the facet query
+// used to match the whole phrase in one ILIKE, so any two-word search reported
+// zero of everything beside a list showing books.
+func TestFacetsAgreeWithTheListOnAMultiWordSearch(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	books := NewBookRepo(pool)
+
+	// Two words that are known to co-occur: a title word and a word from a
+	// contributor's name on the same book. Read from the data rather than
+	// hardcoded, so the test travels with whatever collection it is run against.
+	var titleWord, nameWord string
+	var libraryID uuid.UUID
+	err := pool.QueryRow(ctx, `
+		SELECT split_part(b.title, ' ', 1),
+		       split_part(c.name, ' ', 1),
+		       cp.library_id
+		  FROM books b
+		  JOIN book_contributors bc ON bc.book_id = b.id
+		  JOIN contributors c ON c.id = bc.contributor_id
+		  JOIN copies cp ON cp.book_id = b.id AND cp.deleted_at IS NULL
+		 WHERE length(split_part(b.title, ' ', 1)) > 3
+		   AND length(split_part(c.name, ' ', 1)) > 3
+		 LIMIT 1`).Scan(&titleWord, &nameWord, &libraryID)
+	if err != nil {
+		t.Skipf("no book with a multi-word title and a credited contributor: %v", err)
+	}
+
+	query := titleWord + " " + nameWord
+	// What internal/search produces for two bare words. Built by hand because
+	// that package imports this one, so the test cannot call the parser.
+	groups := []ConditionGroup{{Mode: "and", Conditions: []FilterCondition{
+		{Field: "title", Op: "contains", Value: titleWord},
+		{Field: "title", Op: "contains", Value: nameWord},
+	}}}
+	_, total, err := books.List(ctx, libraryID, ListBooksOpts{PerPage: 1, Groups: groups})
+	if err != nil {
+		t.Fatalf("listing for %q: %v", query, err)
+	}
+	if total == 0 {
+		t.Fatalf("%q matched nothing, so there is nothing to compare", query)
+	}
+
+	facets, err := books.Facets(ctx, []uuid.UUID{libraryID}, FacetSelection{}, query, nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("counting facets for %q: %v", query, err)
+	}
+	var counted int
+	for _, v := range facets.Library {
+		counted += v.Count
+	}
+	if counted != total {
+		t.Errorf("the rail counted %d for %q, the list returned %d", counted, query, total)
+	}
+}
+
+// Order belongs to a sidebar, not to a view. Two people looking at the same
+// shared view put it in different places, and neither move is visible to the
+// other. Before list_order_overrides there was one number on the row, so the
+// second person's drag either moved it for the first or, because the reorder
+// was a PATCH guarded by ownership, failed and was swallowed.
+func TestRailOrderIsPerPerson(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	lists := NewListRepo(pool)
+
+	owner := scratchUser(t, pool, ctx)
+	reader := scratchUser(t, pool, ctx)
+
+	var libraryID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library to share into: %v", err)
+	}
+	// The reader has to hold a role on the library or the shared view is not
+	// theirs to see, let alone to arrange.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, library_id, role_id, scope)
+		 SELECT $1, $2, r.id, r.scope FROM roles r
+		  WHERE r.name = 'library_viewer'`,
+		reader, libraryID); err != nil {
+		t.Fatalf("granting the reader a role: %v", err)
+	}
+
+	shared, err := lists.Create(ctx, CreateListInput{
+		OwnerUserID: owner, Name: "Shared run", Kind: "smart",
+		Filter: []byte(`{"query":"tag=manga"}`), Layout: "list",
+		Visibility: "library", SharedLibraryID: &libraryID,
+	})
+	if err != nil {
+		t.Fatalf("creating a shared view: %v", err)
+	}
+	mine, err := lists.Create(ctx, CreateListInput{
+		OwnerUserID: reader, Name: "Mine", Kind: "smart",
+		Filter: []byte(`{"query":""}`), Layout: "list", Visibility: "private",
+	})
+	if err != nil {
+		t.Fatalf("creating the reader's own view: %v", err)
+	}
+
+	// The reader puts the shared one first. It is not theirs, which is exactly
+	// the move that used to fail.
+	if err := lists.SetOrder(ctx, reader, []uuid.UUID{shared.ID, mine.ID}); err != nil {
+		t.Fatalf("arranging the reader's rail: %v", err)
+	}
+
+	order := func(who uuid.UUID) []string {
+		ls, err := lists.ListForUser(ctx, who)
+		if err != nil {
+			t.Fatalf("reading a rail: %v", err)
+		}
+		var names []string
+		for _, l := range ls {
+			if l.ID == shared.ID || l.ID == mine.ID {
+				names = append(names, l.Name)
+			}
+		}
+		return names
+	}
+
+	if got := order(reader); len(got) != 2 || got[0] != "Shared run" {
+		t.Errorf("the reader's rail is %v, want Shared run first", got)
+	}
+
+	// The owner never asked for anything, so their rail is untouched: the
+	// reader's drag is invisible to them.
+	var ownerHasOpinion bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM list_order_overrides
+		                WHERE user_id = $1 AND list_id = $2)`,
+		owner, shared.ID).Scan(&ownerHasOpinion); err != nil {
+		t.Fatalf("checking the owner's rail: %v", err)
+	}
+	if ownerHasOpinion {
+		t.Error("the reader's drag wrote a position into the owner's rail")
+	}
+
+	// An id the caller cannot see is ignored rather than refused, so one stale
+	// row does not strand the rest of the reorder.
+	if err := lists.SetOrder(ctx, reader, []uuid.UUID{uuid.New(), mine.ID}); err != nil {
+		t.Errorf("an unknown id failed the whole reorder: %v", err)
 	}
 }

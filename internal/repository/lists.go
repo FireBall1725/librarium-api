@@ -57,6 +57,9 @@ type BuiltinList struct {
 }
 
 var BuiltinLists = []BuiltinList{
+	// Not an example: it is what the books page opens on, so it is hidden from
+	// the rail and cannot be deleted. Everything below it is a suggestion the
+	// reader is free to rename, retarget or throw away.
 	{Key: "default", Name: "Default", Query: "", Layout: "list", DisplayOrder: 0, Hidden: true, Permanent: true},
 	{Key: "reading", Name: "Reading now", Query: "status=reading", Layout: "grid", Icon: "next", DisplayOrder: 1},
 	{Key: "unread", Name: "Up next", Query: "status=unread", Layout: "grid", DisplayOrder: 2},
@@ -87,12 +90,34 @@ func NewListRepo(db *pgxpool.Pool) *ListRepo {
 	return &ListRepo{db: db}
 }
 
-const listColumns = `
+// listColumns selects a list, with orderExpr standing in for the position it
+// occupies in the rail being built. Ownership does not decide that any more:
+// a view shared into a library sits wherever its reader dragged it, which is a
+// different number for each of them, so the query asking for a particular
+// person's rail supplies their own expression.
+func listColumns(orderExpr string) string {
+	return `
 	l.id, l.owner_user_id, l.name, l.description, l.icon, l.color,
-	l.kind, l.filter, l.filter_version, l.layout, l.display_order,
+	l.kind, l.filter, l.filter_version, l.layout, ` + orderExpr + `,
 	l.visibility, l.shared_library_id, COALESCE(l.share_token, ''),
 	(SELECT count(*) FROM list_books lb WHERE lb.list_id = l.id),
 	COALESCE(l.builtin_key, ''), l.created_at, l.updated_at`
+}
+
+// ownOrder is the list's own position, for reads that are not building one
+// person's rail: a lookup by id, a public share, the lists holding a book.
+const ownOrder = "l.display_order"
+
+// railOrder is where the caller put it, falling back to where its owner did.
+// An absent override is not "position zero", it is "no opinion yet", which is
+// what everyone starts with and what someone newly given a shared view should
+// see until they move it.
+const railOrder = "COALESCE(o.display_order, l.display_order)"
+
+// railOrderJoin binds railOrder to a caller. Kept beside it so the two cannot
+// drift apart: railOrder without this join is a query that will not compile.
+const railOrderJoin = `LEFT JOIN list_order_overrides o
+	                          ON o.list_id = l.id AND o.user_id = $1`
 
 func scanList(row pgx.Row) (*models.List, error) {
 	var l models.List
@@ -118,13 +143,14 @@ func scanList(row pgx.Row) (*models.List, error) {
 // show only the books its viewer could already see, and that rule is easy to
 // forget one call site at a time.
 func (r *ListRepo) ListForUser(ctx context.Context, userID uuid.UUID) ([]*models.List, error) {
-	q := `SELECT ` + listColumns + `
+	q := `SELECT ` + listColumns(railOrder) + `
 	        FROM lists l
+	        ` + railOrderJoin + `
 	       WHERE l.owner_user_id = $1
 	          OR (l.visibility = 'library'
 	              AND EXISTS (SELECT 1 FROM user_roles ur
 	                           WHERE ur.user_id = $1 AND ur.library_id = l.shared_library_id))
-	       ORDER BY l.display_order, l.name`
+	       ORDER BY ` + railOrder + `, l.name`
 
 	rows, err := r.db.Query(ctx, q, userID)
 	if err != nil {
@@ -144,7 +170,7 @@ func (r *ListRepo) ListForUser(ctx context.Context, userID uuid.UUID) ([]*models
 }
 
 func (r *ListRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.List, error) {
-	q := `SELECT ` + listColumns + ` FROM lists l WHERE l.id = $1`
+	q := `SELECT ` + listColumns(ownOrder) + ` FROM lists l WHERE l.id = $1`
 	l, err := scanList(r.db.QueryRow(ctx, q, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -158,7 +184,7 @@ func (r *ListRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.List, er
 // FindByShareToken resolves a public link. Only public lists resolve: a token
 // left over from a list that has since been made private is not a way in.
 func (r *ListRepo) FindByShareToken(ctx context.Context, token string) (*models.List, error) {
-	q := `SELECT ` + listColumns + ` FROM lists l
+	q := `SELECT ` + listColumns(ownOrder) + ` FROM lists l
 	       WHERE l.share_token = $1 AND l.visibility = 'public'`
 
 	l, err := scanList(r.db.QueryRow(ctx, q, token))
@@ -236,8 +262,13 @@ func (r *ListRepo) Create(ctx context.Context, in CreateListInput) (*models.List
 	q := `
 		INSERT INTO lists (owner_user_id, name, description, icon, color, kind,
 		                   filter, filter_version, layout, visibility,
-		                   shared_library_id, share_token)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		                   shared_library_id, share_token, display_order)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+		        -- Last, not first. Order is something a reader arranges by hand
+		        -- now, so a new list appearing at the top would reshuffle a rail
+		        -- they had already put in the order they wanted.
+		        COALESCE((SELECT max(display_order) + 1 FROM lists
+		                   WHERE owner_user_id = $1), 0))
 		RETURNING id`
 
 	var id uuid.UUID
@@ -251,15 +282,33 @@ func (r *ListRepo) Create(ctx context.Context, in CreateListInput) (*models.List
 	return r.FindByID(ctx, id)
 }
 
-// SeedBuiltIns gives a user the lists this release ships with.
+// SeedBuiltIns gives a person the example lists, once.
 //
-// Safe to call on every read, which is the point: "has this user been seeded"
-// has no honest answer once deleting a built-in is allowed, so there is no flag
-// to check and the insert carries its own idempotency through
-// lists_builtin_key_idx. A built-in a user deleted stays deleted only until the
-// next seed, and that is a real limitation worth naming rather than a bug: the
-// alternative is a tombstone table for something nobody has asked to do yet.
+// Examples, not fixtures. Whoever gets them owns them: rename Five stars, point
+// it at something else, or throw it away, and that sticks. So this runs exactly
+// once per account and never touches those rows again.
+//
+// It used to run on every read, which made them undeletable in practice:
+// removing one worked and the next page load put it back. users.lists_seeded_at
+// is what makes "has this person been seeded" answerable, and the claim below
+// is what makes concurrent first reads insert one set rather than two.
 func (r *ListRepo) SeedBuiltIns(ctx context.Context, userID uuid.UUID) error {
+	// Claim the seed before writing anything. Two requests arriving together on
+	// a first load would otherwise both find NULL and both insert; only one
+	// UPDATE can move the column off NULL, and the loser does nothing.
+	const claim = `
+		UPDATE users SET lists_seeded_at = NOW()
+		 WHERE id = $1 AND lists_seeded_at IS NULL
+		 RETURNING id`
+	var claimed uuid.UUID
+	err := r.db.QueryRow(ctx, claim, userID).Scan(&claimed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // Already seeded. Their lists are their own now.
+	}
+	if err != nil {
+		return fmt.Errorf("claiming the list seed: %w", err)
+	}
+
 	for _, b := range BuiltinLists {
 		filter, err := json.Marshal(map[string]string{"query": b.Query})
 		if err != nil {
@@ -366,6 +415,43 @@ func (r *ListRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// SetOrder records where this person wants each view in their own rail.
+//
+// Takes the whole rail rather than one move, because a drag renumbers every row
+// after it and sending them one at a time leaves the rail in a half-applied
+// order if any request fails. It also replaces the old shape, which PATCHed
+// display_order on the list itself: that is a column the caller may not own, so
+// dragging a shared view 404ed and the client swallowed it.
+//
+// Ids the caller cannot see are ignored rather than refused. The rail is built
+// from what they can see, so an id outside it is a stale client, and failing
+// the whole reorder over one dead row would strand the rest.
+func (r *ListRepo) SetOrder(ctx context.Context, userID uuid.UUID, ids []uuid.UUID) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	// WITH ORDINALITY carries the caller's ordering into the insert, so
+	// position comes from where the id sits in the array rather than from a
+	// round trip per row.
+	q := `
+		INSERT INTO list_order_overrides (user_id, list_id, display_order)
+		SELECT $1, v.id, v.ord - 1
+		  FROM unnest($2::uuid[]) WITH ORDINALITY AS v(id, ord)
+		  JOIN lists l ON l.id = v.id
+		 WHERE l.owner_user_id = $1
+		    OR (l.visibility = 'library'
+		        AND EXISTS (SELECT 1 FROM user_roles ur
+		                     WHERE ur.user_id = $1 AND ur.library_id = l.shared_library_id))
+		    ON CONFLICT (user_id, list_id)
+		    DO UPDATE SET display_order = EXCLUDED.display_order, updated_at = NOW()`
+
+	if _, err := r.db.Exec(ctx, q, userID, ids); err != nil {
+		return fmt.Errorf("saving list order: %w", err)
+	}
+	return nil
+}
+
 // AddBook puts a work in a manual list.
 func (r *ListRepo) AddBook(ctx context.Context, listID, bookID uuid.UUID, position float64) error {
 	kind, err := r.kindOf(ctx, listID)
@@ -416,7 +502,7 @@ func (r *ListRepo) RemoveBook(ctx context.Context, listID, bookID uuid.UUID) err
 // reach, the same visibility rule the filter and the facet follow.
 func (r *ListRepo) ContainingBook(ctx context.Context, userID, bookID uuid.UUID) ([]*models.List, error) {
 	q := `
-		SELECT ` + listColumns + `
+		SELECT ` + listColumns(ownOrder) + `
 		  FROM lists l
 		  JOIN list_books lb ON lb.list_id = l.id AND lb.book_id = $2
 		 WHERE l.kind = 'manual'

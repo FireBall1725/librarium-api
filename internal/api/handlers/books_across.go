@@ -275,6 +275,13 @@ func parseFacetSelection(r *http.Request) repository.FacetSelection {
 			sel.Libraries = append(sel.Libraries, id)
 		}
 	}
+	// By id, because naming an author is a different question from searching
+	// for their name: "Tite" the person is not a book with Tite in its title.
+	for _, s := range split("contributor") {
+		if id, err := uuid.Parse(s); err == nil {
+			sel.Contributors = append(sel.Contributors, id)
+		}
+	}
 	for _, s := range split("rating") {
 		if n, err := strconv.Atoi(s); err == nil && n >= 0 && n <= 5 {
 			sel.Ratings = append(sel.Ratings, int32(n))

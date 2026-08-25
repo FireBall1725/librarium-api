@@ -140,6 +140,47 @@ func (h *ListHandler) CreateList(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, list)
 }
 
+// SetListOrder godoc
+//
+// @Summary     Arrange my own view rail
+// @Description Records where the caller wants each view, including views shared
+// @Description with them. Order belongs to a rail rather than to a view, so
+// @Description this changes nothing for anyone else. Send every id, in order.
+// @Tags        me
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body  object{ids=[]string}  true  "Every visible list id, in the order wanted"
+// @Success     204
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /me/lists/order [put]
+func (h *ListHandler) SetListOrder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	ids := make([]uuid.UUID, 0, len(body.IDs))
+	for _, raw := range body.IDs {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid list id")
+			return
+		}
+		ids = append(ids, id)
+	}
+
+	if err := h.lists.SetOrder(r.Context(), callerOf(r), ids); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // DeleteList godoc
 //
 // @Summary     Delete one of my lists

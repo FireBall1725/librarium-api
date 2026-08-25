@@ -3838,7 +3838,10 @@ paths:
       - description: Search query (min 2 chars)
         in: query
         name: q
-        required: true
+        type: string
+      - description: Comma-separated contributor ids to resolve by name
+        in: query
+        name: ids
         type: string
       produces:
       - application/json
@@ -10252,6 +10255,50 @@ paths:
       security:
       - BearerAuth: []
       summary: Put a book in one of my lists
+      tags:
+      - me
+  /me/lists/order:
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Records where the caller wants each view, including views shared
+        with them. Order belongs to a rail rather than to a view, so
+        this changes nothing for anyone else. Send every id, in order.
+      parameters:
+      - description: Every visible list id, in the order wanted
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            ids:
+              items:
+                type: string
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Arrange my own view rail
       tags:
       - me
   /me/loans:

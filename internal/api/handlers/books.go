@@ -67,11 +67,33 @@ func (h *BookHandler) ListMediaTypes(w http.ResponseWriter, r *http.Request) {
 // @Tags        books
 // @Produce     json
 // @Security    BearerAuth
-// @Param       q    query     string  true  "Search query (min 2 chars)"
+// @Param       q    query     string  false  "Search query (min 2 chars)"
+// @Param       ids  query     string  false  "Comma-separated contributor ids to resolve by name"
 // @Success     200  {array}   github_com_fireball1725_librarium-api_internal_api_responses.ContributorItem
 // @Failure     401  {object}  object{error=string}
 // @Router      /contributors [get]
 func (h *BookHandler) SearchContributors(w http.ResponseWriter, r *http.Request) {
+	// `ids` answers the other direction: a filter shared as a link carries the
+	// contributor id, and the client needs the name back to say whose books it
+	// is showing.
+	if raw := r.URL.Query().Get("ids"); raw != "" {
+		var ids []uuid.UUID
+		for _, part := range strings.Split(raw, ",") {
+			id, err := uuid.Parse(strings.TrimSpace(part))
+			if err != nil {
+				continue
+			}
+			ids = append(ids, id)
+		}
+		contributors, err := h.svc.ContributorsByIDs(r.Context(), ids)
+		if err != nil {
+			respond.ServerError(w, r, err)
+			return
+		}
+		respond.JSON(w, http.StatusOK, contributorItems(contributors))
+		return
+	}
+
 	q := r.URL.Query().Get("q")
 	if len(q) < 2 {
 		respond.JSON(w, http.StatusOK, []any{})
@@ -82,11 +104,15 @@ func (h *BookHandler) SearchContributors(w http.ResponseWriter, r *http.Request)
 		respond.ServerError(w, r, err)
 		return
 	}
-	out := make([]map[string]any, 0, len(contributors))
-	for _, c := range contributors {
+	respond.JSON(w, http.StatusOK, contributorItems(contributors))
+}
+
+func contributorItems(cs []*models.Contributor) []map[string]any {
+	out := make([]map[string]any, 0, len(cs))
+	for _, c := range cs {
 		out = append(out, map[string]any{"id": c.ID, "name": c.Name})
 	}
-	respond.JSON(w, http.StatusOK, out)
+	return out
 }
 
 // CreateContributor godoc
