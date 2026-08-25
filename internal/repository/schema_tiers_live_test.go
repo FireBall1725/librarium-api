@@ -25,6 +25,27 @@ import (
 //
 // Set LIBRARIUM_TEST_DSN to a database that has run migration 000025.
 
+// scratchUser makes an account this test owns, removed when it finishes.
+//
+// Live tests run against a restored copy of a real collection, so a test that
+// writes has to own what it writes to. Picking whichever account
+// `SELECT id FROM users LIMIT 1` returns and deleting its rows destroys
+// somebody's actual data, which is not hypothetical: it happened.
+func scratchUser(t *testing.T, pool *pgxpool.Pool, ctx context.Context) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	tag := id.String()[:8]
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO users (id, username, email, display_name, password_hash, is_active)
+		 VALUES ($1, $2, $3, 'Scratch', '', true)`,
+		id, "scratch-"+tag, "scratch-"+tag+"@example.invalid"); err != nil {
+		t.Skipf("cannot create a scratch user: %v", err)
+	}
+	// Everything owned by a user cascades, so this takes the fixture with it.
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id) })
+	return id
+}
+
 func tiersPool(t *testing.T) (*pgxpool.Pool, context.Context) {
 	t.Helper()
 	dsn := os.Getenv("LIBRARIUM_TEST_DSN")
@@ -894,21 +915,8 @@ func TestBuiltInListsSeedOnceAndResistDeletion(t *testing.T) {
 	pool, ctx := tiersPool(t)
 	repo := NewListRepo(pool)
 
-	var userID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
-		t.Skipf("no users: %v", err)
-	}
-	defer func() {
-		_, _ = pool.Exec(ctx,
-			`DELETE FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`, userID)
-	}()
-	// Start from a known state rather than assuming this user has none: the
-	// seed is idempotent, so a previous run leaving rows behind must not change
-	// what this measures.
-	if _, err := pool.Exec(ctx,
-		`DELETE FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`, userID); err != nil {
-		t.Fatalf("clearing built-ins: %v", err)
-	}
+	// Its own account, so "start from none" needs no deleting.
+	userID := scratchUser(t, pool, ctx)
 
 	if err := repo.SeedBuiltIns(ctx, userID); err != nil {
 		t.Fatalf("seeding: %v", err)
@@ -1419,30 +1427,23 @@ func TestSyncProgressRoundTrips(t *testing.T) {
 	pool, ctx := tiersPool(t)
 	sync := NewSyncRepo(pool)
 
-	// A book with an edition, since a page number needs a printing to count in.
-	var userID, bookID uuid.UUID
+	// A scratch reader with an opinion of a real book, rather than a real
+	// reader whose sessions this would have to clear first. Clearing them is
+	// what an earlier version did, and reading history is not test scaffolding.
+	userID := scratchUser(t, pool, ctx)
+
+	// The book only has to have an edition, since a page number needs a
+	// printing to count in.
+	var bookID uuid.UUID
 	if err := pool.QueryRow(ctx,
-		`SELECT ub.user_id, ub.book_id FROM user_books ub
-		  WHERE ub.deleted_at IS NULL
-		    AND EXISTS (SELECT 1 FROM book_editions be WHERE be.book_id = ub.book_id)
-		  LIMIT 1`).Scan(&userID, &bookID); err != nil {
-		t.Skipf("no opinion on a book with an edition: %v", err)
+		`SELECT be.book_id FROM book_editions be LIMIT 1`).Scan(&bookID); err != nil {
+		t.Skipf("no editions: %v", err)
 	}
 	var entityID uuid.UUID
 	if err := pool.QueryRow(ctx,
-		`SELECT id FROM user_books WHERE user_id = $1 AND book_id = $2`,
-		userID, bookID).Scan(&entityID); err != nil {
-		t.Fatalf("finding the row: %v", err)
-	}
-
-	defer func() {
-		_, _ = pool.Exec(ctx,
-			`DELETE FROM reading_sessions WHERE user_id = $1 AND book_id = $2 AND progress_updated_at IS NOT NULL`,
-			userID, bookID)
-	}()
-	if _, err := pool.Exec(ctx,
-		`DELETE FROM reading_sessions WHERE user_id = $1 AND book_id = $2`, userID, bookID); err != nil {
-		t.Fatalf("clearing sessions: %v", err)
+		`INSERT INTO user_books (user_id, book_id, read_status)
+		 VALUES ($1, $2, 'reading') RETURNING id`, userID, bookID).Scan(&entityID); err != nil {
+		t.Fatalf("creating an opinion: %v", err)
 	}
 
 	at := time.Now().Add(-time.Hour)
@@ -1705,28 +1706,7 @@ func TestExampleListsAreSeededOnceAndStayDeleted(t *testing.T) {
 	pool, ctx := tiersPool(t)
 	repo := NewListRepo(pool)
 
-	var userID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM users LIMIT 1`).Scan(&userID); err != nil {
-		t.Skipf("no users: %v", err)
-	}
-
-	// Start from never-seeded, and put the account back afterwards.
-	var was *time.Time
-	if err := pool.QueryRow(ctx,
-		`SELECT lists_seeded_at FROM users WHERE id = $1`, userID).Scan(&was); err != nil {
-		t.Fatalf("reading the seed marker: %v", err)
-	}
-	defer func() {
-		_, _ = pool.Exec(ctx, `UPDATE users SET lists_seeded_at = $2 WHERE id = $1`, userID, was)
-	}()
-	if _, err := pool.Exec(ctx,
-		`UPDATE users SET lists_seeded_at = NULL WHERE id = $1`, userID); err != nil {
-		t.Fatalf("clearing the marker: %v", err)
-	}
-	if _, err := pool.Exec(ctx,
-		`DELETE FROM lists WHERE owner_user_id = $1 AND builtin_key IS NOT NULL`, userID); err != nil {
-		t.Fatalf("clearing examples: %v", err)
-	}
+	userID := scratchUser(t, pool, ctx)
 
 	count := func() int {
 		var n int
