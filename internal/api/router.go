@@ -238,6 +238,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/me/lists", requireAuth(http.HandlerFunc(listHandler.ListMyLists)))
 	mux.Handle("GET /api/v1/books/{book_id}/lists", requireAuth(http.HandlerFunc(listHandler.ListsHoldingBook)))
 	mux.Handle("POST /api/v1/me/lists", requireAuth(http.HandlerFunc(listHandler.CreateList)))
+	mux.Handle("PUT /api/v1/me/lists/order", requireAuth(http.HandlerFunc(listHandler.SetListOrder)))
 	mux.Handle("PATCH /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.UpdateList)))
 	mux.Handle("DELETE /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.DeleteList)))
 	mux.Handle("POST /api/v1/me/lists/{list_id}/books/{book_id}", requireAuth(http.HandlerFunc(listHandler.AddBookToList)))

@@ -36,10 +36,14 @@ func scratchUser(t *testing.T, pool *pgxpool.Pool, ctx context.Context) uuid.UUI
 	id := uuid.New()
 	tag := id.String()[:8]
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO users (id, username, email, display_name, password_hash, is_active)
-		 VALUES ($1, $2, $3, 'Scratch', '', true)`,
+		`INSERT INTO users (id, username, email, display_name, is_active)
+		 VALUES ($1, $2, $3, 'Scratch', true)`,
 		id, "scratch-"+tag, "scratch-"+tag+"@example.invalid"); err != nil {
-		t.Skipf("cannot create a scratch user: %v", err)
+		// Fatal rather than skipped. This named a password_hash column that
+		// does not exist, so every test built on a scratch user skipped itself
+		// and reported PASS. A skip is for "not configured to run here"; a
+		// query that does not match the schema is a broken test.
+		t.Fatalf("creating a scratch user: %v", err)
 	}
 	// Everything owned by a user cascades, so this takes the fixture with it.
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id) })
@@ -1902,5 +1906,91 @@ func TestFacetsAgreeWithTheListOnAMultiWordSearch(t *testing.T) {
 	}
 	if counted != total {
 		t.Errorf("the rail counted %d for %q, the list returned %d", counted, query, total)
+	}
+}
+
+// Order belongs to a sidebar, not to a view. Two people looking at the same
+// shared view put it in different places, and neither move is visible to the
+// other. Before list_order_overrides there was one number on the row, so the
+// second person's drag either moved it for the first or, because the reorder
+// was a PATCH guarded by ownership, failed and was swallowed.
+func TestRailOrderIsPerPerson(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	lists := NewListRepo(pool)
+
+	owner := scratchUser(t, pool, ctx)
+	reader := scratchUser(t, pool, ctx)
+
+	var libraryID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library to share into: %v", err)
+	}
+	// The reader has to hold a role on the library or the shared view is not
+	// theirs to see, let alone to arrange.
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, library_id, role_id, scope)
+		 SELECT $1, $2, r.id, r.scope FROM roles r
+		  WHERE r.name = 'library_viewer'`,
+		reader, libraryID); err != nil {
+		t.Fatalf("granting the reader a role: %v", err)
+	}
+
+	shared, err := lists.Create(ctx, CreateListInput{
+		OwnerUserID: owner, Name: "Shared run", Kind: "smart",
+		Filter: []byte(`{"query":"tag=manga"}`), Layout: "list",
+		Visibility: "library", SharedLibraryID: &libraryID,
+	})
+	if err != nil {
+		t.Fatalf("creating a shared view: %v", err)
+	}
+	mine, err := lists.Create(ctx, CreateListInput{
+		OwnerUserID: reader, Name: "Mine", Kind: "smart",
+		Filter: []byte(`{"query":""}`), Layout: "list", Visibility: "private",
+	})
+	if err != nil {
+		t.Fatalf("creating the reader's own view: %v", err)
+	}
+
+	// The reader puts the shared one first. It is not theirs, which is exactly
+	// the move that used to fail.
+	if err := lists.SetOrder(ctx, reader, []uuid.UUID{shared.ID, mine.ID}); err != nil {
+		t.Fatalf("arranging the reader's rail: %v", err)
+	}
+
+	order := func(who uuid.UUID) []string {
+		ls, err := lists.ListForUser(ctx, who)
+		if err != nil {
+			t.Fatalf("reading a rail: %v", err)
+		}
+		var names []string
+		for _, l := range ls {
+			if l.ID == shared.ID || l.ID == mine.ID {
+				names = append(names, l.Name)
+			}
+		}
+		return names
+	}
+
+	if got := order(reader); len(got) != 2 || got[0] != "Shared run" {
+		t.Errorf("the reader's rail is %v, want Shared run first", got)
+	}
+
+	// The owner never asked for anything, so their rail is untouched: the
+	// reader's drag is invisible to them.
+	var ownerHasOpinion bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM list_order_overrides
+		                WHERE user_id = $1 AND list_id = $2)`,
+		owner, shared.ID).Scan(&ownerHasOpinion); err != nil {
+		t.Fatalf("checking the owner's rail: %v", err)
+	}
+	if ownerHasOpinion {
+		t.Error("the reader's drag wrote a position into the owner's rail")
+	}
+
+	// An id the caller cannot see is ignored rather than refused, so one stale
+	// row does not strand the rest of the reorder.
+	if err := lists.SetOrder(ctx, reader, []uuid.UUID{uuid.New(), mine.ID}); err != nil {
+		t.Errorf("an unknown id failed the whole reorder: %v", err)
 	}
 }
