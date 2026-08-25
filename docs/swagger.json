@@ -3634,8 +3634,13 @@
                         "type": "string",
                         "description": "Search query (min 2 chars)",
                         "name": "q",
-                        "in": "query",
-                        "required": true
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated contributor ids to resolve by name",
+                        "name": "ids",
+                        "in": "query"
                     }
                 ],
                 "responses": {

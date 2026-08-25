@@ -3838,7 +3838,10 @@ paths:
       - description: Search query (min 2 chars)
         in: query
         name: q
-        required: true
+        type: string
+      - description: Comma-separated contributor ids to resolve by name
+        in: query
+        name: ids
         type: string
       produces:
       - application/json

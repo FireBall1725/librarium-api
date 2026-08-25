@@ -58,6 +58,10 @@ func (s *BookService) SearchContributors(ctx context.Context, query string) ([]*
 	return s.contributors.Search(ctx, query, 10)
 }
 
+func (s *BookService) ContributorsByIDs(ctx context.Context, ids []uuid.UUID) ([]*models.Contributor, error) {
+	return s.contributors.ByIDs(ctx, ids)
+}
+
 func (s *BookService) CreateContributor(ctx context.Context, name string) (*models.Contributor, error) {
 	if name == "" {
 		return nil, fmt.Errorf("name is required")

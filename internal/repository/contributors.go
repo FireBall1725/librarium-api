@@ -105,6 +105,35 @@ func (r *ContributorRepo) Search(ctx context.Context, query string, limit int) (
 	return out, rows.Err()
 }
 
+// ByIDs returns the named contributors, for turning ids that arrived in a URL
+// back into names. A filter shared as a link carries the id, so without this
+// the chip standing for it would have nothing to say.
+func (r *ContributorRepo) ByIDs(ctx context.Context, ids []uuid.UUID) ([]*models.Contributor, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	q := `SELECT ` + contributorCols + `
+		FROM contributors c
+		WHERE c.id = ANY($1)
+		ORDER BY c.name`
+
+	rows, err := r.db.Query(ctx, q, ids)
+	if err != nil {
+		return nil, fmt.Errorf("loading contributors: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*models.Contributor
+	for rows.Next() {
+		c, err := scanFullContributor(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ListForLibrary returns all contributors who have at least one book in the given
 // library, ordered by name. BookCount is set to the number of distinct books in
 // that library for each contributor.

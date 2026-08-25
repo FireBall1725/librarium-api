@@ -131,12 +131,24 @@ func (r *BookRepo) Facets(
 
 	// Text search is not a facet, so it narrows every dimension including the
 	// one being counted, and belongs in the base scope.
+	//
+	// Matched term by term, because that is what the list does: the list runs
+	// the query through the parser, which makes one condition per word, so
+	// "bleach tite" asks for both. Matching the whole phrase in one ILIKE here
+	// found nothing, and the rail reported zero of everything beside a list
+	// showing 82 books. A count that disagrees with its own rows is the tell.
+	//
+	// Operators (type:Manga, quotes, or, not) are still only understood by the
+	// list. They reach the facet query as ordinary words, so a rail beside one
+	// undercounts rather than overcounts, which is the safe direction.
 	textWhere := ""
-	if query != "" {
-		p := arg("%" + query + "%")
-		textWhere = fmt.Sprintf(`AND (b.title ILIKE %[1]s OR EXISTS (
-            SELECT 1 FROM book_contributors bc JOIN contributors c ON c.id = bc.contributor_id
-            WHERE bc.book_id = b.id AND c.name ILIKE %[1]s))`, p)
+	for _, term := range strings.Fields(query) {
+		// Three consecutive placeholders, all the same term: titleContainsSQL
+		// reads the term once for the plain match, once normalised, and once
+		// against contributor names.
+		base := len(args) + 1
+		args = append(args, term, term, term)
+		textWhere += " AND " + titleContainsSQL(base, asciiNormSpace)
 	}
 
 	// Naming an author narrows every dimension, for the same reason the text

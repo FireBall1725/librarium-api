@@ -1848,3 +1848,59 @@ func TestContributorFilterIsNotATextSearch(t *testing.T) {
 		t.Errorf("an unknown contributor matched %d books, want 0", none)
 	}
 }
+
+// The rail and the rows have to answer the same question. The list runs a text
+// query through the parser, which makes one condition per word; the facet query
+// used to match the whole phrase in one ILIKE, so any two-word search reported
+// zero of everything beside a list showing books.
+func TestFacetsAgreeWithTheListOnAMultiWordSearch(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	books := NewBookRepo(pool)
+
+	// Two words that are known to co-occur: a title word and a word from a
+	// contributor's name on the same book. Read from the data rather than
+	// hardcoded, so the test travels with whatever collection it is run against.
+	var titleWord, nameWord string
+	var libraryID uuid.UUID
+	err := pool.QueryRow(ctx, `
+		SELECT split_part(b.title, ' ', 1),
+		       split_part(c.name, ' ', 1),
+		       cp.library_id
+		  FROM books b
+		  JOIN book_contributors bc ON bc.book_id = b.id
+		  JOIN contributors c ON c.id = bc.contributor_id
+		  JOIN copies cp ON cp.book_id = b.id AND cp.deleted_at IS NULL
+		 WHERE length(split_part(b.title, ' ', 1)) > 3
+		   AND length(split_part(c.name, ' ', 1)) > 3
+		 LIMIT 1`).Scan(&titleWord, &nameWord, &libraryID)
+	if err != nil {
+		t.Skipf("no book with a multi-word title and a credited contributor: %v", err)
+	}
+
+	query := titleWord + " " + nameWord
+	// What internal/search produces for two bare words. Built by hand because
+	// that package imports this one, so the test cannot call the parser.
+	groups := []ConditionGroup{{Mode: "and", Conditions: []FilterCondition{
+		{Field: "title", Op: "contains", Value: titleWord},
+		{Field: "title", Op: "contains", Value: nameWord},
+	}}}
+	_, total, err := books.List(ctx, libraryID, ListBooksOpts{PerPage: 1, Groups: groups})
+	if err != nil {
+		t.Fatalf("listing for %q: %v", query, err)
+	}
+	if total == 0 {
+		t.Fatalf("%q matched nothing, so there is nothing to compare", query)
+	}
+
+	facets, err := books.Facets(ctx, []uuid.UUID{libraryID}, FacetSelection{}, query, nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("counting facets for %q: %v", query, err)
+	}
+	var counted int
+	for _, v := range facets.Library {
+		counted += v.Count
+	}
+	if counted != total {
+		t.Errorf("the rail counted %d for %q, the list returned %d", counted, query, total)
+	}
+}
