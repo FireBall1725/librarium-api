@@ -72,6 +72,78 @@ func (r *SeriesRepo) PromoteVolumes(ctx context.Context, seriesID uuid.UUID) (Pr
 		return out, fmt.Errorf("finding the series' media type: %w", err)
 	}
 
+	// A run can know how long it is without knowing what is in it.
+	//
+	// total_count comes from the provider and is often the only thing it says
+	// about the volumes nobody has: Absolute Boyfriend reports seven volumes
+	// and lists six, so volume seven exists in the world, is missing from the
+	// shelf, and had nowhere to be recorded. Filling the gap here rather than
+	// inventing a book directly keeps one bridge: everything becomes a volume
+	// first, and promotion is the only thing that turns a volume into a book.
+	//
+	// Whole positions only, and only inside the count. Half positions are side
+	// stories a publisher's total does not describe, and guessing at them would
+	// invent volumes that were never announced.
+	if _, err := r.db.Exec(ctx, `
+		INSERT INTO series_volumes (series_id, position)
+		SELECT $1, p
+		  FROM series s, generate_series(1, COALESCE(s.total_count, 0)) AS p
+		 WHERE s.id = $1
+		   AND NOT EXISTS (SELECT 1 FROM series_volumes sv
+		                    WHERE sv.series_id = $1 AND sv.position = p)
+		   AND NOT EXISTS (SELECT 1 FROM book_series bs
+		                    WHERE bs.series_id = $1 AND bs.position = p)
+		ON CONFLICT (series_id, position) DO NOTHING`, seriesID); err != nil {
+		return out, fmt.Errorf("recording the volumes a total implies: %w", err)
+	}
+
+	// And the other direction, because a total can shrink.
+	//
+	// A count is one number from a provider and it can be wrong or revised. The
+	// inference above is only safe if it is reversible: otherwise a run that
+	// said seven and turned out to be six keeps a phantom volume seven forever,
+	// with nothing corroborating it the way a provider-listed volume is
+	// corroborated.
+	//
+	// Only rows this inference created are eligible, which is what the empty
+	// title and identifiers mean: a volume a provider actually described stays
+	// whatever the count later says, because the provider saw it and the count
+	// is only a summary. And only after their books have been demoted, which is
+	// guarded, so a placeholder somebody has since acquired or filed on a list
+	// keeps its volume rather than being orphaned.
+	var stale []uuid.UUID
+	staleRows, err := r.db.Query(ctx, `
+		SELECT sv.id FROM series_volumes sv JOIN series s ON s.id = sv.series_id
+		 WHERE sv.series_id = $1
+		   AND s.total_count IS NOT NULL AND sv.position > s.total_count
+		   AND COALESCE(sv.title, '') = '' AND COALESCE(sv.external_id, '') = ''
+		   AND sv.external_ids = '{}'::jsonb`, seriesID)
+	if err != nil {
+		return out, fmt.Errorf("looking for volumes a shrunken total dropped: %w", err)
+	}
+	for staleRows.Next() {
+		var id pgtype.UUID
+		if err := staleRows.Scan(&id); err != nil {
+			staleRows.Close()
+			return out, err
+		}
+		stale = append(stale, uuid.UUID(id.Bytes))
+	}
+	staleRows.Close()
+	if err := staleRows.Err(); err != nil {
+		return out, err
+	}
+	if len(stale) > 0 {
+		if _, err := r.DemoteUnheldVolumes(ctx, stale); err != nil {
+			return out, err
+		}
+		if _, err := r.db.Exec(ctx, `
+			DELETE FROM series_volumes sv
+			 WHERE sv.id = ANY($1) AND sv.book_id IS NULL`, stale); err != nil {
+			return out, fmt.Errorf("removing volumes a shrunken total dropped: %w", err)
+		}
+	}
+
 	rows, err := r.db.Query(ctx, `
 		SELECT sv.id, sv.position, COALESCE(sv.title, '')
 		  FROM series_volumes sv

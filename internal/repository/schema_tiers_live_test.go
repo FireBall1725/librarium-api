@@ -3443,3 +3443,163 @@ func TestASeriesRatingAveragesItsVolumes(t *testing.T) {
 		t.Errorf("a run nobody rated reports %v, want no rating at all", *unrated.Rating)
 	}
 }
+
+// A run can know how long it is without knowing what is in it.
+//
+// Absolute Boyfriend reports seven volumes and the provider lists six. Volume
+// seven exists in the world, is missing from the shelf, and had nowhere to be
+// recorded: promotion walked series_volumes, and there was no row for it. The
+// page drew a placeholder that linked to nothing and offered to Add.
+func TestATotalCountImpliesTheVolumesNobodyListed(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewSeriesRepo(pool)
+
+	var libraryID, mediaTypeID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM media_types LIMIT 1`).Scan(&mediaTypeID); err != nil {
+		t.Skipf("no media type: %v", err)
+	}
+
+	// Seven volumes according to the publisher, three of them on the shelf, and
+	// not one series_volumes row to promote.
+	seriesID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO series (id, library_id, name, total_count)
+		 VALUES ($1, $2, 'ZZ implied series', 7)`, seriesID, libraryID); err != nil {
+		t.Fatalf("creating the series: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM series WHERE id = $1`, seriesID) })
+
+	for i := 1; i <= 3; i++ {
+		id := uuid.New()
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO books (id, title, media_type_id) VALUES ($1, $2, $3)`,
+			id, fmt.Sprintf("ZZ implied series #%d", i), mediaTypeID); err != nil {
+			t.Fatalf("creating volume %d: %v", i, err)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO book_series (book_id, series_id, position) VALUES ($1, $2, $3)`,
+			id, seriesID, i); err != nil {
+			t.Fatalf("positioning volume %d: %v", i, err)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO copies (id, library_id, book_id) VALUES ($1, $2, $3)`,
+			uuid.New(), libraryID, id); err != nil {
+			t.Fatalf("holding volume %d: %v", i, err)
+		}
+	}
+	t.Cleanup(func() {
+		// Copies first: they reference the books, so deleting a book while one
+		// exists fails, and an ignored error leaks a row on every run. The
+		// junction is read before the series cascade takes it away.
+		_, _ = pool.Exec(ctx, `
+			DELETE FROM copies WHERE book_id IN (
+				SELECT book_id FROM book_series WHERE series_id = $1)`, seriesID)
+		_, _ = pool.Exec(ctx, `
+			DELETE FROM books WHERE id IN (SELECT book_id FROM book_series WHERE series_id = $1)`,
+			seriesID)
+	})
+
+	if _, err := repo.PromoteVolumes(ctx, seriesID); err != nil {
+		t.Fatalf("promoting: %v", err)
+	}
+
+	entries, err := repo.ListBooks(ctx, seriesID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("listing the run: %v", err)
+	}
+	if len(entries) != 7 {
+		t.Fatalf("the run lists %d volumes, want all 7 the total promises", len(entries))
+	}
+
+	// Every volume is a book now, and the four nobody has say so, which is what
+	// lets the page grey them rather than drawing a placeholder that links
+	// nowhere.
+	for _, e := range entries {
+		wantHeld := e.Position <= 3
+		if e.Held != wantHeld {
+			t.Errorf("volume %g reports held=%v, want %v", e.Position, e.Held, wantHeld)
+		}
+		if e.BookID == uuid.Nil {
+			t.Errorf("volume %g has no book to link to", e.Position)
+		}
+	}
+
+	// Running it again must not invent an eighth.
+	if _, err := repo.PromoteVolumes(ctx, seriesID); err != nil {
+		t.Fatalf("promoting again: %v", err)
+	}
+	again, err := repo.ListBooks(ctx, seriesID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("listing again: %v", err)
+	}
+	if len(again) != 7 {
+		t.Errorf("a second run left %d volumes, want 7", len(again))
+	}
+
+	// A total can shrink, and the inference has to be reversible or a run that
+	// said seven and turned out to be five keeps two phantom volumes forever.
+	// Nothing corroborates a volume inferred from a count the way a
+	// provider-listed one is corroborated, so it has to be able to go.
+	if _, err := pool.Exec(ctx,
+		`UPDATE series SET total_count = 5 WHERE id = $1`, seriesID); err != nil {
+		t.Fatalf("shrinking the total: %v", err)
+	}
+	if _, err := repo.PromoteVolumes(ctx, seriesID); err != nil {
+		t.Fatalf("promoting after the shrink: %v", err)
+	}
+	shrunk, err := repo.ListBooks(ctx, seriesID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("listing after the shrink: %v", err)
+	}
+	if len(shrunk) != 5 {
+		t.Errorf("after shrinking to 5 the run lists %d volumes", len(shrunk))
+	}
+
+	// But a volume somebody has done something with is not the count's to take.
+	// Grow it back, then put the seventh on a list, then shrink again.
+	if _, err := pool.Exec(ctx,
+		`UPDATE series SET total_count = 7 WHERE id = $1`, seriesID); err != nil {
+		t.Fatalf("restoring the total: %v", err)
+	}
+	if _, err := repo.PromoteVolumes(ctx, seriesID); err != nil {
+		t.Fatalf("re-promoting: %v", err)
+	}
+	var seventh uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT bs.book_id FROM book_series bs
+		 WHERE bs.series_id = $1 AND bs.position = 7`, seriesID).Scan(&seventh); err != nil {
+		t.Fatalf("finding volume seven: %v", err)
+	}
+	owner := scratchUser(t, pool, ctx)
+	listID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO lists (id, owner_user_id, name, kind, surface, visibility)
+		VALUES ($1, $2, 'ZZ keeps a volume', 'manual', 'books', 'private')`,
+		listID, owner); err != nil {
+		t.Fatalf("creating the list: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM lists WHERE id = $1`, listID) })
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO list_books (list_id, book_id) VALUES ($1, $2)`, listID, seventh); err != nil {
+		t.Fatalf("filing volume seven: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`UPDATE series SET total_count = 5 WHERE id = $1`, seriesID); err != nil {
+		t.Fatalf("shrinking again: %v", err)
+	}
+	if _, err := repo.PromoteVolumes(ctx, seriesID); err != nil {
+		t.Fatalf("promoting after the second shrink: %v", err)
+	}
+	var kept bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM books WHERE id = $1)`, seventh).Scan(&kept); err != nil {
+		t.Fatalf("checking volume seven: %v", err)
+	}
+	if !kept {
+		t.Error("a shrinking total deleted a volume somebody had filed on a list")
+	}
+}

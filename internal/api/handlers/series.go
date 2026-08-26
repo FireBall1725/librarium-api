@@ -1034,12 +1034,15 @@ func seriesEntryBody(e *models.SeriesEntry) map[string]any {
 		"position": e.Position,
 		// Only when it means something. Sending 0 on every ordinary book asks
 		// a client to know that 0 means "no span" rather than "ends at zero".
-		"position_end":     nil,
-		"book_id":          e.BookID,
-		"title":            e.Title,
-		"subtitle":         e.Subtitle,
-		"media_type":       e.MediaType,
-		"cover_url":        coverURL,
+		"position_end": nil,
+		"book_id":      e.BookID,
+		"title":        e.Title,
+		"subtitle":     e.Subtitle,
+		"media_type":   e.MediaType,
+		"cover_url":    coverURL,
+		// So a client can draw a volume nobody has differently from one on the
+		// shelf. A series lists the whole run, gaps included.
+		"held":             e.Held,
 		"user_read_status": e.UserReadStatus,
 		"contributors":     contribs,
 	}

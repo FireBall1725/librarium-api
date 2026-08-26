@@ -99,13 +99,17 @@ type SeriesVolume struct {
 
 // SeriesEntry is a book entry within a series, including its reading position.
 type SeriesEntry struct {
-	Position       float64
-	BookID         uuid.UUID
-	ArcID          *uuid.UUID
-	Title          string
-	Subtitle       string
-	MediaType      string
-	HasCover       bool
+	Position  float64
+	BookID    uuid.UUID
+	ArcID     *uuid.UUID
+	Title     string
+	Subtitle  string
+	MediaType string
+	HasCover  bool
+	// Held says a library in scope actually has this volume. A series lists
+	// every volume of the run, promoted gaps included, so without it a volume
+	// nobody owns draws exactly like one on the shelf.
+	Held           bool
 	UpdatedAt      time.Time
 	UserReadStatus string // empty when caller is anonymous or no interactions
 	Contributors   []BookContributor

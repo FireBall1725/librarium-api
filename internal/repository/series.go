@@ -592,6 +592,12 @@ func (r *SeriesRepo) ListBooks(ctx context.Context, seriesID, callerID uuid.UUID
 			b.updated_at,
 			EXISTS(SELECT 1 FROM cover_images ci
 			       WHERE ci.entity_type='book' AND ci.entity_id=b.id AND ci.is_primary=true) AS has_cover,
+			-- Whether this library actually has it. Every volume of the run is
+			-- listed, promoted gaps included, so a client needs to be able to
+			-- tell one nobody owns from one on the shelf.
+			EXISTS(SELECT 1 FROM held_books hb
+			       WHERE hb.book_id = b.id AND hb.library_id = se_h.library_id
+			         AND hb.deleted_at IS NULL) AS held,
 			` + userStatusExpr + `,
 			(
 				SELECT COALESCE(
@@ -612,6 +618,7 @@ func (r *SeriesRepo) ListBooks(ctx context.Context, seriesID, callerID uuid.UUID
 		FROM book_series bs
 		JOIN books b ON b.id = bs.book_id
 		JOIN media_types mt ON mt.id = b.media_type_id
+		JOIN series se_h ON se_h.id = bs.series_id
 		WHERE bs.series_id = $1
 		ORDER BY bs.position`
 	rows, err := r.db.Query(ctx, q, args...)
@@ -902,6 +909,7 @@ func scanSeriesEntry(s scanner) (*models.SeriesEntry, error) {
 		&pgArcID,
 		&entry.UpdatedAt,
 		&entry.HasCover,
+		&entry.Held,
 		&entry.UserReadStatus,
 		&contribsJSON,
 	); err != nil {
