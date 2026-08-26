@@ -2503,7 +2503,7 @@ func TestLocationsListDepthFirst(t *testing.T) {
 		}
 	}
 
-	if !(at[office] < at[shelf] && at[shelf] < at[box]) {
+	if at[office] >= at[shelf] || at[shelf] >= at[box] {
 		t.Errorf("the office subtree is out of order: office=%d shelf=%d box=%d",
 			at[office], at[shelf], at[box])
 	}
