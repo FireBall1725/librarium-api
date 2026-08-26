@@ -452,6 +452,41 @@ func (r *ListRepo) SetOrder(ctx context.Context, userID uuid.UUID, ids []uuid.UU
 	return nil
 }
 
+// Editable reports whether this person may change what is on a list.
+//
+// Ownership, or a role carrying shelves:update on the library the list is
+// shared into. A list shared with a library is that library's working set:
+// restricting who can file a book to whoever happened to create it would mean
+// nobody else could use it, which is the opposite of sharing. This is the rule
+// the per-library shelf routes already applied; membership kept it when the
+// route moved off the library path.
+//
+// Renaming and deleting stay with the owner. Changing what a list is called is
+// a different act from putting a book on it.
+func (r *ListRepo) Editable(ctx context.Context, userID, listID uuid.UUID) (bool, error) {
+	const q = `
+		SELECT l.owner_user_id = $1
+		    OR (l.visibility = 'library' AND EXISTS (
+		          SELECT 1
+		            FROM user_roles ur
+		            JOIN role_permissions rp ON rp.role_id = ur.role_id
+		            JOIN permissions p       ON p.id = rp.permission_id
+		           WHERE ur.user_id = $1
+		             AND p.name = 'shelves:update'
+		             AND (ur.library_id IS NULL OR ur.library_id = l.shared_library_id)))
+		  FROM lists l
+		 WHERE l.id = $2`
+
+	var allowed bool
+	if err := r.db.QueryRow(ctx, q, userID, listID).Scan(&allowed); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, fmt.Errorf("checking who may edit the list: %w", err)
+	}
+	return allowed, nil
+}
+
 // AddBook puts a work in a manual list.
 func (r *ListRepo) AddBook(ctx context.Context, listID, bookID uuid.UUID, position float64) error {
 	kind, err := r.kindOf(ctx, listID)

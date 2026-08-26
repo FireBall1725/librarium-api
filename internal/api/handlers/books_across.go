@@ -128,6 +128,11 @@ func libraryIDsFromQuery(r *http.Request) []uuid.UUID {
 // @Param       genre     query string false "Genre names, comma separated"
 // @Param       tag       query string false "Tag names, comma separated"
 // @Param       rating    query string false "Ratings 0-5, comma separated"
+// @Param       own       query string false "Ownership states, comma separated: shelf, wishlist, suggested, gap"
+// @Param       shelf     query string false "List UUIDs, comma separated"
+// @Param       fav       query string false "Favourite: true or false"
+// @Param       contributor  query string false "Contributor UUIDs, comma separated"
+// @Param       series    query string false "Series UUIDs, comma separated"
 // @Success     200  {object}  object{items=[]object,total=int,page=int,per_page=int}
 // @Failure     401  {object}  object{error=string}
 // @Router      /me/books [get]

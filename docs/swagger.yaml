@@ -9763,6 +9763,27 @@ paths:
         in: query
         name: rating
         type: string
+      - description: 'Ownership states, comma separated: shelf, wishlist, suggested,
+          gap'
+        in: query
+        name: own
+        type: string
+      - description: List UUIDs, comma separated
+        in: query
+        name: shelf
+        type: string
+      - description: 'Favourite: true or false'
+        in: query
+        name: fav
+        type: string
+      - description: Contributor UUIDs, comma separated
+        in: query
+        name: contributor
+        type: string
+      - description: Series UUIDs, comma separated
+        in: query
+        name: series
+        type: string
       produces:
       - application/json
       responses:
@@ -10209,12 +10230,14 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Take a book out of one of my lists
+      summary: Take a book off a list
       tags:
       - me
     post:
-      description: Manual lists only. A smart list computes its own membership, so
-        adding by hand would produce a row its filter disagrees with.
+      description: 'Manual lists only: a smart list computes its own membership, so
+        adding by hand would produce a row its filter disagrees with. Allowed for
+        the list''s owner, or for anyone holding shelves:update on the library a shared
+        list belongs to.'
       parameters:
       - description: List UUID
         in: path
@@ -10254,7 +10277,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Put a book in one of my lists
+      summary: Put a book on a list
       tags:
       - me
   /me/lists/order:

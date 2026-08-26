@@ -1994,3 +1994,74 @@ func TestRailOrderIsPerPerson(t *testing.T) {
 		t.Errorf("an unknown id failed the whole reorder: %v", err)
 	}
 }
+
+// A list shared with a library is that library's working set. Restricting who
+// can file a book to whoever created it would mean nobody else could use it,
+// which is the rule the per-library shelf routes already applied and which
+// membership had to keep when the route moved off the library path.
+func TestASharedListIsEditableByTheLibrary(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	lists := NewListRepo(pool)
+
+	owner := scratchUser(t, pool, ctx)
+	member := scratchUser(t, pool, ctx)
+	stranger := scratchUser(t, pool, ctx)
+
+	var libraryID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library to share into: %v", err)
+	}
+	// A role that actually carries shelves:update, read from the data rather
+	// than named, so the test does not encode a role name that may change.
+	var roleID uuid.UUID
+	var scope string
+	if err := pool.QueryRow(ctx, `
+		SELECT r.id, r.scope FROM roles r
+		  JOIN role_permissions rp ON rp.role_id = r.id
+		  JOIN permissions p ON p.id = rp.permission_id
+		 WHERE p.name = 'shelves:update' AND r.scope = 'library'
+		 LIMIT 1`).Scan(&roleID, &scope); err != nil {
+		t.Skipf("no library role grants shelves:update: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, library_id, role_id, scope) VALUES ($1, $2, $3, $4)`,
+		member, libraryID, roleID, scope); err != nil {
+		t.Fatalf("granting the member a role: %v", err)
+	}
+
+	shared, err := lists.Create(ctx, CreateListInput{
+		OwnerUserID: owner, Name: "Shared working set", Kind: "manual",
+		Layout: "list", Visibility: "library", SharedLibraryID: &libraryID,
+	})
+	if err != nil {
+		t.Fatalf("creating a shared list: %v", err)
+	}
+	private, err := lists.Create(ctx, CreateListInput{
+		OwnerUserID: owner, Name: "Mine alone", Kind: "manual",
+		Layout: "list", Visibility: "private",
+	})
+	if err != nil {
+		t.Fatalf("creating a private list: %v", err)
+	}
+
+	for _, c := range []struct {
+		who   uuid.UUID
+		list  uuid.UUID
+		want  bool
+		label string
+	}{
+		{owner, shared.ID, true, "the owner edits their own shared list"},
+		{member, shared.ID, true, "a member of the library files a book on it"},
+		{stranger, shared.ID, false, "someone with no role on the library does not"},
+		{owner, private.ID, true, "the owner edits their private list"},
+		{member, private.ID, false, "a library role does not reach a private list"},
+	} {
+		got, err := lists.Editable(ctx, c.who, c.list)
+		if err != nil {
+			t.Fatalf("%s: %v", c.label, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: got %v, want %v", c.label, got, c.want)
+		}
+	}
+}

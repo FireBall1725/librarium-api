@@ -12815,6 +12815,36 @@ const docTemplate = `{
                         "description": "Ratings 0-5, comma separated",
                         "name": "rating",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ownership states, comma separated: shelf, wishlist, suggested, gap",
+                        "name": "own",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "List UUIDs, comma separated",
+                        "name": "shelf",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Favourite: true or false",
+                        "name": "fav",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Contributor UUIDs, comma separated",
+                        "name": "contributor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Series UUIDs, comma separated",
+                        "name": "series",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -13502,14 +13532,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manual lists only. A smart list computes its own membership, so adding by hand would produce a row its filter disagrees with.",
+                "description": "Manual lists only: a smart list computes its own membership, so adding by hand would produce a row its filter disagrees with. Allowed for the list's owner, or for anyone holding shelves:update on the library a shared list belongs to.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "me"
                 ],
-                "summary": "Put a book in one of my lists",
+                "summary": "Put a book on a list",
                 "parameters": [
                     {
                         "type": "string",
@@ -13577,7 +13607,7 @@ const docTemplate = `{
                 "tags": [
                     "me"
                 ],
-                "summary": "Take a book out of one of my lists",
+                "summary": "Take a book off a list",
                 "parameters": [
                     {
                         "type": "string",

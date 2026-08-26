@@ -275,8 +275,8 @@ func (h *ListHandler) UpdateList(w http.ResponseWriter, r *http.Request) {
 
 // AddBookToList godoc
 //
-// @Summary     Put a book in one of my lists
-// @Description Manual lists only. A smart list computes its own membership, so adding by hand would produce a row its filter disagrees with.
+// @Summary     Put a book on a list
+// @Description Manual lists only: a smart list computes its own membership, so adding by hand would produce a row its filter disagrees with. Allowed for the list's owner, or for anyone holding shelves:update on the library a shared list belongs to.
 // @Tags        me
 // @Produce     json
 // @Security    BearerAuth
@@ -288,7 +288,7 @@ func (h *ListHandler) UpdateList(w http.ResponseWriter, r *http.Request) {
 // @Failure     404  {object}  object{error=string}
 // @Router      /me/lists/{list_id}/books/{book_id} [post]
 func (h *ListHandler) AddBookToList(w http.ResponseWriter, r *http.Request) {
-	list, ok := h.ownedList(w, r)
+	list, ok := h.editableList(w, r)
 	if !ok {
 		return
 	}
@@ -313,7 +313,7 @@ func (h *ListHandler) AddBookToList(w http.ResponseWriter, r *http.Request) {
 
 // RemoveBookFromList godoc
 //
-// @Summary     Take a book out of one of my lists
+// @Summary     Take a book off a list
 // @Tags        me
 // @Produce     json
 // @Security    BearerAuth
@@ -324,7 +324,7 @@ func (h *ListHandler) AddBookToList(w http.ResponseWriter, r *http.Request) {
 // @Failure     404  {object}  object{error=string}
 // @Router      /me/lists/{list_id}/books/{book_id} [delete]
 func (h *ListHandler) RemoveBookFromList(w http.ResponseWriter, r *http.Request) {
-	list, ok := h.ownedList(w, r)
+	list, ok := h.editableList(w, r)
 	if !ok {
 		return
 	}
@@ -344,6 +344,33 @@ func (h *ListHandler) RemoveBookFromList(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// editableList resolves the list in the path and checks the caller may change
+// what is on it: they own it, or they hold shelves:update on the library it is
+// shared into.
+//
+// Separate from ownedList because filing a book is not the same act as renaming
+// or deleting. A shared list nobody but its author could add to would be a list
+// only in name.
+func (h *ListHandler) editableList(w http.ResponseWriter, r *http.Request) (*listRef, bool) {
+	id, err := uuid.Parse(r.PathValue("list_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid list id")
+		return nil, false
+	}
+	allowed, err := h.lists.Editable(r.Context(), callerOf(r), id)
+	if errors.Is(err, repository.ErrNotFound) || (err == nil && !allowed) {
+		// 404 rather than 403, for the same reason ownedList does: a 403 would
+		// confirm the list exists to someone who cannot see it.
+		respond.Error(w, http.StatusNotFound, "list not found")
+		return nil, false
+	}
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return nil, false
+	}
+	return &listRef{ID: id}, true
 }
 
 // ownedList resolves the list in the path and checks the caller owns it.
