@@ -34,7 +34,10 @@ type BookFacets struct {
 	// filed on a shelf counts under the bookcase holding it and the room
 	// holding that, so narrowing to a room does not hide what is inside it.
 	Location []FacetValue `json:"location"`
+	// Rating is what everyone who can see the book thinks of it, averaged and
+	// rounded to a stored point. MyRating is the caller's own.
 	Rating   []FacetValue `json:"rating"`
+	MyRating []FacetValue `json:"my_rating"`
 	// Favourite is the per-book starred flag, counted as a dimension so
 	// "Favourites" can be a saved view with a number beside it. A rule, not a
 	// hand-picked set, which is what separates it from a shelf.
@@ -72,7 +75,10 @@ type FacetSelection struct {
 	// contributor names loosely and that is a different question: "Tite" the
 	// author is not the same as a book with Tite in its title.
 	Contributors []uuid.UUID
-	Ratings      []int32
+	// Ratings filters on the average across everyone who can see the book.
+	Ratings []int32
+	// MyRatings filters on the caller's own rating instead.
+	MyRatings []int32
 	// Favourites filters on the starred flag. A slice rather than a *bool so
 	// it behaves like every other dimension: empty means not filtering.
 	Favourites []bool
@@ -84,7 +90,7 @@ func emptyFacets() *BookFacets {
 		Library:   []FacetValue{}, ReadStatus: []FacetValue{}, MediaType: []FacetValue{},
 		Genre: []FacetValue{}, Tag: []FacetValue{}, Shelf: []FacetValue{},
 		Location: []FacetValue{},
-		Rating:   []FacetValue{}, Favourite: []FacetValue{},
+		Rating:   []FacetValue{}, MyRating: []FacetValue{}, Favourite: []FacetValue{},
 	}
 }
 
@@ -203,6 +209,7 @@ func (r *BookRepo) Facets(
 	mGenre, mTag, mRating := "TRUE", "TRUE", "TRUE"
 	mShelf := "TRUE"
 	mLocation := "TRUE"
+	mMyRating := "TRUE"
 	mFav := "TRUE"
 
 	if len(sel.Ownership) > 0 {
@@ -260,7 +267,10 @@ func (r *BookRepo) Facets(
                AND t6.root = ANY(%s))`, arg(sel.Locations))
 	}
 	if len(sel.Ratings) > 0 {
-		mRating = fmt.Sprintf(`x.rating = ANY(%s)`, arg(sel.Ratings))
+		mRating = fmt.Sprintf(`av.rating = ANY(%s)`, arg(sel.Ratings))
+	}
+	if len(sel.MyRatings) > 0 {
+		mMyRating = fmt.Sprintf(`x.rating = ANY(%s)`, arg(sel.MyRatings))
 	}
 	if len(sel.Favourites) > 0 {
 		// COALESCE because a book the caller has never touched has no
@@ -276,9 +286,9 @@ func (r *BookRepo) Facets(
 			"lib": "f.m_lib", "status": "f.m_status", "type": "f.m_type",
 			"genre": "f.m_genre", "tag": "f.m_tag", "shelf": "f.m_shelf",
 			"location": "f.m_location",
-			"rating":   "f.m_rating", "fav": "f.m_fav",
+			"rating":   "f.m_rating", "my_rating": "f.m_my_rating", "fav": "f.m_fav",
 		}
-		parts := make([]string, 0, 9)
+		parts := make([]string, 0, 10)
 		for k, v := range all {
 			if k != skip {
 				parts = append(parts, v)
@@ -320,14 +330,18 @@ scope AS (
     WHERE TRUE %s
 ),
 inter AS (%s),
+avg_rating AS (%s),
 f AS (
     SELECT s.id, s.media_type_id, s.ownership,
            COALESCE(x.read_status, 'unread') AS read_status,
-           x.rating, COALESCE(x.is_favorite, false) AS is_favorite,
+           x.rating, av.rating AS avg_rating,
+           COALESCE(x.is_favorite, false) AS is_favorite,
            %s AS m_own, %s AS m_lib, %s AS m_status, %s AS m_type,
            %s AS m_genre, %s AS m_tag, %s AS m_shelf, %s AS m_location,
-           %s AS m_rating, %s AS m_fav
-    FROM scope s LEFT JOIN inter x ON x.book_id = s.id
+           %s AS m_rating, %s AS m_my_rating, %s AS m_fav
+    FROM scope s
+    LEFT JOIN inter x ON x.book_id = s.id
+    LEFT JOIN avg_rating av ON av.book_id = s.id
 )
 SELECT 'ownership' AS dim, f.ownership AS value, f.ownership AS label, COUNT(*) AS n
 FROM f WHERE %s GROUP BY f.ownership
@@ -368,7 +382,10 @@ FROM f JOIN copies cp ON cp.book_id = f.id AND cp.deleted_at IS NULL
 WHERE loc.library_id = ANY($1) AND %s
 GROUP BY t.root, loc.name
 UNION ALL
-SELECT 'rating', f.rating::text, f.rating::text, COUNT(*)
+SELECT 'rating', f.avg_rating::text, f.avg_rating::text, COUNT(*)
+FROM f WHERE f.avg_rating IS NOT NULL AND %s GROUP BY f.avg_rating
+UNION ALL
+SELECT 'my_rating', f.rating::text, f.rating::text, COUNT(*)
 FROM f WHERE f.rating IS NOT NULL AND %s GROUP BY f.rating
 UNION ALL
 SELECT 'favourite', f.is_favorite::text, f.is_favorite::text, COUNT(*)
@@ -376,12 +393,13 @@ FROM f WHERE %s GROUP BY f.is_favorite
 ORDER BY 1, 4 DESC, 3`,
 		// The scope CTE comes first now: it holds the caller's own placeholder,
 		// so it has to be built before the text filter's is counted.
-		scopeSQL, textWhere, interCTE,
-		mOwn, mLib, mStatus, mType, mGenre, mTag, mShelf, mLocation, mRating, mFav,
+		scopeSQL, textWhere, interCTE, avgRatingCTE("$1"),
+		mOwn, mLib, mStatus, mType, mGenre, mTag, mShelf, mLocation,
+		mRating, mMyRating, mFav,
 		others("own"),
 		others("lib"), others("status"), others("type"),
 		others("genre"), others("tag"), others("shelf"), others("location"),
-		others("rating"), others("fav"))
+		others("rating"), others("my_rating"), others("fav"))
 
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -415,6 +433,8 @@ ORDER BY 1, 4 DESC, 3`,
 			out.Location = append(out.Location, fv)
 		case "rating":
 			out.Rating = append(out.Rating, fv)
+		case "my_rating":
+			out.MyRating = append(out.MyRating, fv)
 		case "favourite":
 			out.Favourite = append(out.Favourite, fv)
 		}

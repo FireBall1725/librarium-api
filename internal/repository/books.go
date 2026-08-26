@@ -879,7 +879,23 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 		}
 	}
 
+	// What everyone who can see the book thinks of it. Needs no caller: an
+	// average is a fact about the book, so an unauthenticated read gets the
+	// same answer rather than an empty one.
 	if len(sel.Ratings) > 0 {
+		// $1 is the library scope, already bound at the top. Binding the slice
+		// a second time would work and would also make the query text differ
+		// from every other filter here for no reason.
+		conditions = append(conditions, fmt.Sprintf(`%s = ANY($%d)`,
+			avgRatingScalar("$1"), argIdx))
+		args = append(args, sel.Ratings)
+		argIdx++
+	}
+
+	// The caller's own, which is the filter this used to be. Kept because
+	// "books I rated five" and "books the household rates five" are different
+	// questions and both get asked.
+	if len(sel.MyRatings) > 0 {
 		if opts.CallerID == uuid.Nil {
 			conditions = append(conditions, "FALSE") // nobody's ratings to match
 		} else {
@@ -887,7 +903,7 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
             SELECT ub.rating FROM user_books ub
             WHERE ub.user_id = $%d AND ub.deleted_at IS NULL AND ub.book_id = b.id
         ) = ANY($%d)`, argIdx, argIdx+1))
-			args = append(args, opts.CallerID, sel.Ratings)
+			args = append(args, opts.CallerID, sel.MyRatings)
 			argIdx += 2
 		}
 	}

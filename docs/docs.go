@@ -12908,8 +12908,14 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Ratings 1-10, comma separated",
+                        "description": "Average ratings 1-10, comma separated",
                         "name": "rating",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The caller's own ratings 1-10, comma separated",
+                        "name": "my_rating",
                         "in": "query"
                     },
                     {
@@ -16969,6 +16975,12 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
                     }
                 },
+                "my_rating": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
                 "ownership": {
                     "type": "array",
                     "items": {
@@ -16976,6 +16988,7 @@ const docTemplate = `{
                     }
                 },
                 "rating": {
+                    "description": "Rating is what everyone who can see the book thinks of it, averaged and\nrounded to a stored point. MyRating is the caller's own.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"

@@ -994,11 +994,18 @@ definitions:
         items:
           $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
         type: array
+      my_rating:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
       ownership:
         items:
           $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
         type: array
       rating:
+        description: |-
+          Rating is what everyone who can see the book thinks of it, averaged and
+          rounded to a stored point. MyRating is the caller's own.
         items:
           $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
         type: array
@@ -9829,9 +9836,13 @@ paths:
         in: query
         name: tag
         type: string
-      - description: Ratings 1-10, comma separated
+      - description: Average ratings 1-10, comma separated
         in: query
         name: rating
+        type: string
+      - description: The caller's own ratings 1-10, comma separated
+        in: query
+        name: my_rating
         type: string
       - description: 'Ownership states, comma separated: shelf, wishlist, suggested,
           gap'

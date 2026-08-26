@@ -2243,3 +2243,117 @@ func TestRatingFilterReachesTheWholeScale(t *testing.T) {
 		t.Errorf("rating %d returned all %d books, so the filter did nothing", rating, all)
 	}
 }
+
+// A rating is a fact about the book, averaged over everyone who can see it,
+// while each person's own is still stored and still filterable. Two people
+// rating the same book is the case the local data never has, so it is built
+// here rather than waited for.
+func TestRatingIsAveragedButStillIndividual(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	books := NewBookRepo(pool)
+
+	alice := scratchUser(t, pool, ctx)
+	bob := scratchUser(t, pool, ctx)
+
+	var libraryID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT c.library_id, c.book_id FROM copies c
+		 WHERE c.deleted_at IS NULL LIMIT 1`).Scan(&libraryID, &bookID); err != nil {
+		t.Skipf("no held book to rate: %v", err)
+	}
+
+	var roleID uuid.UUID
+	var scope string
+	if err := pool.QueryRow(ctx,
+		`SELECT id, scope FROM roles WHERE scope = 'library' LIMIT 1`).Scan(&roleID, &scope); err != nil {
+		t.Skipf("no library role: %v", err)
+	}
+	for _, who := range []uuid.UUID{alice, bob} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO user_roles (user_id, library_id, role_id, scope) VALUES ($1, $2, $3, $4)`,
+			who, libraryID, roleID, scope); err != nil {
+			t.Fatalf("granting a role: %v", err)
+		}
+	}
+
+	// 9 and 6 average to 7.5, which rounds to 8: four stars.
+	for _, r := range []struct {
+		who    uuid.UUID
+		rating int
+	}{{alice, 9}, {bob, 6}} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO user_books (user_id, book_id, read_status, rating)
+			 VALUES ($1, $2, 'read', $3)
+			 ON CONFLICT (user_id, book_id) DO UPDATE SET rating = EXCLUDED.rating`,
+			r.who, bookID, r.rating); err != nil {
+			t.Fatalf("recording a rating: %v", err)
+		}
+	}
+
+	// The average, which neither of them gave it.
+	rows, _, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage: 200, CallerID: alice, Selection: FacetSelection{Ratings: []int32{8}},
+	})
+	if err != nil {
+		t.Fatalf("filtering by the average: %v", err)
+	}
+	if !holds(rows, bookID) {
+		t.Error("the book did not come back under its average of 8")
+	}
+
+	// Alice's own is still 9 and still findable, which is the thing that would
+	// have been lost by replacing one filter with the other.
+	rows, _, err = books.List(ctx, libraryID, ListBooksOpts{
+		PerPage: 200, CallerID: alice, Selection: FacetSelection{MyRatings: []int32{9}},
+	})
+	if err != nil {
+		t.Fatalf("filtering by my rating: %v", err)
+	}
+	if !holds(rows, bookID) {
+		t.Error("Alice cannot find the book she rated 9")
+	}
+
+	// And Bob's six is his alone: it is not what Alice rated it.
+	rows, _, err = books.List(ctx, libraryID, ListBooksOpts{
+		PerPage: 200, CallerID: alice, Selection: FacetSelection{MyRatings: []int32{6}},
+	})
+	if err != nil {
+		t.Fatalf("filtering by a rating Alice did not give: %v", err)
+	}
+	if holds(rows, bookID) {
+		t.Error("Alice's own filter matched Bob's rating")
+	}
+
+	// The facet agrees with the list it sits beside.
+	facets, err := books.Facets(ctx, []uuid.UUID{libraryID}, FacetSelection{}, "", nil, alice)
+	if err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if countOf(facets.Rating, "8") == 0 {
+		t.Error("the average facet has no row for 8")
+	}
+	if countOf(facets.MyRating, "9") == 0 {
+		t.Error("the my-rating facet has no row for Alice's 9")
+	}
+	if countOf(facets.MyRating, "6") != 0 {
+		t.Error("Bob's rating appeared in Alice's my-rating facet")
+	}
+}
+
+func holds(rows []*models.Book, id uuid.UUID) bool {
+	for _, b := range rows {
+		if b.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func countOf(vs []FacetValue, value string) int {
+	for _, v := range vs {
+		if v.Value == value {
+			return v.Count
+		}
+	}
+	return 0
+}

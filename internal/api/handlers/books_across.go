@@ -127,7 +127,8 @@ func libraryIDsFromQuery(r *http.Request) []uuid.UUID {
 // @Param       type      query string false "Media type names, comma separated"
 // @Param       genre     query string false "Genre names, comma separated"
 // @Param       tag       query string false "Tag names, comma separated"
-// @Param       rating    query string false "Ratings 1-10, comma separated"
+// @Param       rating    query string false "Average ratings 1-10, comma separated"
+// @Param       my_rating query string false "The caller's own ratings 1-10, comma separated"
 // @Param       own       query string false "Ownership states, comma separated: shelf, wishlist, suggested, gap"
 // @Param       shelf     query string false "List UUIDs, comma separated"
 // @Param       fav       query string false "Favourite: true or false"
@@ -303,6 +304,12 @@ func parseFacetSelection(r *http.Request) repository.FacetSelection {
 	for _, s := range split("rating") {
 		if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 10 {
 			sel.Ratings = append(sel.Ratings, int32(n))
+		}
+	}
+	// The caller's own rating, as against the average `rating` now carries.
+	for _, s := range split("my_rating") {
+		if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 10 {
+			sel.MyRatings = append(sel.MyRatings, int32(n))
 		}
 	}
 	return sel
