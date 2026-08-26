@@ -2733,3 +2733,91 @@ func TestAContainerSpansThePositionsItHolds(t *testing.T) {
 		t.Errorf("found %d containers in the series, want 1", spans)
 	}
 }
+
+// A series counts volumes, not book rows.
+//
+// The label reads "N / 56 volumes", so a run held complete plus one three-in-one
+// said 57 of 56, and so did the standard edition of a volume beside its
+// anniversary reprint. Two books, one volume of the run either way.
+func TestASeriesCountsVolumesNotBooks(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	series := NewSeriesRepo(pool)
+
+	var libraryID, mediaTypeID, editionFormatID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM media_types LIMIT 1`).Scan(&mediaTypeID); err != nil {
+		t.Skipf("no media type: %v", err)
+	}
+	_ = editionFormatID
+
+	seriesID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO series (id, library_id, name, total_count)
+		 VALUES ($1, $2, 'ZZ counting series', 3)`, seriesID, libraryID); err != nil {
+		t.Fatalf("creating the series: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM series WHERE id = $1`, seriesID) })
+
+	// Held, so it counts. The reprint sits at the same position as the single,
+	// which is the duplicate-edition case; the omnibus covers all three.
+	var made []uuid.UUID
+	hold := func(title string, position float64) uuid.UUID {
+		id := uuid.New()
+		made = append(made, id)
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO books (id, title, media_type_id) VALUES ($1, $2, $3)`,
+			id, title, mediaTypeID); err != nil {
+			t.Fatalf("creating %s: %v", title, err)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO book_series (book_id, series_id, position) VALUES ($1, $2, $3)`,
+			id, seriesID, position); err != nil {
+			t.Fatalf("positioning %s: %v", title, err)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO copies (id, library_id, book_id) VALUES ($1, $2, $3)`,
+			uuid.New(), libraryID, id); err != nil {
+			t.Fatalf("holding %s: %v", title, err)
+		}
+		return id
+	}
+	t.Cleanup(func() {
+		for _, id := range made {
+			_, _ = pool.Exec(ctx, `DELETE FROM copies WHERE book_id = $1`, id)
+			_, _ = pool.Exec(ctx, `DELETE FROM books WHERE id = $1`, id)
+		}
+	})
+
+	one := hold("ZZ counting 1", 1)
+	hold("ZZ counting 1 anniversary", 1)
+	two := hold("ZZ counting 2", 2)
+	three := hold("ZZ counting 3", 3)
+	omnibus := hold("ZZ counting 1-3", 1)
+	for _, inside := range []uuid.UUID{one, two, three} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO book_contents (container_id, contained_id, position) VALUES ($1, $2, 1)`,
+			omnibus, inside); err != nil {
+			t.Fatalf("recording containment: %v", err)
+		}
+	}
+
+	// Five books on the shelf, three volumes of the run.
+	found, err := series.List(ctx, libraryID, uuid.Nil, "ZZ counting series", "")
+	if err != nil {
+		t.Fatalf("listing series: %v", err)
+	}
+	var got *models.Series
+	for _, s := range found {
+		if s.ID == seriesID {
+			got = s
+		}
+	}
+	if got == nil {
+		t.Fatalf("the series did not come back from List")
+	}
+	if got.BookCount != 3 {
+		t.Errorf("the series counts %d volumes, want 3 from 5 books", got.BookCount)
+	}
+}

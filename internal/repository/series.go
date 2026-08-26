@@ -71,13 +71,31 @@ func readStateSubqueries(callerArg int) string {
 // series' own library is the one asked about: a series record belongs to one
 // library and its counts describe that library's copies, which is why a series
 // held twice is two rows rather than a merged total.
-const seriesBookCountExpr = `COUNT(bs.book_id) FILTER (
-	           WHERE EXISTS (
-	               SELECT 1 FROM held_books lb
-	               WHERE lb.book_id = bs.book_id
-	                 AND lb.library_id = s.library_id
-	                 AND lb.deleted_at IS NULL
-	           )
+//
+// Positions, not books, because the label says volumes. A complete 56-volume
+// run plus one three-in-one read "57 / 56", and so did the standard edition of
+// Bleach volume one beside its 20th-anniversary reprint: two books, one volume
+// of the run either way. A container covers what it holds, so owning only the
+// three-in-one counts as three, which is what the ownership rule already says
+// on the Books page.
+const seriesBookCountExpr = `(
+	           SELECT count(DISTINCT covered.position)
+	             FROM book_series bs2
+	             JOIN held_books lb
+	               ON lb.book_id = bs2.book_id
+	              AND lb.library_id = s.library_id
+	              AND lb.deleted_at IS NULL
+	             CROSS JOIN LATERAL (
+	                     SELECT bs2.position
+	                 UNION
+	                     SELECT within.position
+	                       FROM book_contents bc
+	                       JOIN book_series within
+	                         ON within.book_id = bc.contained_id
+	                        AND within.series_id = bs2.series_id
+	                      WHERE bc.container_id = bs2.book_id
+	             ) covered
+	            WHERE bs2.series_id = s.id
 	       ) AS book_count`
 
 // ─── Series CRUD ──────────────────────────────────────────────────────────────
