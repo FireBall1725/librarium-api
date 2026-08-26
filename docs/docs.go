@@ -13423,6 +13423,9 @@ const docTemplate = `{
                                 "shared_library_id": {
                                     "type": "string"
                                 },
+                                "surface": {
+                                    "type": "string"
+                                },
                                 "visibility": {
                                     "type": "string"
                                 }

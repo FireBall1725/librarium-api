@@ -43,7 +43,10 @@ const FilterVersionCurrent = 1
 // Filter is written in the versioned shape FilterVersionCurrent describes, so a
 // built-in is not a special case to any reader.
 type BuiltinList struct {
-	Key          string
+	Key string
+	// Surface is which page the view lands on. Empty means books, so every
+	// definition that predates a second surface keeps meaning what it meant.
+	Surface      string
 	Name         string
 	Query        string
 	Layout       string
@@ -67,12 +70,44 @@ var BuiltinLists = []BuiltinList{
 	{Key: "favourites", Name: "Favourites", Query: "fav=true", Layout: "grid", Icon: "star", DisplayOrder: 4},
 	{Key: "five-stars", Name: "Five stars", Query: "rating=5", Layout: "grid", DisplayOrder: 5},
 	{Key: "signed", Name: "Signed copies", Query: "tag=signed", Layout: "list", DisplayOrder: 6},
+
+	// Series. The Default here is the same idea as the one above and for the
+	// same reason: the page has to open on something, and that something is
+	// where a reader's own choice of filters and layout is kept. It is hidden
+	// and permanent for the same reasons.
+	{Key: "default", Surface: SurfaceSeries, Name: "Default", Query: "", Layout: "list",
+		DisplayOrder: 0, Hidden: true, Permanent: true},
+	{Key: "incomplete", Surface: SurfaceSeries, Name: "Runs with gaps",
+		Query: "sort=missing&dir=desc", Layout: "list", DisplayOrder: 7},
+	{Key: "reading-series", Surface: SurfaceSeries, Name: "Series on the go",
+		Query: "reading=reading", Layout: "list", Icon: "next", DisplayOrder: 8},
 }
 
-var builtinByKey = func() map[string]BuiltinList {
-	m := make(map[string]BuiltinList, len(BuiltinLists))
+// The pages a view can land on.
+const (
+	SurfaceBooks  = "books"
+	SurfaceSeries = "series"
+)
+
+// surfaceOf reads a definition's surface, defaulting to books so every
+// definition written before there was a second one still means what it meant.
+func surfaceOf(b BuiltinList) string {
+	if b.Surface == "" {
+		return SurfaceBooks
+	}
+	return b.Surface
+}
+
+// Keyed on the pair, because both surfaces ship a Default and a key alone can
+// no longer name one definition. Getting this wrong is quiet: the second
+// Default would overwrite the first and one page's opening view would take the
+// other page's flags.
+type builtinID struct{ surface, key string }
+
+var builtinByKey = func() map[builtinID]BuiltinList {
+	m := make(map[builtinID]BuiltinList, len(BuiltinLists))
 	for _, b := range BuiltinLists {
-		m[b.Key] = b
+		m[builtinID{surfaceOf(b), b.Key}] = b
 	}
 	return m
 }()
@@ -98,7 +133,7 @@ func NewListRepo(db *pgxpool.Pool) *ListRepo {
 func listColumns(orderExpr string) string {
 	return `
 	l.id, l.owner_user_id, l.name, l.description, l.icon, l.color,
-	l.kind, l.filter, l.filter_version, l.layout, ` + orderExpr + `,
+	l.kind, COALESCE(l.surface, 'books'), l.filter, l.filter_version, l.layout, ` + orderExpr + `,
 	l.visibility, l.shared_library_id, COALESCE(l.share_token, ''),
 	(SELECT count(*) FROM list_books lb WHERE lb.list_id = l.id),
 	COALESCE(l.builtin_key, ''), l.created_at, l.updated_at`
@@ -123,14 +158,14 @@ func scanList(row pgx.Row) (*models.List, error) {
 	var l models.List
 	err := row.Scan(
 		&l.ID, &l.OwnerUserID, &l.Name, &l.Description, &l.Icon, &l.Color,
-		&l.Kind, &l.Filter, &l.FilterVersion, &l.Layout, &l.DisplayOrder,
+		&l.Kind, &l.Surface, &l.Filter, &l.FilterVersion, &l.Layout, &l.DisplayOrder,
 		&l.Visibility, &l.SharedLibraryID, &l.ShareToken,
 		&l.BookCount, &l.BuiltinKey, &l.CreatedAt, &l.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
-	if b, ok := builtinByKey[l.BuiltinKey]; ok {
+	if b, ok := builtinByKey[builtinID{l.Surface, l.BuiltinKey}]; ok {
 		l.Hidden, l.Permanent = b.Hidden, b.Permanent
 	}
 	return &l, nil
@@ -200,12 +235,14 @@ func (r *ListRepo) FindByShareToken(ctx context.Context, token string) (*models.
 // CreateListInput describes a new list. Kind decides which half of the struct
 // matters: a manual list ignores Filter, a smart one requires it.
 type CreateListInput struct {
-	OwnerUserID     uuid.UUID
-	Name            string
-	Description     string
-	Icon            string
-	Color           string
-	Kind            string
+	OwnerUserID uuid.UUID
+	Name        string
+	Description string
+	Icon        string
+	Color       string
+	Kind        string
+	// Surface is which page the view lands on. Empty means books.
+	Surface         string
 	Filter          []byte
 	Layout          string
 	Visibility      string
@@ -225,6 +262,18 @@ func (r *ListRepo) Create(ctx context.Context, in CreateListInput) (*models.List
 	}
 	if in.Kind == "manual" {
 		in.Filter = nil
+	}
+	if in.Surface == "" {
+		in.Surface = SurfaceBooks
+	}
+	if in.Surface != SurfaceBooks && in.Surface != SurfaceSeries {
+		return nil, fmt.Errorf("unknown surface %q", in.Surface)
+	}
+	// A hand-picked set is a set of books: list_books is the only membership
+	// table there is. Refused here so the error names the reason rather than
+	// arriving as a constraint violation.
+	if in.Kind == "manual" && in.Surface != SurfaceBooks {
+		return nil, fmt.Errorf("only a smart view can stand for %s", in.Surface)
 	}
 	if in.Layout == "" {
 		in.Layout = "grid"
@@ -261,9 +310,9 @@ func (r *ListRepo) Create(ctx context.Context, in CreateListInput) (*models.List
 
 	q := `
 		INSERT INTO lists (owner_user_id, name, description, icon, color, kind,
-		                   filter, filter_version, layout, visibility,
+		                   surface, filter, filter_version, layout, visibility,
 		                   shared_library_id, share_token, display_order)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
 		        -- Last, not first. Order is something a reader arranges by hand
 		        -- now, so a new list appearing at the top would reshuffle a rail
 		        -- they had already put in the order they wanted.
@@ -274,7 +323,7 @@ func (r *ListRepo) Create(ctx context.Context, in CreateListInput) (*models.List
 	var id uuid.UUID
 	err := r.db.QueryRow(ctx, q,
 		in.OwnerUserID, in.Name, in.Description, in.Icon, in.Color, in.Kind,
-		in.Filter, filterVersion, in.Layout, in.Visibility,
+		in.Surface, in.Filter, filterVersion, in.Layout, in.Visibility,
 		in.SharedLibraryID, token).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("creating list: %w", err)
@@ -293,6 +342,18 @@ func (r *ListRepo) Create(ctx context.Context, in CreateListInput) (*models.List
 // is what makes "has this person been seeded" answerable, and the claim below
 // is what makes concurrent first reads insert one set rather than two.
 func (r *ListRepo) SeedBuiltIns(ctx context.Context, userID uuid.UUID) error {
+	// The permanent ones first, and every time. They are not examples: a page
+	// has to open on something, which is what a Default view is for, and a
+	// reader cannot delete one. Guarding them behind lists_seeded_at would mean
+	// any surface added after an account was created could never open on
+	// anything, because that account was seeded before its Default existed.
+	//
+	// Idempotent through the unique index on (owner, surface, builtin_key), so
+	// running it on every read costs one no-op insert per permanent definition.
+	if err := r.ensurePermanent(ctx, userID); err != nil {
+		return err
+	}
+
 	// Claim the seed before writing anything. Two requests arriving together on
 	// a first load would otherwise both find NULL and both insert; only one
 	// UPDATE can move the column off NULL, and the loser does nothing.
@@ -310,19 +371,53 @@ func (r *ListRepo) SeedBuiltIns(ctx context.Context, userID uuid.UUID) error {
 	}
 
 	for _, b := range BuiltinLists {
+		if b.Permanent {
+			continue // Already handled, and handled unconditionally.
+		}
 		filter, err := json.Marshal(map[string]string{"query": b.Query})
 		if err != nil {
 			return fmt.Errorf("encoding built-in filter %q: %w", b.Key, err)
 		}
 		_, err = r.db.Exec(ctx, `
-			INSERT INTO lists (owner_user_id, name, icon, kind, filter, filter_version,
+			INSERT INTO lists (owner_user_id, name, icon, kind, surface, filter, filter_version,
 			                   layout, display_order, visibility, builtin_key)
-			VALUES ($1, $2, $3, 'smart', $4, $5, $6, $7, 'private', $8)
+			VALUES ($1, $2, $3, 'smart', $4, $5, $6, $7, $8, 'private', $9)
 			ON CONFLICT DO NOTHING`,
-			userID, b.Name, b.Icon, filter, FilterVersionCurrent,
+			userID, b.Name, b.Icon, surfaceOf(b), filter, FilterVersionCurrent,
 			b.Layout, b.DisplayOrder, b.Key)
 		if err != nil {
 			return fmt.Errorf("seeding built-in list %q: %w", b.Key, err)
+		}
+	}
+	return nil
+}
+
+// ensurePermanent creates the built-ins a reader cannot delete, if they are
+// missing.
+//
+// Separate from seeding the examples because the two answer different
+// questions. An example is a suggestion, handed over once, and throwing it away
+// has to stick. A permanent built-in is what a page opens on, so its absence is
+// a broken page rather than a choice someone made.
+func (r *ListRepo) ensurePermanent(ctx context.Context, userID uuid.UUID) error {
+	for _, b := range BuiltinLists {
+		if !b.Permanent {
+			continue
+		}
+		filter, err := json.Marshal(map[string]string{"query": b.Query})
+		if err != nil {
+			return fmt.Errorf("encoding built-in filter %q: %w", b.Key, err)
+		}
+		_, err = r.db.Exec(ctx, `
+			INSERT INTO lists (owner_user_id, name, icon, kind, surface, filter, filter_version,
+			                   layout, display_order, visibility, builtin_key)
+			VALUES ($1, $2, $3, 'smart', $4, $5, $6, $7, $8, 'private', $9)
+			ON CONFLICT (owner_user_id, surface, builtin_key)
+			  WHERE builtin_key IS NOT NULL DO NOTHING`,
+			userID, b.Name, b.Icon, surfaceOf(b), filter, FilterVersionCurrent,
+			b.Layout, b.DisplayOrder, b.Key)
+		if err != nil {
+			return fmt.Errorf("ensuring built-in list %q: %w", b.Key, err)
 		}
 	}
 	return nil
@@ -472,15 +567,19 @@ var validLayouts = map[string]bool{"grid": true, "list": true, "compact": true}
 
 // Delete removes a list and, by cascade, its membership rows.
 func (r *ListRepo) Delete(ctx context.Context, id uuid.UUID) error {
-	var key *string
+	var (
+		key     *string
+		surface string
+	)
 	if err := r.db.QueryRow(ctx,
-		`SELECT builtin_key FROM lists WHERE id = $1`, id).Scan(&key); err != nil {
+		`SELECT builtin_key, COALESCE(surface, 'books') FROM lists WHERE id = $1`,
+		id).Scan(&key, &surface); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("finding list: %w", err)
 	}
-	if key != nil && builtinByKey[*key].Permanent {
+	if key != nil && builtinByKey[builtinID{surface, *key}].Permanent {
 		return ErrListPermanent
 	}
 	tag, err := r.db.Exec(ctx, `DELETE FROM lists WHERE id = $1`, id)

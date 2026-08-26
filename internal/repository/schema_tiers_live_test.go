@@ -3072,3 +3072,164 @@ func TestSeriesIndexFiltersAndSortsOnTheServer(t *testing.T) {
 		}
 	}
 }
+
+// A dimension is counted with its own selection excluded.
+//
+// Applying every filter uniformly collapses the dimension you just used: tick
+// Ongoing and the status list shows only Ongoing, so adding Complete becomes
+// impossible without clearing first. This is the rule that makes a rail worth
+// having, and it is the one that silently breaks.
+func TestSeriesFacetsCountAroundTheirOwnSelection(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewSeriesRepo(pool)
+
+	var libraryIDs []uuid.UUID
+	rows, err := pool.Query(ctx, `SELECT id FROM libraries`)
+	if err != nil {
+		t.Skipf("no libraries: %v", err)
+	}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatalf("scan: %v", err)
+		}
+		libraryIDs = append(libraryIDs, id)
+	}
+	rows.Close()
+
+	base, err := repo.Facets(ctx, libraryIDs, uuid.Nil, "", SeriesFilter{})
+	if err != nil {
+		t.Fatalf("counting facets: %v", err)
+	}
+	if len(base.Status) < 2 {
+		t.Skip("need two statuses to tell the exclusion apart")
+	}
+
+	// Pick a status and tick it. Its own dimension must still report every
+	// status, unchanged, because the rail is answering "what if I picked this
+	// one as well" rather than "what did I just pick".
+	picked := base.Status[0].Value
+	narrowed, err := repo.Facets(ctx, libraryIDs, uuid.Nil, "", SeriesFilter{Status: picked})
+	if err != nil {
+		t.Fatalf("counting facets with a status: %v", err)
+	}
+	if len(narrowed.Status) != len(base.Status) {
+		t.Errorf("ticking %q left %d statuses on offer, want all %d",
+			picked, len(narrowed.Status), len(base.Status))
+	}
+	for i := range base.Status {
+		if i < len(narrowed.Status) && narrowed.Status[i] != base.Status[i] {
+			t.Errorf("ticking %q changed its own dimension: %+v became %+v",
+				picked, base.Status[i], narrowed.Status[i])
+		}
+	}
+
+	// Every other dimension does narrow, or the selection did nothing at all.
+	baseArcs, narrowedArcs := 0, 0
+	for _, v := range base.Arcs {
+		baseArcs += v.Count
+	}
+	for _, v := range narrowed.Arcs {
+		narrowedArcs += v.Count
+	}
+	if narrowedArcs >= baseArcs {
+		t.Errorf("ticking %q left the arcs dimension counting %d of %d, so it did not narrow",
+			picked, narrowedArcs, baseArcs)
+	}
+
+	// And the counts have to agree with the rows. A rail that disagrees with
+	// its own list is worse than no rail: the number is what people trust.
+	for _, v := range base.Status {
+		listed, err := repo.ListAcrossFiltered(ctx, libraryIDs, uuid.Nil, "", 1,
+			SeriesFilter{Status: v.Value})
+		if err != nil {
+			t.Fatalf("listing status %q: %v", v.Value, err)
+		}
+		if len(listed) != v.Count {
+			t.Errorf("the rail says %d series are %q, the list returns %d",
+				v.Count, v.Value, len(listed))
+		}
+	}
+}
+
+// A view a page opens on reaches an account that was seeded before it existed.
+//
+// lists_seeded_at stops the example views coming back after someone throws them
+// away, which is right. Applied to the Default view it is wrong: a Default is
+// not a suggestion, it is what the page opens on and what holds that reader's
+// own filters and layout. Every account predates the Series surface, so guarding
+// it the same way would leave every one of them with a Series page opening on
+// nothing.
+func TestAPageAlwaysHasSomethingToOpenOn(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewListRepo(pool)
+
+	userID := scratchUser(t, pool, ctx)
+
+	// Seeded before the surface existed: the examples are handed over and the
+	// account is marked done.
+	if err := repo.SeedBuiltIns(ctx, userID); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	// Now delete every Series view, as an account created before the surface
+	// effectively has: none of them were ever inserted.
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM lists WHERE owner_user_id = $1 AND surface = $2`,
+		userID, SurfaceSeries); err != nil {
+		t.Fatalf("clearing the series views: %v", err)
+	}
+
+	// The next read has to put the permanent one back, and only that one.
+	if err := repo.SeedBuiltIns(ctx, userID); err != nil {
+		t.Fatalf("re-seeding: %v", err)
+	}
+
+	rows, err := pool.Query(ctx,
+		`SELECT builtin_key FROM lists WHERE owner_user_id = $1 AND surface = $2`,
+		userID, SurfaceSeries)
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	var keys []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			rows.Close()
+			t.Fatalf("scan: %v", err)
+		}
+		keys = append(keys, k)
+	}
+	rows.Close()
+
+	if len(keys) != 1 || keys[0] != "default" {
+		t.Fatalf("the series surface came back with %v, want just the default view", keys)
+	}
+
+	// And the examples stay deleted, which is the whole reason lists_seeded_at
+	// exists. Bringing them back would undo somebody's tidying every page load.
+	var books int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM lists
+		 WHERE owner_user_id = $1 AND surface = $2 AND builtin_key = 'reading'`,
+		userID, SurfaceBooks).Scan(&books); err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM lists WHERE owner_user_id = $1 AND builtin_key = 'reading'`,
+		userID); err != nil {
+		t.Fatalf("deleting an example: %v", err)
+	}
+	if err := repo.SeedBuiltIns(ctx, userID); err != nil {
+		t.Fatalf("seeding again: %v", err)
+	}
+	var back int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM lists
+		 WHERE owner_user_id = $1 AND builtin_key = 'reading'`, userID).Scan(&back); err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if back != 0 {
+		t.Errorf("a deleted example came back, so throwing one away does not stick")
+	}
+}

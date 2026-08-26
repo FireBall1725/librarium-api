@@ -81,11 +81,14 @@ func (h *ListHandler) ListsHoldingBook(w http.ResponseWriter, r *http.Request) {
 }
 
 type listBody struct {
-	Name            string          `json:"name"`
-	Description     string          `json:"description"`
-	Icon            string          `json:"icon"`
-	Color           string          `json:"color"`
-	Kind            string          `json:"kind"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+	Color       string `json:"color"`
+	Kind        string `json:"kind"`
+	// Surface is which page the view lands on: books or series. Absent means
+	// books, so every client that predates a second surface keeps working.
+	Surface         string          `json:"surface"`
 	Filter          json.RawMessage `json:"filter"`
 	Layout          string          `json:"layout"`
 	Visibility      string          `json:"visibility"`
@@ -100,7 +103,7 @@ type listBody struct {
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
-// @Param       body  body  object{name=string,description=string,icon=string,color=string,kind=string,filter=object,layout=string,visibility=string,shared_library_id=string}  true  "The list"
+// @Param       body  body  object{name=string,description=string,icon=string,color=string,kind=string,surface=string,filter=object,layout=string,visibility=string,shared_library_id=string}  true  "The list"
 // @Success     201  {object}  object{id=string,name=string,kind=string,visibility=string,share_token=string}
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -119,6 +122,7 @@ func (h *ListHandler) CreateList(w http.ResponseWriter, r *http.Request) {
 		Icon:        body.Icon,
 		Color:       body.Color,
 		Kind:        body.Kind,
+		Surface:     body.Surface,
 		Filter:      body.Filter,
 		Layout:      body.Layout,
 		Visibility:  body.Visibility,

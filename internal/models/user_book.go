@@ -98,6 +98,13 @@ type List struct {
 	// Kind is manual or smart. A manual list enumerates its books; a smart one
 	// computes them from Filter.
 	Kind string `json:"kind"`
+	// Surface is which page the view lands on: books or series.
+	//
+	// The stored filter has always been a URL query string, so nothing about a
+	// view was ever specific to books except that the rail had no way to say
+	// where a row goes and assumed. A manual list is always books, because
+	// list_books is the only membership table there is.
+	Surface string `json:"surface"`
 	// Filter is the stored query for a smart list. FilterVersion is not
 	// decoration: a stored filter is a query language with no schema, and
 	// unversioned it gets silently reinterpreted when the vocabulary changes.

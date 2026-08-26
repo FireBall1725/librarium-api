@@ -88,29 +88,52 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 		respond.ServerError(w, r, err)
 		return
 	}
-	// The per-library Series page redirects here carrying its library, the same
-	// way Contributors does. Without this the reader asks for one library's
-	// series and silently gets every library's.
-	libraryIDs = narrowToReadable(libraryIDsFromQuery(r), libraryIDs)
 	if len(libraryIDs) == 0 {
-		respond.JSON(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0})
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"items": []any{}, "total": 0, "facets": nil,
+		})
 		return
 	}
 
 	q := r.URL.Query()
+	search := strings.TrimSpace(q.Get("q"))
+	// Library is a dimension of the rail, not the scope. The per-library Series
+	// page redirects here carrying its library, so the parameter has to narrow
+	// the rows; but the counts are computed over everything readable, or the
+	// rail could only ever offer the library already picked and there would be
+	// no way back out of it.
+	wanted := libraryIDsFromQuery(r)
 	filter := repository.SeriesFilter{
-		Status:  strings.TrimSpace(q.Get("status")),
-		Arcs:    strings.TrimSpace(q.Get("arcs")),
-		Reading: strings.TrimSpace(q.Get("reading")),
-		Tag:     strings.TrimSpace(q.Get("tag")),
-		Sort:    strings.TrimSpace(q.Get("sort")),
-		Desc:    q.Get("dir") == "desc",
+		Libraries: narrowToReadable(wanted, libraryIDs),
+		Status:    strings.TrimSpace(q.Get("status")),
+		Arcs:      strings.TrimSpace(q.Get("arcs")),
+		Reading:   strings.TrimSpace(q.Get("reading")),
+		Tag:       strings.TrimSpace(q.Get("tag")),
+		Sort:      strings.TrimSpace(q.Get("sort")),
+		Desc:      q.Get("dir") == "desc",
+	}
+	// Asking only for libraries the caller cannot read is not the same as
+	// asking for none: an empty narrowing would quietly widen back to
+	// everything and show more than was requested.
+	if len(wanted) > 0 && len(filter.Libraries) == 0 {
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"items": []any{}, "total": 0, "facets": nil,
+		})
+		return
 	}
 
 	items, err := h.series.ListAcrossFiltered(
-		r.Context(), libraryIDs, callerID(r),
-		strings.TrimSpace(q.Get("q")), seriesIndexVolumes, filter,
+		r.Context(), libraryIDs, callerID(r), search, seriesIndexVolumes, filter,
 	)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	// Counts come back with the results in one request. That is what makes the
+	// rail worth having: you can see a filter would return nothing before
+	// spending a click on it.
+	facets, err := h.series.Facets(r.Context(), libraryIDs, callerID(r), search, filter)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -124,7 +147,9 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 	for _, s := range items {
 		bodies = append(bodies, seriesBody(s))
 	}
-	respond.JSON(w, http.StatusOK, map[string]any{"items": bodies, "total": len(bodies)})
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"items": bodies, "total": len(bodies), "facets": facets,
+	})
 }
 
 // Counts godoc

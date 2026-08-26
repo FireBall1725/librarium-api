@@ -147,6 +147,11 @@ func (r *SeriesRepo) ListAcross(ctx context.Context, libraryIDs []uuid.UUID, cal
 // list is the whole instance, so the narrowing has to happen where the rows
 // are.
 type SeriesFilter struct {
+	// Libraries narrows within the caller's readable set. A dimension of the
+	// rail rather than a folder, and multi-select like the one on Books:
+	// ticking two answers "either of these", which is what a checkbox list
+	// means everywhere else in the product.
+	Libraries []uuid.UUID
 	// Status is a publication status: ongoing, completed, hiatus, cancelled.
 	Status string
 	// Arcs is "with" or "without". Empty means either.
@@ -188,6 +193,10 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 	if tagFilter != "" {
 		args = append(args, tagFilter)
 		where += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM series_tags st JOIN tags t ON t.id = st.tag_id WHERE st.series_id = s.id AND lower(t.name) = lower($%d))`, len(args))
+	}
+	if len(f.Libraries) > 0 {
+		args = append(args, f.Libraries)
+		where += fmt.Sprintf(` AND s.library_id = ANY($%d)`, len(args))
 	}
 	if f.Status != "" {
 		args = append(args, f.Status)
