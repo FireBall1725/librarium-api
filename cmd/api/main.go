@@ -473,6 +473,52 @@ func main() {
 		},
 	})
 
+	// Series volume sync, which used to be a bare goroutine with a ticker in
+	// the router. It worked, and it was invisible: no history, no schedule
+	// anyone could change, no way to run it by hand, and no record of what it
+	// found. That is how 448 volumes accumulated across 61 series with nobody
+	// noticing that not one of them could surface anywhere.
+	//
+	// Off by default, because it calls a provider. Everything else that spends
+	// someone else's rate limit waits for an admin to opt in.
+	seriesRepoForSync := repository.NewSeriesRepo(pool)
+	releaseSyncSvc := service.NewReleaseSyncService(
+		seriesRepoForSync, repository.NewSeriesVolumesRepo(pool), providerSvc)
+	jobRegistry.Register(&jobs.Definition{
+		Kind:        jobs.KindSeriesSync,
+		DisplayName: "Series volumes",
+		Description: "Refreshes volume data from the linked provider and turns volumes nobody holds into missing-volume rows.",
+		Schedulable: true,
+		DefaultCron: "0 5 * * *",
+		Enqueue: func(ctx context.Context, trig jobs.TriggerCtx, _ json.RawMessage) error {
+			// Inline rather than through River, like the history sweep: it is
+			// one pass over the series table, and the work is bounded by how
+			// many series have a provider linked.
+			res := releaseSyncSvc.SyncAll(ctx)
+			if progressJSON, perr := json.Marshal(map[string]any{
+				"processed": res.Series,
+				"total":     res.Series,
+				"promoted":  res.Promoted,
+				"matched":   res.Matched,
+				"failed":    res.Failed,
+			}); perr == nil {
+				_ = jobRepo.UpdateProgress(ctx, trig.JobID, progressJSON)
+			}
+			_ = jobRepo.AppendEvent(ctx, trig.JobID, "series_sync_summary", map[string]any{
+				"series":       res.Series,
+				"promoted":     res.Promoted,
+				"matched":      res.Matched,
+				"failed":       res.Failed,
+				"no_seed_book": res.NoSeedBook,
+			})
+			slog.Info("series volumes synced",
+				"series", res.Series, "promoted", res.Promoted,
+				"matched", res.Matched, "failed", res.Failed,
+				"no_seed_book", res.NoSeedBook)
+			return nil
+		},
+	})
+
 	// Kick the scheduler off after registry is populated.
 	jobRepoForSched := repository.NewJobRepo(pool)
 	// Seed default schedule rows for any schedulable kind that doesn't

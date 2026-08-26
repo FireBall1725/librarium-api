@@ -90,7 +90,21 @@ func (s *SeriesService) UpdateSeries(ctx context.Context, id uuid.UUID, req Seri
 	return ser, nil
 }
 
+// DeleteSeries removes the series and the placeholder books it invented.
+//
+// Deleting the series cascades series_volumes, which would leave the promoted
+// books behind as titles in nobody's collection with no series to explain them.
+// The demotion is guarded, so a placeholder somebody has since acquired, rated,
+// reviewed or filed on a list stays: at that point it is a book, not a
+// placeholder, and taking it would take their work with it.
 func (s *SeriesService) DeleteSeries(ctx context.Context, id uuid.UUID) error {
+	volumeIDs, err := s.volumes.IDsForSeries(ctx, id)
+	if err != nil {
+		return err
+	}
+	if _, err := s.series.DemoteUnheldVolumes(ctx, volumeIDs); err != nil {
+		return err
+	}
 	return s.series.Delete(ctx, id)
 }
 

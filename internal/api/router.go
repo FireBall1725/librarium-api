@@ -12,7 +12,6 @@ import (
 	"github.com/fireball1725/librarium-api/internal/api/handlers"
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/auth"
-	"github.com/fireball1725/librarium-api/internal/background"
 	"github.com/fireball1725/librarium-api/internal/config"
 	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/repository"
@@ -145,9 +144,6 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	dashboardHandler := handlers.NewDashboardHandler(bookRepo)
 	meLookupHandler := handlers.NewMeLookupHandler(libSvc, seriesRepo, tagRepo)
 	meBrowseHandler := handlers.NewMeBrowseHandler(libraryRepo, seriesRepo, contributorRepo, shelfRepo, loanRepo)
-
-	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
-	go releaseChecker.Start(ctx)
 
 	// The client version gate sits inside auth, not in the global chain, for two
 	// reasons: it needs the claims to tell a personal access token apart from an

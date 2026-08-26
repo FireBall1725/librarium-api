@@ -63,6 +63,28 @@ func (r *SeriesVolumesRepo) List(ctx context.Context, seriesID uuid.UUID) ([]*mo
 	return out, rows.Err()
 }
 
+// IDsForSeries returns every volume id of a series.
+//
+// Used before deleting a series, so the books promotion invented can be found
+// while the rows that name them still exist.
+func (r *SeriesVolumesRepo) IDsForSeries(ctx context.Context, seriesID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.db.Query(ctx, `SELECT id FROM series_volumes WHERE series_id = $1`, seriesID)
+	if err != nil {
+		return nil, fmt.Errorf("listing volume ids: %w", err)
+	}
+	defer rows.Close()
+
+	var out []uuid.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, uuid.UUID(id.Bytes))
+	}
+	return out, rows.Err()
+}
+
 // Sync upserts the provider-fetched volumes. Does NOT delete volumes already in the table
 // that are not in the provider list (so manually-added data is preserved).
 //

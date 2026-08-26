@@ -2821,3 +2821,165 @@ func TestASeriesCountsVolumesNotBooks(t *testing.T) {
 		t.Errorf("the series counts %d volumes, want 3 from 5 books", got.BookCount)
 	}
 }
+
+// A volume a provider knows about becomes a book the collection can talk about.
+//
+// 448 volumes were on record across 61 series and not one could surface, because
+// nothing turned a volume into a book. The gap arm of the ownership facet has
+// always looked for exactly the shape promotion writes.
+func TestPromotingVolumesFillsTheGaps(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	series := NewSeriesRepo(pool)
+
+	var libraryID, mediaTypeID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM media_types LIMIT 1`).Scan(&mediaTypeID); err != nil {
+		t.Skipf("no media type: %v", err)
+	}
+
+	seriesID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO series (id, library_id, name, total_count)
+		 VALUES ($1, $2, 'ZZ promotion series', 3)`, seriesID, libraryID); err != nil {
+		t.Fatalf("creating the series: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM series WHERE id = $1`, seriesID) })
+
+	// Volume one is held. Two and three are known to the provider and nobody
+	// has them, which is the state the whole facet was written for.
+	held := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO books (id, title, media_type_id) VALUES ($1, 'ZZ promotion 1', $2)`,
+		held, mediaTypeID); err != nil {
+		t.Fatalf("creating the held book: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO book_series (book_id, series_id, position) VALUES ($1, $2, 1)`,
+		held, seriesID); err != nil {
+		t.Fatalf("positioning the held book: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO copies (id, library_id, book_id) VALUES ($1, $2, $3)`,
+		uuid.New(), libraryID, held); err != nil {
+		t.Fatalf("holding it: %v", err)
+	}
+	author := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO contributors (id, name) VALUES ($1, 'ZZ Promotion Author')`,
+		author); err != nil {
+		t.Fatalf("creating the author: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO book_contributors (book_id, contributor_id, role, display_order)
+		 VALUES ($1, $2, 'author', 0)`, held, author); err != nil {
+		t.Fatalf("attributing the held book: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM copies WHERE book_id = $1`, held)
+		_, _ = pool.Exec(ctx, `DELETE FROM books WHERE id = $1`, held)
+		_, _ = pool.Exec(ctx, `DELETE FROM contributors WHERE id = $1`, author)
+	})
+
+	// Volume three arrives with no title, which is how 189 of the 448 volumes
+	// in a real collection arrive: the providers answering series_volumes sync
+	// positions and dates and often nothing else.
+	var volumeIDs []uuid.UUID
+	for i, title := range []string{"ZZ promotion 1", "ZZ promotion 2", ""} {
+		id := uuid.New()
+		volumeIDs = append(volumeIDs, id)
+		var titleArg *string
+		if title != "" {
+			titleArg = &title
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO series_volumes (id, series_id, position, title) VALUES ($1, $2, $3, $4)`,
+			id, seriesID, float64(i+1), titleArg); err != nil {
+			t.Fatalf("recording volume %d: %v", i+1, err)
+		}
+	}
+	// Books created by promotion; named here so cleanup catches them whatever
+	// the test does after.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `
+			DELETE FROM books WHERE id IN (
+				SELECT book_id FROM series_volumes WHERE series_id = $1 AND book_id IS NOT NULL
+			)`, seriesID)
+	})
+
+	got, err := series.PromoteVolumes(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("promoting: %v", err)
+	}
+	// Volume one is the book already there; two and three are new.
+	if got.Matched != 1 || got.Promoted != 2 {
+		t.Errorf("promotion reported %+v, want 1 matched and 2 promoted", got)
+	}
+
+	// The titleless volume is named from the run and its number rather than
+	// left unpromoted, or two fifths of every series stays invisible.
+	var derived string
+	if err := pool.QueryRow(ctx, `
+		SELECT b.title FROM series_volumes sv JOIN books b ON b.id = sv.book_id
+		 WHERE sv.series_id = $1 AND sv.position = 3`, seriesID).Scan(&derived); err != nil {
+		t.Fatalf("reading the promoted volume three: %v", err)
+	}
+	if derived != "ZZ promotion series #3" {
+		t.Errorf("volume three is titled %q, want %q", derived, "ZZ promotion series #3")
+	}
+
+	// And it is attributed, because every book already in the run agrees on who
+	// wrote it. A card with no contributor line reads as a broken row.
+	var attributed int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM series_volumes sv
+		  JOIN book_contributors bc ON bc.book_id = sv.book_id
+		 WHERE sv.series_id = $1 AND bc.contributor_id = $2
+		   AND sv.book_id <> $3`, seriesID, author, held).Scan(&attributed); err != nil {
+		t.Fatalf("counting attributions: %v", err)
+	}
+	if attributed != 2 {
+		t.Errorf("%d promoted books carry the run's author, want 2", attributed)
+	}
+
+	// The point of all of it: the rail can now say what is missing.
+	var gaps int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM (`+bookScopeCTE(1, 0)+`) o
+		  JOIN book_series bs ON bs.book_id = o.book_id
+		 WHERE bs.series_id = $2 AND o.ownership = $3`,
+		[]uuid.UUID{libraryID}, seriesID, OwnershipGap).Scan(&gaps); err != nil {
+		t.Fatalf("counting gaps: %v", err)
+	}
+	if gaps != 2 {
+		t.Errorf("the series reports %d missing volumes, want 2", gaps)
+	}
+
+	// Running it again must not create the books a second time.
+	again, err := series.PromoteVolumes(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("promoting again: %v", err)
+	}
+	if again.Promoted != 0 || again.Matched != 0 {
+		t.Errorf("a second run reported %+v, want nothing to do", again)
+	}
+
+	// A promoted book nobody has touched goes away with its volume. The held
+	// one stays, because it was never a placeholder.
+	removed, err := series.DemoteUnheldVolumes(ctx, volumeIDs)
+	if err != nil {
+		t.Fatalf("demoting: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("demotion removed %d books, want 2", removed)
+	}
+	var stillThere bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM books WHERE id = $1)`, held).Scan(&stillThere); err != nil {
+		t.Fatalf("checking the held book: %v", err)
+	}
+	if !stillThere {
+		t.Error("demotion deleted a book somebody actually owns")
+	}
+}

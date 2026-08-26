@@ -30,6 +30,7 @@ const (
 	KindAISuggestions Kind = "ai_suggestions"
 	KindCoverBackfill Kind = "cover_backfill"
 	KindHistoryPrune  Kind = "history_prune"
+	KindSeriesSync    Kind = "series_sync"
 )
 
 // TriggerCtx is everything the Enqueue hook of a Definition needs
