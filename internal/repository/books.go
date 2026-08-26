@@ -836,6 +836,27 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 		argIdx++
 	}
 
+	// Where the physical object is, counted up the tree so narrowing to a room
+	// does not hide what is on the shelves inside it. True if ANY copy is
+	// there: owning two copies means the book is wherever either one sits.
+	if len(sel.Locations) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            WITH RECURSIVE sub(root, id, depth) AS (
+                SELECT id, id, 0 FROM copy_locations
+              UNION ALL
+                SELECT t.root, c.id, t.depth + 1
+                  FROM copy_locations c JOIN sub t ON c.parent_id = t.id
+                 WHERE t.depth < 16
+            )
+            SELECT 1 FROM copies cp4
+              JOIN sub ON sub.id = cp4.location_id
+             WHERE cp4.book_id = b.id AND cp4.deleted_at IS NULL
+               AND sub.root = ANY($%d)
+        )`, argIdx))
+		args = append(args, sel.Locations)
+		argIdx++
+	}
+
 	// Reading state is one row per work, so these are direct lookups. They were
 	// correlated subqueries collapsing per-edition rows, because joining
 	// editions would multiply a work with three printings into three rows and

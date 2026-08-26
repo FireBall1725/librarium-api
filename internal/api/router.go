@@ -258,6 +258,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("DELETE /api/v1/copies/{copy_id}", requireAuth(http.HandlerFunc(copyHandler.DeleteCopy)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/locations", requireLibraryPerm("books:read", http.HandlerFunc(copyHandler.ListLocations)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/locations", requireLibraryPerm("books:update", http.HandlerFunc(copyHandler.CreateLocation)))
+	mux.Handle("PATCH /api/v1/locations/{location_id}", requireAuth(http.HandlerFunc(copyHandler.RenameLocation)))
 	mux.Handle("DELETE /api/v1/locations/{location_id}", requireAuth(http.HandlerFunc(copyHandler.DeleteLocation)))
 
 	// Identifiers and containment: world tier, so no library in the path.

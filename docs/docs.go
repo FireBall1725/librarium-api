@@ -12214,6 +12214,102 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Moving one under its own descendant is refused: locations are a tree, and a loop in that tree hangs anything that walks it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "copies"
+                ],
+                "summary": "Rename a place, or move it inside another",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Location UUID",
+                        "name": "location_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The new name, and optionally where to move it",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "parent_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string"
+                                },
+                                "name": {
+                                    "type": "string"
+                                },
+                                "parent_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         "/lookup/books": {
@@ -12812,7 +12908,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Ratings 0-5, comma separated",
+                        "description": "Ratings 1-10, comma separated",
                         "name": "rating",
                         "in": "query"
                     },
@@ -12844,6 +12940,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Series UUIDs, comma separated",
                         "name": "series",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Location UUIDs, comma separated; matches anything inside them too",
+                        "name": "location",
                         "in": "query"
                     }
                 ],
@@ -16849,6 +16951,13 @@ const docTemplate = `{
                     }
                 },
                 "library": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
+                "location": {
+                    "description": "Location is where the physical copy sits, counted up the tree: a book\nfiled on a shelf counts under the bookcase holding it and the room\nholding that, so narrowing to a room does not hide what is inside it.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"

@@ -982,6 +982,14 @@ definitions:
         items:
           $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
         type: array
+      location:
+        description: |-
+          Location is where the physical copy sits, counted up the tree: a book
+          filed on a shelf counts under the bookcase holding it and the room
+          holding that, so narrowing to a room does not hide what is inside it.
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
+        type: array
       media_type:
         items:
           $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue'
@@ -9375,6 +9383,68 @@ paths:
       summary: Remove a place
       tags:
       - copies
+    patch:
+      consumes:
+      - application/json
+      description: 'Moving one under its own descendant is refused: locations are
+        a tree, and a loop in that tree hangs anything that walks it.'
+      parameters:
+      - description: Location UUID
+        in: path
+        name: location_id
+        required: true
+        type: string
+      - description: The new name, and optionally where to move it
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            name:
+              type: string
+            parent_id:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              parent_id:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Rename a place, or move it inside another
+      tags:
+      - copies
   /lookup/books:
     get:
       description: Queries all enabled providers for books matching the freetext query.
@@ -9759,7 +9829,7 @@ paths:
         in: query
         name: tag
         type: string
-      - description: Ratings 0-5, comma separated
+      - description: Ratings 1-10, comma separated
         in: query
         name: rating
         type: string
@@ -9783,6 +9853,11 @@ paths:
       - description: Series UUIDs, comma separated
         in: query
         name: series
+        type: string
+      - description: Location UUIDs, comma separated; matches anything inside them
+          too
+        in: query
+        name: location
         type: string
       produces:
       - application/json

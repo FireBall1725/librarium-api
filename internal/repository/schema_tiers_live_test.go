@@ -2134,3 +2134,112 @@ func TestAListMovesBetweenPrivateAndShared(t *testing.T) {
 		t.Errorf("the token changed on a second save: %q then %q", first.ShareToken, again.ShareToken)
 	}
 }
+
+// A place contains what is inside it. Filing a book on a shelf has to make it
+// findable under the bookcase holding that shelf and the room holding that,
+// or narrowing to a room hides everything actually on its shelves.
+func TestLocationFacetCountsUpTheTree(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	books := NewBookRepo(pool)
+	locs := NewCopyLocationRepo(pool)
+
+	var libraryID uuid.UUID
+	var copyID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT c.library_id, c.id, c.book_id FROM copies c
+		 WHERE c.deleted_at IS NULL LIMIT 1`).Scan(&libraryID, &copyID, &bookID); err != nil {
+		t.Skipf("no copy to file: %v", err)
+	}
+
+	room, err := locs.Create(ctx, libraryID, "ZZ test room", nil)
+	if err != nil {
+		t.Fatalf("creating the room: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM copy_locations WHERE id = $1`, room.ID) })
+	shelf, err := locs.Create(ctx, libraryID, "ZZ test shelf", &room.ID)
+	if err != nil {
+		t.Fatalf("creating the shelf: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM copy_locations WHERE id = $1`, shelf.ID) })
+
+	var was *uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT location_id FROM copies WHERE id = $1`, copyID).Scan(&was); err != nil {
+		t.Fatalf("reading where the copy was: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE copies SET location_id = $2 WHERE id = $1`, copyID, shelf.ID); err != nil {
+		t.Fatalf("filing the copy: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `UPDATE copies SET location_id = $2 WHERE id = $1`, copyID, was)
+	})
+
+	facets, err := books.Facets(ctx, []uuid.UUID{libraryID}, FacetSelection{}, "", nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	seen := map[string]int{}
+	for _, v := range facets.Location {
+		seen[v.Label] = v.Count
+	}
+	if seen["ZZ test shelf"] < 1 {
+		t.Errorf("the shelf the copy is on counted %d, want at least 1", seen["ZZ test shelf"])
+	}
+	if seen["ZZ test room"] < 1 {
+		t.Errorf("the room containing that shelf counted %d; a place has to contain what is inside it",
+			seen["ZZ test room"])
+	}
+
+	// And the list agrees with the count beside it, asked about the ancestor.
+	_, total, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage: 50, Selection: FacetSelection{Locations: []uuid.UUID{room.ID}},
+	})
+	if err != nil {
+		t.Fatalf("listing by the room: %v", err)
+	}
+	if total != seen["ZZ test room"] {
+		t.Errorf("the room counted %d but the list returned %d", seen["ZZ test room"], total)
+	}
+}
+
+// Ratings run 1 to 10, which is what the column's CHECK allows and what the
+// data uses. The handler parsed 0 to 5, so every rating above 5 was dropped on
+// the way in and the filter silently widened to the whole collection.
+func TestRatingFilterReachesTheWholeScale(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	books := NewBookRepo(pool)
+
+	var libraryID uuid.UUID
+	var rating int32
+	if err := pool.QueryRow(ctx, `
+		SELECT c.library_id, ub.rating
+		  FROM user_books ub
+		  JOIN copies c ON c.book_id = ub.book_id AND c.deleted_at IS NULL
+		 WHERE ub.rating > 5
+		 LIMIT 1`).Scan(&libraryID, &rating); err != nil {
+		t.Skipf("no rating above 5 to filter on: %v", err)
+	}
+
+	var callerID uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`SELECT user_id FROM user_books WHERE rating = $1 LIMIT 1`, rating).Scan(&callerID); err != nil {
+		t.Fatalf("finding whose rating that is: %v", err)
+	}
+
+	_, filtered, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage: 1, CallerID: callerID,
+		Selection: FacetSelection{Ratings: []int32{rating}},
+	})
+	if err != nil {
+		t.Fatalf("filtering by rating %d: %v", rating, err)
+	}
+	_, all, err := books.List(ctx, libraryID, ListBooksOpts{PerPage: 1, CallerID: callerID})
+	if err != nil {
+		t.Fatalf("listing everything: %v", err)
+	}
+	if filtered == 0 {
+		t.Errorf("rating %d matched nothing", rating)
+	}
+	if filtered == all {
+		t.Errorf("rating %d returned all %d books, so the filter did nothing", rating, all)
+	}
+}

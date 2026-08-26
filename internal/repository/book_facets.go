@@ -30,7 +30,11 @@ type BookFacets struct {
 	Genre      []FacetValue `json:"genre"`
 	Tag        []FacetValue `json:"tag"`
 	Shelf      []FacetValue `json:"shelf"`
-	Rating     []FacetValue `json:"rating"`
+	// Location is where the physical copy sits, counted up the tree: a book
+	// filed on a shelf counts under the bookcase holding it and the room
+	// holding that, so narrowing to a room does not hide what is inside it.
+	Location []FacetValue `json:"location"`
+	Rating   []FacetValue `json:"rating"`
 	// Favourite is the per-book starred flag, counted as a dimension so
 	// "Favourites" can be a saved view with a number beside it. A rule, not a
 	// hand-picked set, which is what separates it from a shelf.
@@ -55,6 +59,8 @@ type FacetSelection struct {
 	// Shelves are hand-picked sets rather than a property of a book, but they
 	// narrow the list exactly like a tag does, so they are a facet dimension.
 	Shelves []uuid.UUID
+	// Locations narrow to a place and everything inside it.
+	Locations []uuid.UUID
 	// Contributors narrows to books someone worked on, by id.
 	//
 	// Not counted as a facet dimension: a collection has hundreds of them and a
@@ -77,7 +83,8 @@ func emptyFacets() *BookFacets {
 		Ownership: []FacetValue{},
 		Library:   []FacetValue{}, ReadStatus: []FacetValue{}, MediaType: []FacetValue{},
 		Genre: []FacetValue{}, Tag: []FacetValue{}, Shelf: []FacetValue{},
-		Rating: []FacetValue{}, Favourite: []FacetValue{},
+		Location: []FacetValue{},
+		Rating:   []FacetValue{}, Favourite: []FacetValue{},
 	}
 }
 
@@ -195,6 +202,7 @@ func (r *BookRepo) Facets(
 	mLib, mStatus, mType := "TRUE", "TRUE", "TRUE"
 	mGenre, mTag, mRating := "TRUE", "TRUE", "TRUE"
 	mShelf := "TRUE"
+	mLocation := "TRUE"
 	mFav := "TRUE"
 
 	if len(sel.Ownership) > 0 {
@@ -242,6 +250,15 @@ func (r *BookRepo) Facets(
                         OR (l5.visibility = 'library' AND l5.shared_library_id = ANY($1))))`,
 			arg(sel.Shelves), arg(callerID))
 	}
+	if len(sel.Locations) > 0 {
+		// Anywhere at or under one of the chosen places, and true if ANY copy
+		// is: owning two copies means the book is wherever either one sits.
+		mLocation = fmt.Sprintf(`EXISTS (
+            SELECT 1 FROM copies cp6
+              JOIN loc_subtree t6 ON t6.id = cp6.location_id
+             WHERE cp6.book_id = s.id AND cp6.deleted_at IS NULL
+               AND t6.root = ANY(%s))`, arg(sel.Locations))
+	}
 	if len(sel.Ratings) > 0 {
 		mRating = fmt.Sprintf(`x.rating = ANY(%s)`, arg(sel.Ratings))
 	}
@@ -258,9 +275,10 @@ func (r *BookRepo) Facets(
 			"own": "f.m_own",
 			"lib": "f.m_lib", "status": "f.m_status", "type": "f.m_type",
 			"genre": "f.m_genre", "tag": "f.m_tag", "shelf": "f.m_shelf",
-			"rating": "f.m_rating", "fav": "f.m_fav",
+			"location": "f.m_location",
+			"rating":   "f.m_rating", "fav": "f.m_fav",
 		}
-		parts := make([]string, 0, 8)
+		parts := make([]string, 0, 9)
 		for k, v := range all {
 			if k != skip {
 				parts = append(parts, v)
@@ -283,7 +301,19 @@ func (r *BookRepo) Facets(
 		arg(callerID))
 
 	q := fmt.Sprintf(`
-WITH scope AS (
+WITH RECURSIVE loc_subtree(root, id, depth) AS (
+    -- Every place, plus everything inside it, so one join answers "is this
+    -- copy anywhere under here".
+    SELECT id, id, 0 FROM copy_locations
+  UNION ALL
+    SELECT t.root, c.id, t.depth + 1
+      FROM copy_locations c
+      JOIN loc_subtree t ON c.parent_id = t.id
+     -- Bounded. Creating a cycle is refused, but a bound is what stops a loop
+     -- already in the data from hanging every read of this query.
+     WHERE t.depth < 16
+),
+scope AS (
     SELECT DISTINCT b.id, b.media_type_id, lb.ownership
     FROM books b
     JOIN (%s) lb ON lb.book_id = b.id
@@ -295,8 +325,8 @@ f AS (
            COALESCE(x.read_status, 'unread') AS read_status,
            x.rating, COALESCE(x.is_favorite, false) AS is_favorite,
            %s AS m_own, %s AS m_lib, %s AS m_status, %s AS m_type,
-           %s AS m_genre, %s AS m_tag, %s AS m_shelf, %s AS m_rating,
-           %s AS m_fav
+           %s AS m_genre, %s AS m_tag, %s AS m_shelf, %s AS m_location,
+           %s AS m_rating, %s AS m_fav
     FROM scope s LEFT JOIN inter x ON x.book_id = s.id
 )
 SELECT 'ownership' AS dim, f.ownership AS value, f.ownership AS label, COUNT(*) AS n
@@ -330,6 +360,14 @@ FROM f JOIN list_books lb4 ON lb4.book_id = f.id
 WHERE `+listVisible+` AND %s
 GROUP BY l4.id, l4.name
 UNION ALL
+SELECT 'location', t.root::text, loc.name, COUNT(DISTINCT f.id)
+FROM f JOIN copies cp ON cp.book_id = f.id AND cp.deleted_at IS NULL
+                     AND cp.location_id IS NOT NULL
+       JOIN loc_subtree t ON t.id = cp.location_id
+       JOIN copy_locations loc ON loc.id = t.root
+WHERE loc.library_id = ANY($1) AND %s
+GROUP BY t.root, loc.name
+UNION ALL
 SELECT 'rating', f.rating::text, f.rating::text, COUNT(*)
 FROM f WHERE f.rating IS NOT NULL AND %s GROUP BY f.rating
 UNION ALL
@@ -339,11 +377,11 @@ ORDER BY 1, 4 DESC, 3`,
 		// The scope CTE comes first now: it holds the caller's own placeholder,
 		// so it has to be built before the text filter's is counted.
 		scopeSQL, textWhere, interCTE,
-		mOwn, mLib, mStatus, mType, mGenre, mTag, mShelf, mRating, mFav,
+		mOwn, mLib, mStatus, mType, mGenre, mTag, mShelf, mLocation, mRating, mFav,
 		others("own"),
 		others("lib"), others("status"), others("type"),
-		others("genre"), others("tag"), others("shelf"), others("rating"),
-		others("fav"))
+		others("genre"), others("tag"), others("shelf"), others("location"),
+		others("rating"), others("fav"))
 
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -373,6 +411,8 @@ ORDER BY 1, 4 DESC, 3`,
 			out.Tag = append(out.Tag, fv)
 		case "shelf":
 			out.Shelf = append(out.Shelf, fv)
+		case "location":
+			out.Location = append(out.Location, fv)
 		case "rating":
 			out.Rating = append(out.Rating, fv)
 		case "favourite":
