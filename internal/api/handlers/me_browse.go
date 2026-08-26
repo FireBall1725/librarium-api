@@ -75,6 +75,8 @@ func callerID(r *http.Request) uuid.UUID {
 //	@Security    BearerAuth
 //	@Param       q        query  string  false  "Name substring"
 //	@Param       lib      query  string  false  "Comma-separated library ids to narrow to"
+//	@Param       type     query  string  false  "Comma-separated media type names"
+//	@Param       genre    query  string  false  "Comma-separated genre names"
 //	@Param       status   query  string  false  "ongoing | completed | hiatus | cancelled"
 //	@Param       arcs     query  string  false  "with | without"
 //	@Param       reading  query  string  false  "unread | reading | read_all"
@@ -106,13 +108,15 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 	// no way back out of it.
 	wanted := libraryIDsFromQuery(r)
 	filter := repository.SeriesFilter{
-		Libraries: narrowToReadable(wanted, libraryIDs),
-		Status:    strings.TrimSpace(q.Get("status")),
-		Arcs:      strings.TrimSpace(q.Get("arcs")),
-		Reading:   strings.TrimSpace(q.Get("reading")),
-		Tag:       strings.TrimSpace(q.Get("tag")),
-		Sort:      strings.TrimSpace(q.Get("sort")),
-		Desc:      q.Get("dir") == "desc",
+		Libraries:  narrowToReadable(wanted, libraryIDs),
+		MediaTypes: csv(q.Get("type")),
+		Genres:     csv(q.Get("genre")),
+		Status:     strings.TrimSpace(q.Get("status")),
+		Arcs:       strings.TrimSpace(q.Get("arcs")),
+		Reading:    strings.TrimSpace(q.Get("reading")),
+		Tag:        strings.TrimSpace(q.Get("tag")),
+		Sort:       strings.TrimSpace(q.Get("sort")),
+		Desc:       q.Get("dir") == "desc",
 	}
 	// Asking only for libraries the caller cannot read is not the same as
 	// asking for none: an empty narrowing would quietly widen back to
@@ -152,6 +156,18 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]any{
 		"items": bodies, "total": len(bodies), "facets": facets,
 	})
+}
+
+// csv splits a comma-separated parameter, dropping the empties a trailing
+// comma or a cleared filter leaves behind.
+func csv(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // volumesWanted reads how much of each volume strip the caller needs.

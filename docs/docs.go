@@ -13995,6 +13995,18 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Comma-separated media type names",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated genre names",
+                        "name": "genre",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "ongoing | completed | hiatus | cancelled",
                         "name": "status",
                         "in": "query"

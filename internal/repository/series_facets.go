@@ -23,7 +23,18 @@ import (
 // actually asking, which is "what would I get if I picked this one as well".
 type SeriesFacets struct {
 	Library []FacetValue `json:"library"`
-	Status  []FacetValue `json:"status"`
+	// MediaType is what kind of thing the run is, read off the books in it
+	// rather than stored on the series. Nothing says a series is manga; every
+	// book in it says so, and no series in a real collection mixes, so the
+	// answer is already there and only needed asking for.
+	MediaType []FacetValue `json:"media_type"`
+	// Genre is the series' own list, which providers fill in. Free text rather
+	// than the controlled vocabulary book genres use, so the counts here show
+	// the vocabulary as it actually is, spellings and all. That is the honest
+	// way round: a facet that reports "Sci-Fi 4" beside "Science fiction 3" is
+	// how anyone finds out the two need merging.
+	Genre  []FacetValue `json:"genre"`
+	Status []FacetValue `json:"status"`
 	// Arcs is a shape rather than a value: "with" and "without" are the two
 	// answers, counted so a reader can see there is nothing behind one of them.
 	Arcs []FacetValue `json:"arcs"`
@@ -35,8 +46,9 @@ type SeriesFacets struct {
 
 func emptySeriesFacets() *SeriesFacets {
 	return &SeriesFacets{
-		Library: []FacetValue{}, Status: []FacetValue{}, Arcs: []FacetValue{},
-		Reading: []FacetValue{}, Tag: []FacetValue{},
+		Library: []FacetValue{}, MediaType: []FacetValue{}, Genre: []FacetValue{},
+		Status: []FacetValue{}, Arcs: []FacetValue{}, Reading: []FacetValue{},
+		Tag: []FacetValue{},
 	}
 }
 
@@ -84,8 +96,17 @@ func (r *SeriesRepo) Facets(
 	// An unselected dimension contributes TRUE rather than being skipped, which
 	// keeps the format arguments below positional and countable.
 	libCond, statusCond, arcsCond, readingCond, tagCond := "TRUE", "TRUE", "TRUE", "TRUE", "TRUE"
+	mediaCond, genreCond := "TRUE", "TRUE"
 	if len(f.Libraries) > 0 {
 		libCond = "f.library_id = ANY(" + arg(f.Libraries) + ")"
+	}
+	if len(f.MediaTypes) > 0 {
+		mediaCond = seriesMediaTypeExists("f.id", arg(f.MediaTypes))
+	}
+	if len(f.Genres) > 0 {
+		// Overlap, not containment: ticking two genres means either, which is
+		// what a checkbox list means everywhere else in the rail.
+		genreCond = "f.genres && " + arg(f.Genres)
 	}
 	if f.Status != "" {
 		statusCond = "f.status = " + arg(f.Status)
@@ -116,7 +137,8 @@ func (r *SeriesRepo) Facets(
 	without := func(skip string) string {
 		parts := make([]string, 0, 4)
 		for name, cond := range map[string]string{
-			"library": libCond, "status": statusCond, "arcs": arcsCond,
+			"library": libCond, "media_type": mediaCond, "genre": genreCond,
+			"status": statusCond, "arcs": arcsCond,
 			"reading": readingCond, "tag": tagCond,
 		} {
 			if name != skip && cond != "TRUE" {
@@ -143,7 +165,7 @@ func (r *SeriesRepo) Facets(
 
 	q := fmt.Sprintf(`
 WITH f AS (
-    SELECT s.id, s.library_id, s.status,
+    SELECT s.id, s.library_id, s.status, s.genres,
            (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
            %s AS book_count,
            %s AS read_count,
@@ -154,6 +176,16 @@ WITH f AS (
 SELECT 'library' AS dim, l.id::text AS value, l.name AS label, COUNT(*) AS n
   FROM f JOIN libraries l ON l.id = f.library_id
  WHERE %s GROUP BY l.id, l.name
+UNION ALL
+SELECT 'media_type', mt.name, mt.display_name, COUNT(DISTINCT f.id)
+  FROM f JOIN book_series bs_m ON bs_m.series_id = f.id
+         JOIN books b_m ON b_m.id = bs_m.book_id
+         JOIN media_types mt ON mt.id = b_m.media_type_id
+ WHERE %s GROUP BY mt.name, mt.display_name
+UNION ALL
+SELECT 'genre', g.name, g.name, COUNT(DISTINCT f.id)
+  FROM f, unnest(f.genres) AS g(name)
+ WHERE %s GROUP BY g.name
 UNION ALL
 SELECT 'status', f.status, f.status, COUNT(*)
   FROM f WHERE %s GROUP BY f.status
@@ -177,8 +209,8 @@ SELECT 'tag', t.name, t.name, COUNT(DISTINCT f.id)
          JOIN tags t ON t.id = st.tag_id AND t.deleted_at IS NULL
  WHERE %s GROUP BY t.name`,
 		seriesBookCountValue, readExpr, readingExpr, textWhere,
-		without("library"), without("status"), without("arcs"),
-		without("reading"), without("tag"))
+		without("library"), without("media_type"), without("genre"),
+		without("status"), without("arcs"), without("reading"), without("tag"))
 
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {
@@ -197,6 +229,10 @@ SELECT 'tag', t.name, t.name, COUNT(DISTINCT f.id)
 		switch dim {
 		case "library":
 			out.Library = append(out.Library, v)
+		case "media_type":
+			out.MediaType = append(out.MediaType, v)
+		case "genre":
+			out.Genre = append(out.Genre, v)
 		case "status":
 			out.Status = append(out.Status, v)
 		case "arcs":
@@ -219,6 +255,8 @@ SELECT 'tag', t.name, t.name, COUNT(DISTINCT f.id)
 	// Biggest first for the open vocabularies, so the rows worth clicking are
 	// at the top of a list that can run long.
 	byCountDesc(out.Library)
+	byCountDesc(out.MediaType)
+	byCountDesc(out.Genre)
 	byCountDesc(out.Tag)
 	// Status, arcs and reading are closed vocabularies with a natural order, so
 	// they keep it: a rail whose rows reshuffle as counts change is one the
@@ -261,4 +299,18 @@ func byCountDesc(vs []FacetValue) {
 		}
 		return strings.ToLower(vs[i].Label) < strings.ToLower(vs[j].Label)
 	})
+}
+
+// seriesMediaTypeExists asks whether a series holds a book of one of these
+// kinds.
+//
+// Any book, not every book: nothing stops a run mixing a novel with its manga
+// adaptation, and a reader ticking Manga means "show me the manga" rather than
+// "show me runs that are nothing but manga".
+func seriesMediaTypeExists(seriesRef, placeholder string) string {
+	return fmt.Sprintf(`EXISTS (
+        SELECT 1 FROM book_series bs_f
+          JOIN books b_f ON b_f.id = bs_f.book_id
+          JOIN media_types mt_f ON mt_f.id = b_f.media_type_id
+         WHERE bs_f.series_id = %s AND mt_f.name = ANY(%s))`, seriesRef, placeholder)
 }

@@ -10595,6 +10595,14 @@ paths:
         in: query
         name: lib
         type: string
+      - description: Comma-separated media type names
+        in: query
+        name: type
+        type: string
+      - description: Comma-separated genre names
+        in: query
+        name: genre
+        type: string
       - description: ongoing | completed | hiatus | cancelled
         in: query
         name: status

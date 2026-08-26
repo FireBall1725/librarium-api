@@ -3233,3 +3233,94 @@ func TestAPageAlwaysHasSomethingToOpenOn(t *testing.T) {
 		t.Errorf("a deleted example came back, so throwing one away does not stick")
 	}
 }
+
+// "Show me the manga" is a question about the books, not about the series row.
+//
+// Nothing on a series says what kind of thing it is. Every book in it says so,
+// and no series in a real collection mixes, so the answer was already there and
+// only needed asking for.
+func TestSeriesFilterByWhatTheBooksAre(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewSeriesRepo(pool)
+
+	var libraryIDs []uuid.UUID
+	rows, err := pool.Query(ctx, `SELECT id FROM libraries`)
+	if err != nil {
+		t.Skipf("no libraries: %v", err)
+	}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatalf("scan: %v", err)
+		}
+		libraryIDs = append(libraryIDs, id)
+	}
+	rows.Close()
+
+	facets, err := repo.Facets(ctx, libraryIDs, uuid.Nil, "", SeriesFilter{})
+	if err != nil {
+		t.Fatalf("counting facets: %v", err)
+	}
+	if len(facets.MediaType) < 2 {
+		t.Skip("need two media types to tell the filter apart")
+	}
+
+	// Every media type's count has to equal the rows the filter returns, or the
+	// rail promises something the page does not deliver.
+	for _, v := range facets.MediaType {
+		listed, err := repo.ListAcrossFiltered(ctx, libraryIDs, uuid.Nil, "", 1,
+			SeriesFilter{MediaTypes: []string{v.Value}})
+		if err != nil {
+			t.Fatalf("filtering by media type %q: %v", v.Value, err)
+		}
+		if len(listed) != v.Count {
+			t.Errorf("the rail says %d series are %q, the list returns %d",
+				v.Count, v.Value, len(listed))
+		}
+		// And each one really does hold a book of that kind.
+		for _, ser := range listed {
+			var holds bool
+			if err := pool.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM book_series bs
+					  JOIN books b ON b.id = bs.book_id
+					  JOIN media_types mt ON mt.id = b.media_type_id
+					 WHERE bs.series_id = $1 AND mt.name = $2)`,
+				ser.ID, v.Value).Scan(&holds); err != nil {
+				t.Fatalf("checking %s: %v", ser.Name, err)
+			}
+			if !holds {
+				t.Errorf("%s came back under %q and holds no book of that kind", ser.Name, v.Value)
+			}
+		}
+	}
+
+	// Genre is the series' own free-text list, a different vocabulary from the
+	// controlled one book genres use, so it is checked against the column
+	// rather than against book_genres.
+	if len(facets.Genre) == 0 {
+		return
+	}
+	pick := facets.Genre[0]
+	listed, err := repo.ListAcrossFiltered(ctx, libraryIDs, uuid.Nil, "", 1,
+		SeriesFilter{Genres: []string{pick.Value}})
+	if err != nil {
+		t.Fatalf("filtering by genre: %v", err)
+	}
+	if len(listed) != pick.Count {
+		t.Errorf("the rail says %d series are %q, the list returns %d",
+			pick.Count, pick.Value, len(listed))
+	}
+	for _, ser := range listed {
+		found := false
+		for _, g := range ser.Genres {
+			if g == pick.Value {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s came back under genre %q and does not carry it", ser.Name, pick.Value)
+		}
+	}
+}

@@ -152,6 +152,14 @@ type SeriesFilter struct {
 	// ticking two answers "either of these", which is what a checkbox list
 	// means everywhere else in the product.
 	Libraries []uuid.UUID
+	// MediaTypes narrows to runs holding a book of that kind. Read off the
+	// books rather than stored on the series: nothing says a series is manga,
+	// every book in it does.
+	MediaTypes []string
+	// Genres narrows on the series' own free-text list, which is a different
+	// vocabulary from the controlled one book genres use. Overlap, not
+	// containment: ticking two means either.
+	Genres []string
 	// Status is a publication status: ongoing, completed, hiatus, cancelled.
 	Status string
 	// Arcs is "with" or "without". Empty means either.
@@ -197,6 +205,14 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 	if len(f.Libraries) > 0 {
 		args = append(args, f.Libraries)
 		where += fmt.Sprintf(` AND s.library_id = ANY($%d)`, len(args))
+	}
+	if len(f.MediaTypes) > 0 {
+		args = append(args, f.MediaTypes)
+		where += " AND " + seriesMediaTypeExists("s.id", fmt.Sprintf("$%d", len(args)))
+	}
+	if len(f.Genres) > 0 {
+		args = append(args, f.Genres)
+		where += fmt.Sprintf(` AND s.genres && $%d`, len(args))
 	}
 	if f.Status != "" {
 		args = append(args, f.Status)
