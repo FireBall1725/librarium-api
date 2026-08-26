@@ -1064,6 +1064,27 @@ definitions:
       username:
         type: string
     type: object
+  github_com_fireball1725_librarium-api_internal_repository.DuplicateCandidate:
+    properties:
+      key:
+        description: |-
+          Key is the normalised name the members share. Sent so a client has
+          something stable to key a row on.
+        type: string
+      members:
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.DuplicateMember'
+        type: array
+    type: object
+  github_com_fireball1725_librarium-api_internal_repository.DuplicateMember:
+    properties:
+      books:
+        type: integer
+      id:
+        type: string
+      name:
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_repository.FacetValue:
     properties:
       count:
@@ -1854,6 +1875,136 @@ paths:
       tags:
       - admin
       - ai
+  /admin/contributor-duplicates:
+    get:
+      description: Groups of names that differ only by punctuation, or by spacing
+        between initials. Pairs an admin has already rejected are left out. Detection
+        is an inference rather than a fact, so nothing is merged without a person
+        saying so.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.DuplicateCandidate'
+                type: array
+              total:
+                type: integer
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Contributors the catalogue believes are several people
+      tags:
+      - admin
+  /admin/contributor-duplicates/dismiss:
+    post:
+      consumes:
+      - application/json
+      description: Every pair in the group, so a group of three that is really three
+        people is settled once rather than coming back as three pairs on the next
+        sweep.
+      parameters:
+      - description: The contributors that are not the same person
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            ids:
+              items:
+                type: string
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Record that these contributors are different people
+      tags:
+      - admin
+  /admin/contributor-duplicates/merge:
+    post:
+      consumes:
+      - application/json
+      description: 'The losers become tombstones rather than being deleted: their
+        credits repoint at the survivor and merged_into records where they went, so
+        a wrong merge is undone by clearing one column and an id a client cached still
+        resolves to a real person.'
+      parameters:
+      - description: Who survives, and who folds into them
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            loser_ids:
+              items:
+                type: string
+              type: array
+            survivor_id:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              collapsed:
+                type: integer
+              credits:
+                type: integer
+              merged:
+                type: integer
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Fold contributors into one
+      tags:
+      - admin
   /admin/jobs:
     get:
       description: Returns a summary of every admin-configurable scheduled job.

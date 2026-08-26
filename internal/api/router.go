@@ -394,6 +394,17 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	// Contributor profile, metadata, works (instance-scoped, auth required)
 	mux.Handle("PATCH /api/v1/contributors/{contributor_id}", requireAuth(http.HandlerFunc(contributorHandler.UpdateContributor)))
 	mux.Handle("DELETE /api/v1/contributors/{contributor_id}", requireAuth(http.HandlerFunc(contributorHandler.DeleteContributor)))
+	// Merging duplicate contributors. Instance admin, because contributors have
+	// no library_id: folding two names together changes what every household on
+	// the server sees, the same way editing a genre does.
+	contributorMergeHandler := handlers.NewContributorMergeHandler(contributorRepo)
+	mux.Handle("GET /api/v1/admin/contributor-duplicates",
+		requireAuth(middleware.RequireInstanceAdmin(http.HandlerFunc(contributorMergeHandler.ListDuplicates))))
+	mux.Handle("POST /api/v1/admin/contributor-duplicates/merge",
+		requireAuth(middleware.RequireInstanceAdmin(http.HandlerFunc(contributorMergeHandler.MergeContributors))))
+	mux.Handle("POST /api/v1/admin/contributor-duplicates/dismiss",
+		requireAuth(middleware.RequireInstanceAdmin(http.HandlerFunc(contributorMergeHandler.DismissDuplicates))))
+
 	mux.Handle("GET /api/v1/contributors/{contributor_id}/photo", requireAuth(http.HandlerFunc(contributorHandler.ServeContributorPhoto)))
 	mux.Handle("PUT /api/v1/contributors/{contributor_id}/photo", requireAuth(http.HandlerFunc(contributorHandler.UploadContributorPhoto)))
 	mux.Handle("DELETE /api/v1/contributors/{contributor_id}/photo", requireAuth(http.HandlerFunc(contributorHandler.DeleteContributorPhotoHandler)))

@@ -84,7 +84,10 @@ func scanFullContributor(s scanner) (*models.Contributor, error) {
 func (r *ContributorRepo) Search(ctx context.Context, query string, limit int) ([]*models.Contributor, error) {
 	q := `SELECT ` + contributorCols + `
 		FROM contributors c
-		WHERE c.name ILIKE '%' || $1 || '%'
+		-- A merged contributor is a tombstone. Offering one in a picker is
+		-- offering a name that credits nothing, and choosing it would credit a
+		-- book to somebody the catalogue has already folded away.
+		WHERE c.merged_into IS NULL AND c.name ILIKE '%' || $1 || '%'
 		ORDER BY c.name
 		LIMIT $2`
 
@@ -143,7 +146,7 @@ func (r *ContributorRepo) ListForLibrary(ctx context.Context, libraryID uuid.UUI
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
 		JOIN held_books lb ON lb.book_id = b.id
-		WHERE lb.library_id = $1
+		WHERE c.merged_into IS NULL AND lb.library_id = $1
 		GROUP BY c.id
 		ORDER BY c.name`
 
@@ -167,7 +170,8 @@ func (r *ContributorRepo) ListForLibrary(ctx context.Context, libraryID uuid.UUI
 // ListForLibraryPaged returns a paginated, filtered, sorted slice of contributors
 // who have at least one book in the given library.
 func (r *ContributorRepo) ListForLibraryPaged(ctx context.Context, libraryID uuid.UUID, opts ContributorListOpts) ([]*models.Contributor, int, error) {
-	conditions := []string{"lb.library_id = $1"}
+	// A merged contributor is a tombstone and belongs in no list.
+	conditions := []string{"c.merged_into IS NULL", "lb.library_id = $1"}
 	args := []any{libraryID}
 	idx := 2
 
@@ -258,7 +262,7 @@ func (r *ContributorRepo) LettersForLibrary(ctx context.Context, libraryID uuid.
 		JOIN book_contributors bc ON bc.contributor_id = c.id
 		JOIN books b ON b.id = bc.book_id
 		JOIN held_books lb ON lb.book_id = b.id
-		WHERE lb.library_id = $1
+		WHERE c.merged_into IS NULL AND lb.library_id = $1
 		  AND c.name ~ '^[A-Za-z]'
 		ORDER BY letter`
 	rows, err := r.db.Query(ctx, q, libraryID)

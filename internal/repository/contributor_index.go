@@ -152,6 +152,9 @@ SELECT c.id,
        ) AS libraries
 FROM contributors c
 JOIN scope s ON s.contributor_id = c.id
+-- A merged contributor is a tombstone. Its credits were repointed at whoever
+-- absorbed it, so it would draw a card with nothing behind it.
+WHERE c.merged_into IS NULL
 GROUP BY c.id, c.name, c.sort_name
 ORDER BY lower(COALESCE(NULLIF(c.sort_name, ''), c.name)), c.name`, readCount, spinesPerCard)
 
@@ -244,6 +247,8 @@ func (r *ContributorRepo) RoleCounts(
 		 WHERE EXISTS (SELECT 1 FROM held_books hb
 		                WHERE hb.book_id = bc.book_id
 		                  AND hb.library_id = ANY($1) AND hb.deleted_at IS NULL)
+		   AND EXISTS (SELECT 1 FROM contributors c
+		                WHERE c.id = bc.contributor_id AND c.merged_into IS NULL)
 		 GROUP BY bc.role
 		 ORDER BY 2 DESC, 1`, libraryIDs)
 	if err != nil {

@@ -3603,3 +3603,182 @@ func TestATotalCountImpliesTheVolumesNobodyListed(t *testing.T) {
 		t.Error("a shrinking total deleted a volume somebody had filed on a list")
 	}
 }
+
+// Folding three spellings of one name into one person.
+//
+// An import spells a name three ways and the catalogue believes in three
+// people, each looking like a minor contributor. A merge is a tombstone rather
+// than a delete: book_contributors is ON DELETE RESTRICT, so a delete was never
+// clean, and merged_into makes the whole thing reversible.
+func TestMergingContributorsFoldsThemWithoutLosingCredits(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewContributorRepo(pool)
+
+	var mediaTypeID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM media_types LIMIT 1`).Scan(&mediaTypeID); err != nil {
+		t.Skipf("no media type: %v", err)
+	}
+
+	// Three spellings, and a book each. The third book credits two of the
+	// spellings in the same role, which is the collision the merge has to
+	// survive: (book_id, contributor_id, role) is the primary key.
+	names := []string{"ZZ R. A. Testcase", "ZZ R.A. Testcase", "ZZ R A Testcase"}
+	var people []uuid.UUID
+	for _, n := range names {
+		id := uuid.New()
+		people = append(people, id)
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO contributors (id, name) VALUES ($1, $2)`, id, n); err != nil {
+			t.Fatalf("creating %s: %v", n, err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM book_contributors WHERE contributor_id = ANY($1)`, people)
+		_, _ = pool.Exec(ctx, `DELETE FROM contributor_not_duplicates
+			 WHERE lower_id = ANY($1) OR higher_id = ANY($1)`, people)
+		_, _ = pool.Exec(ctx, `DELETE FROM contributors WHERE id = ANY($1)`, people)
+	})
+
+	var books []uuid.UUID
+	for i := 0; i < 3; i++ {
+		id := uuid.New()
+		books = append(books, id)
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO books (id, title, media_type_id) VALUES ($1, $2, $3)`,
+			id, fmt.Sprintf("ZZ merge book %d", i), mediaTypeID); err != nil {
+			t.Fatalf("creating a book: %v", err)
+		}
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM books WHERE id = ANY($1)`, books) })
+
+	credit := func(person, book uuid.UUID) {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO book_contributors (book_id, contributor_id, role, display_order)
+			VALUES ($1, $2, 'author', 0) ON CONFLICT DO NOTHING`, book, person); err != nil {
+			t.Fatalf("crediting: %v", err)
+		}
+	}
+	credit(people[0], books[0])
+	credit(people[1], books[1])
+	credit(people[2], books[2])
+	// Both spellings on the same book, same role: one of these must collapse.
+	credit(people[0], books[2])
+
+	// The sweep sees them as one group.
+	groups, err := repo.DuplicateCandidates(ctx)
+	if err != nil {
+		t.Fatalf("finding candidates: %v", err)
+	}
+	var found *DuplicateCandidate
+	for i := range groups {
+		if len(groups[i].Members) == 3 && groups[i].Key == "zz ra testcase" {
+			found = &groups[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("the three spellings were not offered as one group; got %d groups", len(groups))
+	}
+
+	res, err := repo.Merge(ctx, people[0], people[1:])
+	if err != nil {
+		t.Fatalf("merging: %v", err)
+	}
+	// Two credits move; the one already held collapses rather than failing.
+	if res.Credits != 1 || res.Collapsed != 1 {
+		t.Errorf("merge moved %d credits and collapsed %d, want 1 and 1", res.Credits, res.Collapsed)
+	}
+	if res.Merged != 2 {
+		t.Errorf("merge tombstoned %d contributors, want 2", res.Merged)
+	}
+
+	// The survivor now holds every book, once each.
+	var held int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*)::int FROM book_contributors WHERE contributor_id = $1`,
+		people[0]).Scan(&held); err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if held != 3 {
+		t.Errorf("the survivor credits %d books, want all 3", held)
+	}
+
+	// Tombstones, not deletions: the rows are still there and say where they
+	// went, so a client holding an old id lands on a real person.
+	for _, loser := range people[1:] {
+		to, err := repo.ResolveContributor(ctx, loser)
+		if err != nil {
+			t.Fatalf("resolving a merged contributor: %v", err)
+		}
+		if to != people[0] {
+			t.Errorf("a merged contributor resolves to %s, want the survivor", to)
+		}
+	}
+
+	// And they are gone from the surfaces that list people.
+	again, err := repo.DuplicateCandidates(ctx)
+	if err != nil {
+		t.Fatalf("re-checking: %v", err)
+	}
+	for _, g := range again {
+		if g.Key == "zz ra testcase" {
+			t.Error("a merged group is still offered as a duplicate")
+		}
+	}
+	people2, err := repo.Search(ctx, "ZZ R", 20)
+	if err != nil {
+		t.Fatalf("searching: %v", err)
+	}
+	if len(people2) != 1 {
+		t.Errorf("search returns %d of the spellings, want only the survivor", len(people2))
+	}
+}
+
+// A rejected pair stays rejected.
+//
+// Detection is an inference, so the reviewer has to be able to say no. Without
+// this the sweep offers the same wrong answer every morning, which is how a
+// review queue becomes something nobody opens.
+func TestDismissingADuplicateKeepsItDismissed(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewContributorRepo(pool)
+
+	// Two people whose names differ only by punctuation and who are not, in
+	// fact, the same person.
+	var people []uuid.UUID
+	for _, n := range []string{"ZZ Dismiss O'Brien", "ZZ Dismiss OBrien"} {
+		id := uuid.New()
+		people = append(people, id)
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO contributors (id, name) VALUES ($1, $2)`, id, n); err != nil {
+			t.Fatalf("creating %s: %v", n, err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM contributor_not_duplicates
+			 WHERE lower_id = ANY($1) OR higher_id = ANY($1)`, people)
+		_, _ = pool.Exec(ctx, `DELETE FROM contributors WHERE id = ANY($1)`, people)
+	})
+
+	offered := func() bool {
+		groups, err := repo.DuplicateCandidates(ctx)
+		if err != nil {
+			t.Fatalf("finding candidates: %v", err)
+		}
+		for _, g := range groups {
+			if g.Key == "zz dismiss obrien" {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !offered() {
+		t.Fatal("two spellings of one name were not offered at all")
+	}
+	if err := repo.Dismiss(ctx, people, uuid.Nil); err != nil {
+		t.Fatalf("dismissing: %v", err)
+	}
+	if offered() {
+		t.Error("a dismissed pair came back, so saying no does not stick")
+	}
+}
