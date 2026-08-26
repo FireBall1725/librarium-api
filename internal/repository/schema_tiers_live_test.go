@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -3780,5 +3781,102 @@ func TestDismissingADuplicateKeepsItDismissed(t *testing.T) {
 	}
 	if offered() {
 		t.Error("a dismissed pair came back, so saying no does not stick")
+	}
+}
+
+// Running promotion twice at once must not promote twice.
+//
+// Every volume is promoted in its own transaction so one malformed row cannot
+// cost the rest, and the price is that "is there already a book at this
+// position" is a check followed by an act. Two runs both passed it, both
+// created a book, and the update to series_volumes.book_id serialised so the
+// loser's book was orphaned. Running the job twice put 175 duplicates in a real
+// catalogue.
+func TestPromotingTwiceAtOnceStillPromotesOnce(t *testing.T) {
+	pool, ctx := tiersPool(t)
+
+	var libraryID, mediaTypeID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM media_types LIMIT 1`).Scan(&mediaTypeID); err != nil {
+		t.Skipf("no media type: %v", err)
+	}
+
+	seriesID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO series (id, library_id, name, total_count)
+		 VALUES ($1, $2, 'ZZ race series', 12)`, seriesID, libraryID); err != nil {
+		t.Fatalf("creating the series: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM series WHERE id = $1`, seriesID) })
+
+	// One held volume to seed the media type, eleven for promotion to invent.
+	seed := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO books (id, title, media_type_id) VALUES ($1, 'ZZ race #1', $2)`,
+		seed, mediaTypeID); err != nil {
+		t.Fatalf("creating the seed book: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO book_series (book_id, series_id, position) VALUES ($1, $2, 1)`,
+		seed, seriesID); err != nil {
+		t.Fatalf("positioning the seed: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO copies (id, library_id, book_id) VALUES ($1, $2, $3)`,
+		uuid.New(), libraryID, seed); err != nil {
+		t.Fatalf("holding the seed: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM copies WHERE book_id IN (
+			SELECT book_id FROM book_series WHERE series_id = $1)`, seriesID)
+		_, _ = pool.Exec(ctx, `DELETE FROM books WHERE id IN (
+			SELECT book_id FROM book_series WHERE series_id = $1)`, seriesID)
+	})
+
+	// Two runs at once, which is what clicking Run now twice does: the job
+	// enqueues inline, so the second request does not wait for the first.
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			_, errs[n] = NewSeriesRepo(pool).PromoteVolumes(ctx, seriesID)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("run %d failed: %v", i, err)
+		}
+	}
+
+	// Twelve volumes promised, twelve books, one per position.
+	var books, positions int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)::int, count(DISTINCT position)::int
+		  FROM book_series WHERE series_id = $1`, seriesID).Scan(&books, &positions); err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if books != 12 || positions != 12 {
+		t.Errorf("two concurrent runs left %d books across %d positions, want 12 and 12",
+			books, positions)
+	}
+
+	// And every promoted book is reachable from its volume, so none was
+	// orphaned by losing a race for the link.
+	var orphans int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)::int FROM book_series bs
+		 WHERE bs.series_id = $1
+		   AND NOT EXISTS (SELECT 1 FROM series_volumes sv WHERE sv.book_id = bs.book_id)
+		   AND NOT EXISTS (SELECT 1 FROM copies c WHERE c.book_id = bs.book_id)`,
+		seriesID).Scan(&orphans); err != nil {
+		t.Fatalf("counting orphans: %v", err)
+	}
+	if orphans != 0 {
+		t.Errorf("%d promoted books have no volume pointing at them", orphans)
 	}
 }

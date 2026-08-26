@@ -48,6 +48,48 @@ type PromotionResult struct {
 func (r *SeriesRepo) PromoteVolumes(ctx context.Context, seriesID uuid.UUID) (PromotionResult, error) {
 	var out PromotionResult
 
+	// One promotion of a series at a time.
+	//
+	// Every volume is promoted in its own transaction, which is deliberate: a
+	// provider list where one row is malformed should leave the rest promoted.
+	// The cost is that "is there already a book at this position" is a check
+	// followed by an act, and two runs can both pass the check. That is not
+	// theoretical. Running the job twice put 175 duplicate books in a real
+	// catalogue: both runs saw no book at position 15, both created one, and
+	// the update to series_volumes.book_id serialised so the loser's book was
+	// left with no volume pointing at it.
+	//
+	// A unique index on (series_id, position) would be the obvious fix and is
+	// wrong: an omnibus legitimately sits at the position of the first volume
+	// it contains, beside that volume. So the exclusion is a lock rather than a
+	// constraint.
+	//
+	// Held on one connection for the whole run, because a pooled query would
+	// take the lock on whichever session it landed on and release it into the
+	// pool still held. Waiting rather than skipping: the second caller then
+	// finds the work done and promotes nothing, which is the answer they wanted.
+	conn, err := r.db.Acquire(ctx)
+	if err != nil {
+		return out, fmt.Errorf("taking the promotion lock: %w", err)
+	}
+	defer conn.Release()
+	// A fixed namespace beside the series hash, so this cannot collide with an
+	// advisory lock somebody else takes for a different reason.
+	const promotionLockNamespace = 0x11B7A21
+	if _, err := conn.Exec(ctx,
+		`SELECT pg_advisory_lock($1, hashtext($2))`,
+		promotionLockNamespace, seriesID.String()); err != nil {
+		return out, fmt.Errorf("taking the promotion lock: %w", err)
+	}
+	defer func() {
+		// Background context: the caller's may already be cancelled, and a lock
+		// released only when the connection dies would block the next run for
+		// as long as the pool keeps it.
+		_, _ = conn.Exec(context.Background(),
+			`SELECT pg_advisory_unlock($1, hashtext($2))`,
+			promotionLockNamespace, seriesID.String())
+	}()
+
 	// The series' media type comes from what is already in it, because a
 	// provider does not say whether a run is manga or a graphic novel and the
 	// column is NOT NULL. A series with nothing in it yet has nothing to copy,
@@ -56,7 +98,7 @@ func (r *SeriesRepo) PromoteVolumes(ctx context.Context, seriesID uuid.UUID) (Pr
 		mediaTypeID pgtype.UUID
 		seriesName  string
 	)
-	err := r.db.QueryRow(ctx, `
+	err = r.db.QueryRow(ctx, `
 		SELECT b.media_type_id, max(s.name)
 		  FROM book_series bs
 		  JOIN books b ON b.id = bs.book_id
