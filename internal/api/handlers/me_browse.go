@@ -180,7 +180,12 @@ func csv(v string) []string {
 func csvInts(v string) []int32 {
 	var out []int32
 	for _, part := range csv(v) {
-		if n, err := strconv.Atoi(part); err == nil {
+		// ParseInt bounded to 32 bits rather than Atoi and a cast. Atoi returns
+		// an int, and narrowing that wraps silently: a rating of 2147483648
+		// would arrive as -2147483648 and quietly become a value somebody could
+		// have meant. Out of range is not a number here, so it is dropped like
+		// any other unparseable part.
+		if n, err := strconv.ParseInt(part, 10, 32); err == nil {
 			out = append(out, int32(n))
 		}
 	}
