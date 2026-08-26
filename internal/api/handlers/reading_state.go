@@ -59,6 +59,32 @@ func callerOf(r *http.Request) uuid.UUID {
 // @Failure     401  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
 // @Router      /books/{book_id}/me [get]
+// ListReaders godoc
+//
+// @Summary     What everyone has recorded about a book
+// @Description Everyone who shares a library with the caller and has recorded something: their rating, whether they finished it, and the review the product already labels visible to members. Private notes are never returned; the query does not select them.
+// @Tags        books
+// @Produce     json
+// @Security    BearerAuth
+// @Param       book_id  path  string  true  "Book UUID"
+// @Success     200  {object}  object{items=[]repository.BookReader}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Router      /books/{book_id}/readers [get]
+func (h *ReadingStateHandler) ListReaders(w http.ResponseWriter, r *http.Request) {
+	bookID, ok := bookIDOf(r)
+	if !ok {
+		respond.Error(w, http.StatusBadRequest, "invalid book id")
+		return
+	}
+	readers, err := h.userBooks.ReadersOf(r.Context(), bookID, callerOf(r))
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": readers})
+}
+
 func (h *ReadingStateHandler) GetMyBook(w http.ResponseWriter, r *http.Request) {
 	bookID, ok := bookIDOf(r)
 	if !ok {

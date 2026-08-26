@@ -1030,6 +1030,29 @@ definitions:
       total:
         type: integer
     type: object
+  github_com_fireball1725_librarium-api_internal_repository.BookReader:
+    properties:
+      display_name:
+        type: string
+      finished_at:
+        type: string
+      is_favorite:
+        type: boolean
+      rating:
+        type: integer
+      read_status:
+        type: string
+      review:
+        type: string
+      started_at:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+      username:
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_repository.FacetValue:
     properties:
       count:
@@ -3527,10 +3550,15 @@ paths:
       tags:
       - me
     get:
-      description: The caller's status, rating, review and notes for a work. Reads
-        through containment, so a volume inside an omnibus the caller has read comes
-        back as read with inherited set.
+      description: |-
+        The caller's status, rating, review and notes for a work. Reads through containment, so a volume inside an omnibus the caller has read comes back as read with inherited set.
+        Everyone who shares a library with the caller and has recorded something: their rating, whether they finished it, and the review the product already labels visible to members. Private notes are never returned; the query does not select them.
       parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
       - description: Book UUID
         in: path
         name: book_id
@@ -3538,27 +3566,16 @@ paths:
         type: string
       produces:
       - application/json
+      - application/json
       responses:
         "200":
           description: OK
           schema:
             properties:
-              book_id:
-                type: string
-              inherited:
-                type: boolean
-              is_favorite:
-                type: boolean
-              notes:
-                type: string
-              rating:
-                type: integer
-              read_status:
-                type: string
-              review:
-                type: string
-              wants:
-                type: boolean
+              items:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookReader'
+                type: array
             type: object
         "400":
           description: Bad Request
@@ -3583,9 +3600,11 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Get my reading state for a book
+      - BearerAuth: []
+      summary: What everyone has recorded about a book
       tags:
       - me
+      - books
     put:
       consumes:
       - application/json
@@ -3660,6 +3679,63 @@ paths:
       summary: Set my reading state for a book
       tags:
       - me
+  /books/{book_id}/readers:
+    get:
+      description: |-
+        The caller's status, rating, review and notes for a work. Reads through containment, so a volume inside an omnibus the caller has read comes back as read with inherited set.
+        Everyone who shares a library with the caller and has recorded something: their rating, whether they finished it, and the review the product already labels visible to members. Private notes are never returned; the query does not select them.
+      parameters:
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      - description: Book UUID
+        in: path
+        name: book_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookReader'
+                type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      - BearerAuth: []
+      summary: What everyone has recorded about a book
+      tags:
+      - me
+      - books
   /books/{book_id}/sessions:
     get:
       description: Each pass through the work, most recent first. A reread is a separate

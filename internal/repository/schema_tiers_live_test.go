@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/fireball1725/librarium-api/internal/api/responses"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -2356,4 +2358,90 @@ func countOf(vs []FacetValue, value string) int {
 		}
 	}
 	return 0
+}
+
+// A review the product calls "visible to members" was written and shown to
+// nobody, and a rating beside it could only ever be seen by its author. Members
+// are exactly who should see both.
+func TestReadersOfShowsMembersAndHidesPrivateNotes(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	userBooks := NewUserBookRepo(pool)
+
+	me := scratchUser(t, pool, ctx)
+	housemate := scratchUser(t, pool, ctx)
+	stranger := scratchUser(t, pool, ctx)
+
+	var libraryID, bookID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT c.library_id, c.book_id FROM copies c
+		 WHERE c.deleted_at IS NULL LIMIT 1`).Scan(&libraryID, &bookID); err != nil {
+		t.Skipf("no held book: %v", err)
+	}
+	var roleID uuid.UUID
+	var scope string
+	if err := pool.QueryRow(ctx,
+		`SELECT id, scope FROM roles WHERE scope = 'library' LIMIT 1`).Scan(&roleID, &scope); err != nil {
+		t.Skipf("no library role: %v", err)
+	}
+	for _, who := range []uuid.UUID{me, housemate} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO user_roles (user_id, library_id, role_id, scope) VALUES ($1, $2, $3, $4)`,
+			who, libraryID, roleID, scope); err != nil {
+			t.Fatalf("granting a role: %v", err)
+		}
+	}
+
+	for _, w := range []struct {
+		who    uuid.UUID
+		rating int
+		review string
+		notes  string
+	}{
+		{housemate, 9, "Loved the ending.", "must not leak"},
+		{stranger, 2, "Not for me.", "also must not leak"},
+	} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO user_books (user_id, book_id, read_status, rating, review, notes)
+			 VALUES ($1, $2, 'read', $3, $4, $5)
+			 ON CONFLICT (user_id, book_id) DO UPDATE
+			    SET rating = EXCLUDED.rating, review = EXCLUDED.review, notes = EXCLUDED.notes`,
+			w.who, bookID, w.rating, w.review, w.notes); err != nil {
+			t.Fatalf("recording a reading: %v", err)
+		}
+	}
+
+	readers, err := userBooks.ReadersOf(ctx, bookID, me)
+	if err != nil {
+		t.Fatalf("listing readers: %v", err)
+	}
+
+	var sawHousemate, sawStranger bool
+	for _, rd := range readers {
+		if rd.UserID == housemate {
+			sawHousemate = true
+			if rd.Rating == nil || *rd.Rating != 9 {
+				t.Errorf("housemate's rating came back as %v, want 9", rd.Rating)
+			}
+			if rd.Review != "Loved the ending." {
+				t.Errorf("housemate's review came back as %q", rd.Review)
+			}
+		}
+		if rd.UserID == stranger {
+			sawStranger = true
+		}
+	}
+	if !sawHousemate {
+		t.Error("a housemate's reading was not shown to someone in the same library")
+	}
+	if sawStranger {
+		t.Error("someone sharing no library was shown; an instance can host unrelated households")
+	}
+
+	// Notes are private where they are written, so the promise is kept by the
+	// query never selecting them rather than by a handler remembering to strip
+	// them. There is no field on the struct to leak through.
+	blob := fmt.Sprintf("%+v", readers)
+	if strings.Contains(blob, "must not leak") {
+		t.Error("private notes reached a reader they do not belong to")
+	}
 }

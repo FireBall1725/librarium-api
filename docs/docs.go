@@ -3088,17 +3088,29 @@ const docTemplate = `{
                 "security": [
                     {
                         "BearerAuth": []
+                    },
+                    {
+                        "BearerAuth": []
                     }
                 ],
-                "description": "The caller's status, rating, review and notes for a work. Reads through containment, so a volume inside an omnibus the caller has read comes back as read with inherited set.",
+                "description": "The caller's status, rating, review and notes for a work. Reads through containment, so a volume inside an omnibus the caller has read comes back as read with inherited set.\nEveryone who shares a library with the caller and has recorded something: their rating, whether they finished it, and the review the product already labels visible to members. Private notes are never returned; the query does not select them.",
                 "produces": [
+                    "application/json",
                     "application/json"
                 ],
                 "tags": [
-                    "me"
+                    "me",
+                    "books"
                 ],
-                "summary": "Get my reading state for a book",
+                "summary": "What everyone has recorded about a book",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book UUID",
+                        "name": "book_id",
+                        "in": "path",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Book UUID",
@@ -3113,29 +3125,11 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "book_id": {
-                                    "type": "string"
-                                },
-                                "inherited": {
-                                    "type": "boolean"
-                                },
-                                "is_favorite": {
-                                    "type": "boolean"
-                                },
-                                "notes": {
-                                    "type": "string"
-                                },
-                                "rating": {
-                                    "type": "integer"
-                                },
-                                "read_status": {
-                                    "type": "string"
-                                },
-                                "review": {
-                                    "type": "string"
-                                },
-                                "wants": {
-                                    "type": "boolean"
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookReader"
+                                    }
                                 }
                             }
                         }
@@ -3313,6 +3307,93 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/books/{book_id}/readers": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The caller's status, rating, review and notes for a work. Reads through containment, so a volume inside an omnibus the caller has read comes back as read with inherited set.\nEveryone who shares a library with the caller and has recorded something: their rating, whether they finished it, and the review the product already labels visible to members. Private notes are never returned; the query does not select them.",
+                "produces": [
+                    "application/json",
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "books"
+                ],
+                "summary": "What everyone has recorded about a book",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book UUID",
+                        "name": "book_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Book UUID",
+                        "name": "book_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookReader"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
                     },
                     "401": {
                         "description": "Unauthorized",
@@ -17023,6 +17104,41 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.BookReader": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "is_favorite": {
+                    "type": "boolean"
+                },
+                "rating": {
+                    "type": "integer"
+                },
+                "read_status": {
+                    "type": "string"
+                },
+                "review": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
                 }
             }
         },
