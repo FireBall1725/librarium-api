@@ -91,6 +91,22 @@ func seriesStatusCountExpr(callerArg int, status string) string {
 // of the run either way. A container covers what it holds, so owning only the
 // three-in-one counts as three, which is what the ownership rule already says
 // on the Books page.
+// seriesGenresSubquery reads a series' genres from the shared vocabulary.
+//
+// It replaced the free-text column of the same name, which was never checked
+// against anything: "Science Fiction", "Science fiction" and "Sci-Fi" were
+// three separate values on one facet, and "Comics" sat among them describing a
+// format rather than a genre. Books have always keyed genre through a join into
+// this table; series do now, so the word means the same thing on both surfaces.
+//
+// Ordered by name so the array is stable across reads and two identical series
+// cannot render differently.
+const seriesGenresSubquery = `(
+	SELECT COALESCE(array_agg(g2.name ORDER BY g2.name), '{}')
+	  FROM series_genres sg JOIN genres g2 ON g2.id = sg.genre_id
+	 WHERE sg.series_id = s.id
+)`
+
 // seriesBookCountValue is the same count without its alias, for the places that
 // run before the SELECT list exists.
 const seriesBookCountValue = `(
@@ -212,7 +228,9 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 	}
 	if len(f.Genres) > 0 {
 		args = append(args, f.Genres)
-		where += fmt.Sprintf(` AND s.genres && $%d`, len(args))
+		where += fmt.Sprintf(` AND EXISTS (
+			SELECT 1 FROM series_genres sg_f JOIN genres g_f ON g_f.id = sg_f.genre_id
+			 WHERE sg_f.series_id = s.id AND g_f.name = ANY($%d))`, len(args))
 	}
 	if f.Status != "" {
 		args = append(args, f.Status)
@@ -284,7 +302,7 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
 		       s.total_count, s.status, s.original_language, s.publication_year,
-		       s.demographic, s.genres, COALESCE(s.url,''),
+		       s.demographic, ` + seriesGenresSubquery + `, COALESCE(s.url,''),
 		       COALESCE(s.external_id,''), COALESCE(s.external_source,''),
 		       (SELECT MAX(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date <= CURRENT_DATE) AS last_release_date,
 		       (SELECT MIN(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date > CURRENT_DATE) AS next_release_date,
@@ -351,7 +369,7 @@ func (r *SeriesRepo) FindByID(ctx context.Context, id, callerID uuid.UUID) (*mod
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
 		       s.total_count, s.status, s.original_language, s.publication_year,
-		       s.demographic, s.genres, COALESCE(s.url,''),
+		       s.demographic, ` + seriesGenresSubquery + `, COALESCE(s.url,''),
 		       COALESCE(s.external_id,''), COALESCE(s.external_source,''),
 		       (SELECT MAX(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date <= CURRENT_DATE) AS last_release_date,
 		       (SELECT MIN(sv.release_date) FROM series_volumes sv WHERE sv.series_id = s.id AND sv.release_date > CURRENT_DATE) AS next_release_date,
@@ -413,6 +431,9 @@ func (r *SeriesRepo) Create(ctx context.Context, id, libraryID uuid.UUID, name, 
 	if _, err := r.db.Exec(ctx, q, id, libraryID, name, description, totalCount, status, originalLanguage, publicationYear, demographic, genres, url, externalID, externalSource, createdBy); err != nil {
 		return nil, fmt.Errorf("inserting series: %w", err)
 	}
+	if err := r.setGenres(ctx, id, genres); err != nil {
+		return nil, err
+	}
 	return r.FindByID(ctx, id, uuid.Nil)
 }
 
@@ -445,7 +466,37 @@ func (r *SeriesRepo) Update(ctx context.Context, id uuid.UUID, name, description
 	if result.RowsAffected() == 0 {
 		return nil, ErrNotFound
 	}
+	if err := r.setGenres(ctx, id, genres); err != nil {
+		return nil, err
+	}
 	return r.FindByID(ctx, id, uuid.Nil)
+}
+
+// setGenres keys a series into the shared genre vocabulary.
+//
+// Names in, ids resolved here, because a caller editing a series is picking
+// words out of a list and should not have to know the list is a table.
+//
+// A name that is not in the vocabulary is dropped rather than created. Letting
+// anything invent a genre is exactly what produced the free-text column this
+// replaced, where one facet counted "Sci-Fi" beside "Science Fiction" beside
+// "Science fiction" and none of them knew about the others.
+func (r *SeriesRepo) setGenres(ctx context.Context, seriesID uuid.UUID, names []string) error {
+	if _, err := r.db.Exec(ctx,
+		`DELETE FROM series_genres WHERE series_id = $1`, seriesID); err != nil {
+		return fmt.Errorf("clearing series genres: %w", err)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	if _, err := r.db.Exec(ctx, `
+		INSERT INTO series_genres (series_id, genre_id)
+		SELECT $1, g.id FROM genres g
+		 WHERE g.name_lower = ANY(SELECT lower(trim(n)) FROM unnest($2::text[]) AS n)
+		ON CONFLICT DO NOTHING`, seriesID, names); err != nil {
+		return fmt.Errorf("setting series genres: %w", err)
+	}
+	return nil
 }
 
 func (r *SeriesRepo) Delete(ctx context.Context, id uuid.UUID) error {

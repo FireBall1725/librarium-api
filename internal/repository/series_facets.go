@@ -104,9 +104,11 @@ func (r *SeriesRepo) Facets(
 		mediaCond = seriesMediaTypeExists("f.id", arg(f.MediaTypes))
 	}
 	if len(f.Genres) > 0 {
-		// Overlap, not containment: ticking two genres means either, which is
-		// what a checkbox list means everywhere else in the rail.
-		genreCond = "f.genres && " + arg(f.Genres)
+		// Ticking two genres means either, which is what a checkbox list means
+		// everywhere else in the rail.
+		genreCond = `EXISTS (
+            SELECT 1 FROM series_genres sg_f JOIN genres g_f ON g_f.id = sg_f.genre_id
+             WHERE sg_f.series_id = f.id AND g_f.name = ANY(` + arg(f.Genres) + `))`
 	}
 	if f.Status != "" {
 		statusCond = "f.status = " + arg(f.Status)
@@ -165,7 +167,7 @@ func (r *SeriesRepo) Facets(
 
 	q := fmt.Sprintf(`
 WITH f AS (
-    SELECT s.id, s.library_id, s.status, s.genres,
+    SELECT s.id, s.library_id, s.status,
            (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
            %s AS book_count,
            %s AS read_count,
@@ -184,7 +186,8 @@ SELECT 'media_type', mt.name, mt.display_name, COUNT(DISTINCT f.id)
  WHERE %s GROUP BY mt.name, mt.display_name
 UNION ALL
 SELECT 'genre', g.name, g.name, COUNT(DISTINCT f.id)
-  FROM f, unnest(f.genres) AS g(name)
+  FROM f JOIN series_genres sg ON sg.series_id = f.id
+         JOIN genres g ON g.id = sg.genre_id
  WHERE %s GROUP BY g.name
 UNION ALL
 SELECT 'status', f.status, f.status, COUNT(*)
