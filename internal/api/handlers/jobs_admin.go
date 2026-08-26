@@ -406,6 +406,27 @@ func (h *UnifiedJobsHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// One run of a kind at a time.
+	//
+	// This never checked, so pressing Run now twice started two concurrent runs.
+	// For a kind that walks the catalogue that is not the same work done twice
+	// but a race with itself: two series syncs put 175 duplicate books in a real
+	// collection, each promoting volumes the other had not committed yet.
+	//
+	// The cutoff is what stops a crashed run blocking a kind forever. A process
+	// that died leaves its row saying running with nothing behind it, so an old
+	// enough row is treated as gone rather than as a reason to refuse.
+	const staleRun = 6 * time.Hour
+	if running, err := h.jobs.IsKindRunning(r.Context(), string(kind), staleRun); err != nil {
+		respond.ServerError(w, r, err)
+		return
+	} else if running {
+		// 409 rather than 400: the request is well formed and would be fine in
+		// a moment, which is exactly what a conflict means.
+		respond.Error(w, http.StatusConflict, "that job is already running")
+		return
+	}
+
 	now := time.Now()
 	j := &models.Job{
 		Kind:        kind,

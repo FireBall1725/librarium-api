@@ -2259,11 +2259,22 @@ func TestRatingIsAveragedButStillIndividual(t *testing.T) {
 	alice := scratchUser(t, pool, ctx)
 	bob := scratchUser(t, pool, ctx)
 
+	// A book nobody has rated, because the arithmetic below depends on it.
+	//
+	// This took the first held copy it found, which was fine only while that
+	// row happened to be unrated: alice's 9 and bob's 6 average to 8, and a
+	// third rating already on the book moves the answer somewhere the filter
+	// will not find. The row is arbitrary with no ORDER BY, so a book added or
+	// removed anywhere could change which one it grabs, and the test would fail
+	// on a change that had nothing to do with it.
 	var libraryID, bookID uuid.UUID
 	if err := pool.QueryRow(ctx, `
 		SELECT c.library_id, c.book_id FROM copies c
-		 WHERE c.deleted_at IS NULL LIMIT 1`).Scan(&libraryID, &bookID); err != nil {
-		t.Skipf("no held book to rate: %v", err)
+		 WHERE c.deleted_at IS NULL
+		   AND NOT EXISTS (SELECT 1 FROM user_books ub
+		                    WHERE ub.book_id = c.book_id AND ub.rating IS NOT NULL)
+		 ORDER BY c.book_id LIMIT 1`).Scan(&libraryID, &bookID); err != nil {
+		t.Skipf("no unrated held book to rate: %v", err)
 	}
 
 	var roleID uuid.UUID
@@ -3878,5 +3889,69 @@ func TestPromotingTwiceAtOnceStillPromotesOnce(t *testing.T) {
 	}
 	if orphans != 0 {
 		t.Errorf("%d promoted books have no volume pointing at them", orphans)
+	}
+}
+
+// A kind that is already going is not started again.
+//
+// Triggering never checked, so pressing Run now twice started two concurrent
+// runs. For a kind that walks the catalogue that is a race with itself rather
+// than duplicated work, and it is how 175 duplicate books reached a real
+// collection.
+func TestAJobKindDoesNotRunTwiceAtOnce(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewJobRepo(pool)
+
+	const kind = "zz_test_kind"
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM jobs WHERE kind = $1`, kind) })
+
+	running, err := repo.IsKindRunning(ctx, kind, time.Hour)
+	if err != nil {
+		t.Fatalf("checking: %v", err)
+	}
+	if running {
+		t.Fatal("a kind with no jobs at all reports as running")
+	}
+
+	var jobID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO jobs (kind, status, triggered_by, started_at)
+		VALUES ($1, 'running', 'admin', NOW()) RETURNING id`, kind).Scan(&jobID); err != nil {
+		t.Fatalf("starting a job: %v", err)
+	}
+
+	running, err = repo.IsKindRunning(ctx, kind, time.Hour)
+	if err != nil {
+		t.Fatalf("checking: %v", err)
+	}
+	if !running {
+		t.Error("a running job does not report as running, so a second run would start")
+	}
+
+	// A crashed run must not block the kind forever: its row says running with
+	// nothing behind it, and nobody can clear that by hand.
+	if _, err := pool.Exec(ctx,
+		`UPDATE jobs SET started_at = NOW() - INTERVAL '8 hours' WHERE id = $1`, jobID); err != nil {
+		t.Fatalf("ageing the job: %v", err)
+	}
+	running, err = repo.IsKindRunning(ctx, kind, 6*time.Hour)
+	if err != nil {
+		t.Fatalf("checking: %v", err)
+	}
+	if running {
+		t.Error("a run older than the cutoff still blocks the kind")
+	}
+
+	// And a finished run never blocks anything.
+	if _, err := pool.Exec(ctx,
+		`UPDATE jobs SET status = 'completed', started_at = NOW() WHERE id = $1`, jobID); err != nil {
+		t.Fatalf("finishing the job: %v", err)
+	}
+	running, err = repo.IsKindRunning(ctx, kind, time.Hour)
+	if err != nil {
+		t.Fatalf("checking: %v", err)
+	}
+	if running {
+		t.Error("a completed job reports as running")
 	}
 }
