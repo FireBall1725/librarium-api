@@ -5,6 +5,8 @@ package handlers
 
 import (
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
@@ -123,7 +125,7 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items, err := h.series.ListAcrossFiltered(
-		r.Context(), libraryIDs, callerID(r), search, seriesIndexVolumes, filter,
+		r.Context(), libraryIDs, callerID(r), search, volumesWanted(q), filter,
 	)
 	if err != nil {
 		respond.ServerError(w, r, err)
@@ -150,6 +152,19 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]any{
 		"items": bodies, "total": len(bodies), "facets": facets,
 	})
+}
+
+// volumesWanted reads how much of each volume strip the caller needs.
+//
+// The rail counts a saved view by asking this endpoint for the total, and it
+// does not draw a single cover: without a way to say so, counting three views
+// meant building sixty preview rows per series three times over for a number.
+// Absent means the full strip, which is what the page itself wants.
+func volumesWanted(q url.Values) int {
+	if n, err := strconv.Atoi(q.Get("volumes")); err == nil && n > 0 && n < seriesIndexVolumes {
+		return n
+	}
+	return seriesIndexVolumes
 }
 
 // Counts godoc
