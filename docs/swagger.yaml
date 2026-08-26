@@ -1090,6 +1090,13 @@ definitions:
       slug:
         type: string
     type: object
+  github_com_fireball1725_librarium-api_internal_repository.RoleCount:
+    properties:
+      code:
+        type: string
+      count:
+        type: integer
+    type: object
   github_com_fireball1725_librarium-api_internal_service.AIPermissions:
     properties:
       favourites:
@@ -9864,6 +9871,10 @@ paths:
               items:
                 items:
                   $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.AuthorIndexEntry'
+                type: array
+              roles:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_repository.RoleCount'
                 type: array
               total:
                 type: integer

@@ -219,3 +219,45 @@ func indexLetter(sortName string) string {
 	}
 	return "#"
 }
+
+// RoleCount is how many people hold one role on a book in scope.
+type RoleCount struct {
+	Code  string `json:"code"`
+	Count int    `json:"count"`
+}
+
+// RoleCounts reports which roles actually have somebody behind them.
+//
+// The vocabulary lists seven and this collection uses three: offering the other
+// four is offering a filter that returns nothing, which is the one thing a
+// count is supposed to prevent. Scoped like the index itself, so a role nobody
+// in these libraries holds does not appear because another library uses it.
+func (r *ContributorRepo) RoleCounts(
+	ctx context.Context, libraryIDs []uuid.UUID,
+) ([]RoleCount, error) {
+	if len(libraryIDs) == 0 {
+		return []RoleCount{}, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT bc.role, count(DISTINCT bc.contributor_id)::int
+		  FROM book_contributors bc
+		 WHERE EXISTS (SELECT 1 FROM held_books hb
+		                WHERE hb.book_id = bc.book_id
+		                  AND hb.library_id = ANY($1) AND hb.deleted_at IS NULL)
+		 GROUP BY bc.role
+		 ORDER BY 2 DESC, 1`, libraryIDs)
+	if err != nil {
+		return nil, fmt.Errorf("counting contributor roles: %w", err)
+	}
+	defer rows.Close()
+
+	out := []RoleCount{}
+	for rows.Next() {
+		var rc RoleCount
+		if err := rows.Scan(&rc.Code, &rc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, rc)
+	}
+	return out, rows.Err()
+}

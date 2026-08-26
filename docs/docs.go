@@ -12902,6 +12902,12 @@ const docTemplate = `{
                                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.AuthorIndexEntry"
                                     }
                                 },
+                                "roles": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.RoleCount"
+                                    }
+                                },
                                 "total": {
                                     "type": "integer"
                                 }
@@ -17256,6 +17262,17 @@ const docTemplate = `{
                 },
                 "slug": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.RoleCount": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "count": {
+                    "type": "integer"
                 }
             }
         },

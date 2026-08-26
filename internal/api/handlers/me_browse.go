@@ -275,7 +275,7 @@ func authorBody(a *repository.AuthorIndexEntry) map[string]any {
 //	@Security    BearerAuth
 //	@Param       role  query  string  false  "Contributor roles, comma separated. Defaults to author."
 //	@Param       lib   query  string  false  "Library UUIDs, comma separated. Narrows the scope; cannot widen it."
-//	@Success     200  {object}  object{items=[]repository.AuthorIndexEntry,total=int}
+//	@Success     200  {object}  object{items=[]repository.AuthorIndexEntry,total=int,roles=[]repository.RoleCount}
 //	@Failure     401  {object}  object{error=string}
 //	@Router      /me/authors/index [get]
 func (h *MeBrowseHandler) AuthorsIndex(w http.ResponseWriter, r *http.Request) {
@@ -307,11 +307,23 @@ func (h *MeBrowseHandler) AuthorsIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Which roles have somebody behind them, so the page can offer the three
+	// this collection uses rather than the seven the vocabulary defines.
+	// Unaffected by the role being asked for: a control that narrowed itself
+	// would leave no way back to the role you just left.
+	roleCounts, err := h.contributors.RoleCounts(r.Context(), libraryIDs)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
 	bodies := make([]map[string]any, 0, len(items))
 	for _, a := range items {
 		bodies = append(bodies, authorBody(a))
 	}
-	respond.JSON(w, http.StatusOK, map[string]any{"items": bodies, "total": len(bodies)})
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"items": bodies, "total": len(bodies), "roles": roleCounts,
+	})
 }
 
 // MyShelves godoc
