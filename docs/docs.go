@@ -13413,7 +13413,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Only the keys present are changed, so renaming a list does not require sending the rest of it back. Kind is absent on purpose: a manual list cannot become smart without its enumerated books becoming a lie.",
+                "description": "Also moves a list between private, shared with a library and public. Sharing into a library needs a role on it, and a public list keeps the token it already has so links already handed out keep working.\nOnly the keys present are changed, so renaming a list does not require sending the rest of it back. Kind is absent on purpose: a manual list cannot become smart without its enumerated books becoming a lie.",
                 "consumes": [
                     "application/json"
                 ],

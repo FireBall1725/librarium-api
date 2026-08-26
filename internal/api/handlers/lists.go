@@ -221,11 +221,16 @@ type updateListBody struct {
 	Layout       *string         `json:"layout"`
 	DisplayOrder *int            `json:"display_order"`
 	Filter       json.RawMessage `json:"filter"`
+	// Sharing. Visibility moves the list; SharedLibraryID names where to, and
+	// is required when moving to 'library'.
+	Visibility      *string `json:"visibility"`
+	SharedLibraryID *string `json:"shared_library_id"`
 }
 
 // UpdateList godoc
 //
 // @Summary     Change one of my lists
+// @Description Also moves a list between private, shared with a library and public. Sharing into a library needs a role on it, and a public list keeps the token it already has so links already handed out keep working.
 // @Description Only the keys present are changed, so renaming a list does not require sending the rest of it back. Kind is absent on purpose: a manual list cannot become smart without its enumerated books becoming a lie.
 // @Tags        me
 // @Accept      json
@@ -249,7 +254,7 @@ func (h *ListHandler) UpdateList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.lists.Update(r.Context(), list.ID, repository.UpdateListInput{
+	in := repository.UpdateListInput{
 		Name:         body.Name,
 		Description:  body.Description,
 		Icon:         body.Icon,
@@ -257,7 +262,31 @@ func (h *ListHandler) UpdateList(w http.ResponseWriter, r *http.Request) {
 		Layout:       body.Layout,
 		DisplayOrder: body.DisplayOrder,
 		Filter:       body.Filter,
-	})
+		Visibility:   body.Visibility,
+	}
+	if body.SharedLibraryID != nil && *body.SharedLibraryID != "" {
+		libraryID, err := uuid.Parse(*body.SharedLibraryID)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid library id")
+			return
+		}
+		// Checked here rather than trusted from the body. The library id
+		// arrives from the client, so without this, sharing would be a way to
+		// put a row into the rail of a library the sender cannot reach.
+		allowed, err := h.lists.CanShareInto(r.Context(), callerOf(r), libraryID)
+		if err != nil {
+			respond.ServerError(w, r, err)
+			return
+		}
+		if !allowed {
+			respond.Error(w, http.StatusForbidden,
+				"you cannot share a list into a library you do not belong to")
+			return
+		}
+		in.SharedLibraryID = &libraryID
+	}
+
+	updated, err := h.lists.Update(r.Context(), list.ID, in)
 	switch {
 	case errors.Is(err, repository.ErrSmartListNotEnumerable):
 		respond.Error(w, http.StatusBadRequest,

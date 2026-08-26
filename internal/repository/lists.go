@@ -340,6 +340,15 @@ type UpdateListInput struct {
 	Layout       *string
 	DisplayOrder *int
 	Filter       []byte
+	// Visibility moves a list between private, shared with a library and
+	// public. Nil leaves it where it is.
+	//
+	// Its own field rather than three, because the three columns behind it have
+	// to move together: the table refuses a library visibility with no library
+	// and a public one with no token.
+	Visibility *string
+	// SharedLibraryID is required when moving to 'library' and ignored otherwise.
+	SharedLibraryID *uuid.UUID
 }
 
 // Update changes a list in place. A nil field is left alone rather than
@@ -359,6 +368,15 @@ func (r *ListRepo) Update(ctx context.Context, id uuid.UUID, in UpdateListInput)
 	}
 	if in.Layout != nil && !validLayouts[*in.Layout] {
 		return nil, fmt.Errorf("unknown layout %q", *in.Layout)
+	}
+
+	// Sharing moves first and on its own. COALESCE cannot express it: going
+	// private has to write NULL into shared_library_id, and a nil argument
+	// there means "keep" rather than "clear".
+	if in.Visibility != nil {
+		if err := r.setVisibility(ctx, id, in); err != nil {
+			return nil, err
+		}
 	}
 
 	// COALESCE rather than a built-up SET list: every column is named once, the
@@ -388,6 +406,66 @@ func (r *ListRepo) Update(ctx context.Context, id uuid.UUID, in UpdateListInput)
 		return nil, ErrNotFound
 	}
 	return r.FindByID(ctx, id)
+}
+
+// setVisibility writes the three columns that have to agree with each other.
+//
+// A public list keeps the token it already has. Minting a fresh one would break
+// every link already handed out, which is not what "keep sharing this" means.
+func (r *ListRepo) setVisibility(ctx context.Context, id uuid.UUID, in UpdateListInput) error {
+	var library any
+	var token any
+
+	switch *in.Visibility {
+	case "private":
+		// Both cleared. A row that says private while still naming a library is
+		// exactly what the constraint exists to refuse.
+	case "library":
+		if in.SharedLibraryID == nil {
+			return fmt.Errorf("a list shared with a library needs the library")
+		}
+		library = *in.SharedLibraryID
+	case "public":
+		t, err := newShareToken()
+		if err != nil {
+			return err
+		}
+		token = t
+	default:
+		return fmt.Errorf("unknown visibility %q", *in.Visibility)
+	}
+
+	const q = `
+		UPDATE lists
+		   SET visibility        = $2,
+		       shared_library_id = $3,
+		       share_token       = CASE WHEN $2 = 'public'
+		                                THEN COALESCE(share_token, $4)
+		                                ELSE NULL END,
+		       updated_at        = NOW()
+		 WHERE id = $1`
+	if _, err := r.db.Exec(ctx, q, id, *in.Visibility, library, token); err != nil {
+		return fmt.Errorf("changing who can see the list: %w", err)
+	}
+	return nil
+}
+
+// CanShareInto reports whether this person may share something into a library.
+//
+// Without it, sharing would be a way to put a row into somebody else's rail:
+// the id travels in the request body, so nothing else stops a list being shared
+// into a library the sender cannot reach.
+func (r *ListRepo) CanShareInto(ctx context.Context, userID, libraryID uuid.UUID) (bool, error) {
+	const q = `
+		SELECT EXISTS (
+		    SELECT 1 FROM user_roles ur
+		     WHERE ur.user_id = $1
+		       AND (ur.library_id IS NULL OR ur.library_id = $2))`
+	var ok bool
+	if err := r.db.QueryRow(ctx, q, userID, libraryID).Scan(&ok); err != nil {
+		return false, fmt.Errorf("checking library access: %w", err)
+	}
+	return ok, nil
 }
 
 var validLayouts = map[string]bool{"grid": true, "list": true, "compact": true}

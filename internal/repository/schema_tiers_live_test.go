@@ -2065,3 +2065,72 @@ func TestASharedListIsEditableByTheLibrary(t *testing.T) {
 		}
 	}
 }
+
+// Sharing has to be changeable after the fact. A list starts private because
+// that is the safe default, and deciding later that the household should see it
+// is the normal case, not a reason to rebuild it by hand.
+func TestAListMovesBetweenPrivateAndShared(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	lists := NewListRepo(pool)
+
+	owner := scratchUser(t, pool, ctx)
+	var libraryID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library to share into: %v", err)
+	}
+
+	made, err := lists.Create(ctx, CreateListInput{
+		OwnerUserID: owner, Name: "Gift ideas", Kind: "manual",
+		Layout: "list", Visibility: "private",
+	})
+	if err != nil {
+		t.Fatalf("creating a private list: %v", err)
+	}
+
+	shared := "library"
+	got, err := lists.Update(ctx, made.ID, UpdateListInput{
+		Visibility: &shared, SharedLibraryID: &libraryID,
+	})
+	if err != nil {
+		t.Fatalf("sharing it: %v", err)
+	}
+	if got.Visibility != "library" || got.SharedLibraryID == nil || *got.SharedLibraryID != libraryID {
+		t.Fatalf("after sharing: visibility=%q library=%v", got.Visibility, got.SharedLibraryID)
+	}
+
+	// And back. The library has to be cleared with it or the row breaks the
+	// constraint that ties the two together.
+	private := "private"
+	got, err = lists.Update(ctx, made.ID, UpdateListInput{Visibility: &private})
+	if err != nil {
+		t.Fatalf("making it private again: %v", err)
+	}
+	if got.Visibility != "private" || got.SharedLibraryID != nil {
+		t.Errorf("after unsharing: visibility=%q library=%v, want private and nothing",
+			got.Visibility, got.SharedLibraryID)
+	}
+
+	// Naming no library is refused rather than written as a row the table would
+	// reject anyway, so the message says what is missing.
+	if _, err := lists.Update(ctx, made.ID, UpdateListInput{Visibility: &shared}); err == nil {
+		t.Error("shared a list with no library named")
+	}
+
+	// A public list keeps its token, or every link already handed out dies the
+	// next time anything about the list is saved.
+	public := "public"
+	first, err := lists.Update(ctx, made.ID, UpdateListInput{Visibility: &public})
+	if err != nil {
+		t.Fatalf("publishing it: %v", err)
+	}
+	if first.ShareToken == "" {
+		t.Fatal("a public list came back with no token")
+	}
+	again, err := lists.Update(ctx, made.ID, UpdateListInput{Visibility: &public})
+	if err != nil {
+		t.Fatalf("saving it again: %v", err)
+	}
+	if again.ShareToken != first.ShareToken {
+		t.Errorf("the token changed on a second save: %q then %q", first.ShareToken, again.ShareToken)
+	}
+}
