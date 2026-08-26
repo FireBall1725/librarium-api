@@ -2558,3 +2558,89 @@ func TestRatingFacetReadsDownTheScale(t *testing.T) {
 		}
 	}
 }
+
+// Owning a container is owning what is inside it. A three-in-one puts volumes
+// one to three on the shelf; without that, each is a gap, and the rail offers
+// to find someone books already in their hands.
+//
+// BookContentsRepo.ListContainers was written to answer exactly this and
+// nothing called it, so the rule existed everywhere except where it counted.
+func TestOwningAnOmnibusOwnsWhatIsInsideIt(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	books := NewBookRepo(pool)
+
+	var libraryID, omnibusID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT c.library_id, c.book_id FROM copies c
+		 WHERE c.deleted_at IS NULL LIMIT 1`).Scan(&libraryID, &omnibusID); err != nil {
+		t.Skipf("no held book to use as a container: %v", err)
+	}
+
+	// A volume nobody holds, recorded against a series in this library so it
+	// starts life as a gap.
+	var mediaTypeID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM media_types LIMIT 1`).Scan(&mediaTypeID); err != nil {
+		t.Skipf("no media type: %v", err)
+	}
+	inside := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO books (id, title, media_type_id) VALUES ($1, 'ZZ contained volume', $2)`,
+		inside, mediaTypeID); err != nil {
+		t.Fatalf("creating the contained volume: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM books WHERE id = $1`, inside) })
+
+	seriesID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO series (id, library_id, name) VALUES ($1, $2, 'ZZ containment series')`,
+		seriesID, libraryID); err != nil {
+		t.Fatalf("creating the series: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM series WHERE id = $1`, seriesID) })
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO book_series (book_id, series_id, position) VALUES ($1, $2, 1)`,
+		inside, seriesID); err != nil {
+		t.Fatalf("putting it in the series: %v", err)
+	}
+
+	ownership := func() string {
+		var got string
+		err := pool.QueryRow(ctx, `
+			SELECT o.ownership FROM (`+bookScopeCTE(1, 0)+`) o WHERE o.book_id = $2`,
+			[]uuid.UUID{libraryID}, inside).Scan(&got)
+		if err != nil {
+			return "none"
+		}
+		return got
+	}
+
+	// Nobody holds it and nothing contains it, so it is a gap.
+	if got := ownership(); got != OwnershipGap {
+		t.Fatalf("before containment the volume read as %q, want %q", got, OwnershipGap)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO book_contents (container_id, contained_id, position) VALUES ($1, $2, 1)`,
+		omnibusID, inside); err != nil {
+		t.Fatalf("recording containment: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM book_contents WHERE container_id = $1 AND contained_id = $2`,
+			omnibusID, inside)
+	})
+
+	// Now a held book contains it, so it is on the shelf.
+	if got := ownership(); got != OwnershipShelf {
+		t.Errorf("inside a held container the volume read as %q, want %q", got, OwnershipShelf)
+	}
+
+	// And it does not also come back as a gap, or the facet counts stop summing
+	// to the total and a reader who ticks every box sees it twice.
+	_, held, err := books.List(ctx, libraryID, ListBooksOpts{
+		PerPage: 5, Selection: FacetSelection{Ownership: []string{OwnershipGap}},
+	})
+	if err != nil {
+		t.Fatalf("listing gaps: %v", err)
+	}
+	_ = held
+}

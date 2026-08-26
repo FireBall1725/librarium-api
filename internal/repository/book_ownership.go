@@ -67,10 +67,30 @@ func bookScopeCTE(libraryArg, callerArg int) string {
 	}
 
 	return fmt.Sprintf(`
+    WITH RECURSIVE contained AS (
+            SELECT bc.contained_id, 1 AS depth
+              FROM book_contents bc
+              JOIN held_books h ON h.book_id = bc.container_id
+             WHERE h.library_id = ANY($%d) AND h.deleted_at IS NULL
+        UNION
+            SELECT bc.contained_id, c.depth + 1
+              FROM contained c
+              JOIN book_contents bc ON bc.container_id = c.contained_id
+             WHERE c.depth < 32
+    )
     SELECT DISTINCT ON (o.book_id) o.book_id, o.ownership
     FROM (
         SELECT lb.book_id, '%s' AS ownership FROM held_books lb
-        WHERE lb.library_id = ANY($%d) AND lb.deleted_at IS NULL%s
+        WHERE lb.library_id = ANY($%d) AND lb.deleted_at IS NULL
+        UNION ALL
+        -- Owning a container is owning what is inside it. A three-in-one puts
+        -- volumes one to three on the shelf, and without this arm each of them
+        -- is a gap: the rail offers to find someone books already in their
+        -- hands, and the series reports holes in a run that is complete.
+        --
+        -- Downward from what is held, bounded, because a cycle in the data
+        -- would otherwise hang every read of the collection.
+        SELECT c.contained_id, '%s' FROM contained c%s
         UNION ALL
         -- A gap is a book already recorded against a series in one of your
         -- libraries that no library holds. Series membership is what makes it
@@ -81,5 +101,7 @@ func bookScopeCTE(libraryArg, callerArg int) string {
         WHERE se.library_id = ANY($%d)
     ) o
     ORDER BY o.book_id, %s`,
-		OwnershipShelf, libraryArg, personal, OwnershipGap, libraryArg, ownershipRank)
+		libraryArg,
+		OwnershipShelf, libraryArg, OwnershipShelf, personal,
+		OwnershipGap, libraryArg, ownershipRank)
 }
