@@ -42,19 +42,32 @@ func readStateSubqueries(callerArg int) string {
 	if callerArg == 0 {
 		return `0 AS read_count, 0 AS reading_count`
 	}
+	return seriesReadCountExpr(callerArg) + " AS read_count, " +
+		seriesReadingCountExpr(callerArg) + " AS reading_count"
+}
+
+// How many books of a run the caller has finished, and how many they are part
+// way through.
+//
+// Split out of readStateSubqueries because filtering and sorting on read state
+// needs the bare expression: HAVING and ORDER BY run before the SELECT list's
+// aliases exist, so the expression has to be repeated rather than named.
+func seriesReadCountExpr(callerArg int) string {
+	return seriesStatusCountExpr(callerArg, "read")
+}
+
+func seriesReadingCountExpr(callerArg int) string {
+	return seriesStatusCountExpr(callerArg, "reading")
+}
+
+func seriesStatusCountExpr(callerArg int, status string) string {
 	return fmt.Sprintf(`
        (SELECT COUNT(*)::int FROM book_series bs2
           JOIN books b ON b.id = bs2.book_id
           WHERE bs2.series_id = s.id AND (
               SELECT ubi.read_status FROM user_books ubi
               WHERE ubi.book_id = b.id AND ubi.user_id = $%d AND ubi.deleted_at IS NULL
-          ) = 'read') AS read_count,
-       (SELECT COUNT(*)::int FROM book_series bs2
-          JOIN books b ON b.id = bs2.book_id
-          WHERE bs2.series_id = s.id AND (
-              SELECT ubi.read_status FROM user_books ubi
-              WHERE ubi.book_id = b.id AND ubi.user_id = $%d AND ubi.deleted_at IS NULL
-          ) = 'reading') AS reading_count`, callerArg, callerArg)
+          ) = '%s')`, callerArg, status)
 }
 
 // seriesBookCountExpr counts the volumes of a series the library actually holds.
@@ -78,7 +91,9 @@ func readStateSubqueries(callerArg int) string {
 // of the run either way. A container covers what it holds, so owning only the
 // three-in-one counts as three, which is what the ownership rule already says
 // on the Books page.
-const seriesBookCountExpr = `(
+// seriesBookCountValue is the same count without its alias, for the places that
+// run before the SELECT list exists.
+const seriesBookCountValue = `(
 	           SELECT count(DISTINCT covered.position)
 	             FROM book_series bs2
 	             JOIN held_books lb
@@ -96,13 +111,15 @@ const seriesBookCountExpr = `(
 	                      WHERE bc.container_id = bs2.book_id
 	             ) covered
 	            WHERE bs2.series_id = s.id
-	       ) AS book_count`
+	       )`
+
+const seriesBookCountExpr = seriesBookCountValue + ` AS book_count`
 
 // ─── Series CRUD ──────────────────────────────────────────────────────────────
 
 // List is the per-library entry point.
 func (r *SeriesRepo) List(ctx context.Context, libraryID, callerID uuid.UUID, search, tagFilter string) ([]*models.Series, error) {
-	return r.listScoped(ctx, []uuid.UUID{libraryID}, callerID, search, tagFilter, defaultPreviewBooks)
+	return r.listScoped(ctx, []uuid.UUID{libraryID}, callerID, search, tagFilter, defaultPreviewBooks, SeriesFilter{})
 }
 
 // ListAcross lists series spanning several libraries, for the cross-library
@@ -119,14 +136,46 @@ func (r *SeriesRepo) ListAcross(ctx context.Context, libraryIDs []uuid.UUID, cal
 	if len(libraryIDs) == 0 {
 		return []*models.Series{}, nil
 	}
-	return r.listScoped(ctx, libraryIDs, callerID, search, "", previewBooks)
+	return r.listScoped(ctx, libraryIDs, callerID, search, "", previewBooks, SeriesFilter{})
+}
+
+// SeriesFilter narrows and orders the cross-library index.
+//
+// Every one of these used to be a client-side pass over whatever the server
+// happened to send, which worked only because the per-library page never had
+// more than one library's worth of rows to filter. Across every library the
+// list is the whole instance, so the narrowing has to happen where the rows
+// are.
+type SeriesFilter struct {
+	// Status is a publication status: ongoing, completed, hiatus, cancelled.
+	Status string
+	// Arcs is "with" or "without". Empty means either.
+	Arcs string
+	// Reading is unread, reading, or read_all, derived from the caller's own
+	// progress through the run rather than stored anywhere.
+	Reading string
+	Tag     string
+	// Sort is name, volumes, missing, read, or recent. Empty means name.
+	Sort string
+	Desc bool
+}
+
+// ListAcrossFiltered is the index behind /me/series.
+func (r *SeriesRepo) ListAcrossFiltered(
+	ctx context.Context, libraryIDs []uuid.UUID, callerID uuid.UUID,
+	search string, previewBooks int, f SeriesFilter,
+) ([]*models.Series, error) {
+	if len(libraryIDs) == 0 {
+		return []*models.Series{}, nil
+	}
+	return r.listScoped(ctx, libraryIDs, callerID, search, f.Tag, previewBooks, f)
 }
 
 // defaultPreviewBooks is what a series card shows: enough to suggest the run
 // without paying for the whole thing.
 const defaultPreviewBooks = 4
 
-func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, callerID uuid.UUID, search, tagFilter string, previewBooks int) ([]*models.Series, error) {
+func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, callerID uuid.UUID, search, tagFilter string, previewBooks int, f SeriesFilter) ([]*models.Series, error) {
 	if previewBooks <= 0 {
 		previewBooks = defaultPreviewBooks
 	}
@@ -140,10 +189,71 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 		args = append(args, tagFilter)
 		where += fmt.Sprintf(` AND EXISTS (SELECT 1 FROM series_tags st JOIN tags t ON t.id = st.tag_id WHERE st.series_id = s.id AND lower(t.name) = lower($%d))`, len(args))
 	}
+	if f.Status != "" {
+		args = append(args, f.Status)
+		where += fmt.Sprintf(` AND s.status = $%d`, len(args))
+	}
 	callerArg := 0
 	if callerID != uuid.Nil {
 		args = append(args, callerID)
 		callerArg = len(args)
+	}
+
+	// Arcs, reading state and the sort all key off values the SELECT computes,
+	// so they cannot sit in the WHERE beside the library scope. HAVING runs
+	// after the aggregate, which is exactly where they belong; repeating the
+	// expression rather than naming the alias is what Postgres requires there.
+	having := ""
+	addHaving := func(cond string) {
+		if having == "" {
+			having = " HAVING " + cond
+		} else {
+			having += " AND " + cond
+		}
+	}
+	const arcCount = `(SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id)`
+	switch f.Arcs {
+	case "with":
+		addHaving(arcCount + " > 0")
+	case "without":
+		addHaving(arcCount + " = 0")
+	}
+	// Read state describes how far the caller is through the run, so an
+	// anonymous read has no opinion to filter on and every arm would match
+	// nothing. Left alone rather than returning an empty list.
+	if callerArg > 0 {
+		switch f.Reading {
+		case "unread":
+			addHaving(seriesReadCountExpr(callerArg) + " = 0 AND " + seriesReadingCountExpr(callerArg) + " = 0")
+		case "reading":
+			addHaving(seriesReadingCountExpr(callerArg) + " > 0")
+		case "read_all":
+			addHaving(seriesBookCountValue + " > 0 AND " +
+				seriesReadCountExpr(callerArg) + " >= " + seriesBookCountValue)
+		}
+	}
+
+	dir := "ASC"
+	if f.Desc {
+		dir = "DESC"
+	}
+	// NULLS LAST on every numeric sort, so a series with no total or no
+	// progress falls to the end rather than heading a list it says nothing
+	// about. Name is the tiebreak everywhere, which keeps the order stable
+	// across reloads when the sort key ties.
+	order := " ORDER BY lower(s.name) " + dir
+	switch f.Sort {
+	case "volumes":
+		order = " ORDER BY " + seriesBookCountValue + " " + dir + " NULLS LAST, lower(s.name) ASC"
+	case "missing":
+		order = " ORDER BY GREATEST(COALESCE(s.total_count, 0) - " + seriesBookCountValue + ", 0) " +
+			dir + " NULLS LAST, lower(s.name) ASC"
+	case "read":
+		if callerArg > 0 {
+			order = " ORDER BY " + seriesReadCountExpr(callerArg) + " " + dir + " NULLS LAST, lower(s.name) ASC"
+		}
+	case "recent":
+		order = " ORDER BY s.updated_at " + dir + ", lower(s.name) ASC"
 	}
 
 	q := `
@@ -178,8 +288,7 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 		FROM series s
 		LEFT JOIN book_series bs ON bs.series_id = s.id
 		` + where + `
-		GROUP BY s.id
-		ORDER BY s.name`
+		GROUP BY s.id` + having + order
 
 	rows, err := r.db.Query(ctx, q, args...)
 	if err != nil {

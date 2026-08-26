@@ -10589,6 +10589,34 @@ paths:
         in: query
         name: q
         type: string
+      - description: Comma-separated library ids to narrow to
+        in: query
+        name: lib
+        type: string
+      - description: ongoing | completed | hiatus | cancelled
+        in: query
+        name: status
+        type: string
+      - description: with | without
+        in: query
+        name: arcs
+        type: string
+      - description: unread | reading | read_all
+        in: query
+        name: reading
+        type: string
+      - description: Tag name
+        in: query
+        name: tag
+        type: string
+      - description: name | volumes | missing | read | recent
+        in: query
+        name: sort
+        type: string
+      - description: asc | desc
+        in: query
+        name: dir
+        type: string
       produces:
       - application/json
       responses:

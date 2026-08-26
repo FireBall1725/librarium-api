@@ -13983,6 +13983,48 @@ const docTemplate = `{
                         "description": "Name substring",
                         "name": "q",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated library ids to narrow to",
+                        "name": "lib",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ongoing | completed | hiatus | cancelled",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "with | without",
+                        "name": "arcs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "unread | reading | read_all",
+                        "name": "reading",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tag name",
+                        "name": "tag",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "name | volumes | missing | read | recent",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "asc | desc",
+                        "name": "dir",
+                        "in": "query"
                     }
                 ],
                 "responses": {

@@ -2983,3 +2983,92 @@ func TestPromotingVolumesFillsTheGaps(t *testing.T) {
 		t.Error("demotion deleted a book somebody actually owns")
 	}
 }
+
+// The series index narrows and orders on the server.
+//
+// Every filter used to be a client-side pass over whatever the server happened
+// to send, which worked only because the per-library page never had more than
+// one library's rows. Across every library the list is the whole instance.
+func TestSeriesIndexFiltersAndSortsOnTheServer(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewSeriesRepo(pool)
+
+	var libraryIDs []uuid.UUID
+	rows, err := pool.Query(ctx, `SELECT id FROM libraries`)
+	if err != nil {
+		t.Skipf("no libraries: %v", err)
+	}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatalf("scan: %v", err)
+		}
+		libraryIDs = append(libraryIDs, id)
+	}
+	rows.Close()
+
+	all, err := repo.ListAcrossFiltered(ctx, libraryIDs, uuid.Nil, "", 1, SeriesFilter{})
+	if err != nil {
+		t.Fatalf("listing: %v", err)
+	}
+	if len(all) < 2 {
+		t.Skip("not enough series to tell the filters apart")
+	}
+
+	// Status narrows to exactly the rows carrying it.
+	completed, err := repo.ListAcrossFiltered(ctx, libraryIDs, uuid.Nil, "", 1,
+		SeriesFilter{Status: "completed"})
+	if err != nil {
+		t.Fatalf("filtering by status: %v", err)
+	}
+	if len(completed) == len(all) {
+		t.Error("filtering by status returned everything, so it did not filter")
+	}
+	for _, s := range completed {
+		if s.Status != "completed" {
+			t.Errorf("%s has status %q in a completed-only list", s.Name, s.Status)
+		}
+	}
+
+	// Arcs, both directions, and the two halves have to add up to the whole.
+	with, err := repo.ListAcrossFiltered(ctx, libraryIDs, uuid.Nil, "", 1, SeriesFilter{Arcs: "with"})
+	if err != nil {
+		t.Fatalf("filtering by arcs: %v", err)
+	}
+	without, err := repo.ListAcrossFiltered(ctx, libraryIDs, uuid.Nil, "", 1, SeriesFilter{Arcs: "without"})
+	if err != nil {
+		t.Fatalf("filtering by arcs: %v", err)
+	}
+	if len(with)+len(without) != len(all) {
+		t.Errorf("with arcs (%d) plus without (%d) is %d, but there are %d series",
+			len(with), len(without), len(with)+len(without), len(all))
+	}
+	for _, s := range with {
+		if s.ArcCount == 0 {
+			t.Errorf("%s has no arcs in a with-arcs list", s.Name)
+		}
+	}
+
+	// Sorting by how many volumes are held, largest first.
+	byVolumes, err := repo.ListAcrossFiltered(ctx, libraryIDs, uuid.Nil, "", 1,
+		SeriesFilter{Sort: "volumes", Desc: true})
+	if err != nil {
+		t.Fatalf("sorting by volumes: %v", err)
+	}
+	for i := 1; i < len(byVolumes); i++ {
+		if byVolumes[i-1].BookCount < byVolumes[i].BookCount {
+			t.Fatalf("sorted by volumes descending, %s (%d) came before %s (%d)",
+				byVolumes[i-1].Name, byVolumes[i-1].BookCount,
+				byVolumes[i].Name, byVolumes[i].BookCount)
+		}
+	}
+
+	// And the default is still by name, which is what every existing caller
+	// expects to get back when it asks for nothing.
+	for i := 1; i < len(all); i++ {
+		if strings.ToLower(all[i-1].Name) > strings.ToLower(all[i].Name) {
+			t.Fatalf("the default order is not by name: %q before %q", all[i-1].Name, all[i].Name)
+		}
+	}
+}

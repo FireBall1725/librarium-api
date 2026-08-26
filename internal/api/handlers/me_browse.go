@@ -71,7 +71,14 @@ func callerID(r *http.Request) uuid.UUID {
 //	@Tags        me
 //	@Produce     json
 //	@Security    BearerAuth
-//	@Param       q  query  string  false  "Name substring"
+//	@Param       q        query  string  false  "Name substring"
+//	@Param       lib      query  string  false  "Comma-separated library ids to narrow to"
+//	@Param       status   query  string  false  "ongoing | completed | hiatus | cancelled"
+//	@Param       arcs     query  string  false  "with | without"
+//	@Param       reading  query  string  false  "unread | reading | read_all"
+//	@Param       tag      query  string  false  "Tag name"
+//	@Param       sort     query  string  false  "name | volumes | missing | read | recent"
+//	@Param       dir      query  string  false  "asc | desc"
 //	@Success     200  {object}  object{items=[]github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse,total=int}
 //	@Failure     401  {object}  object{error=string}
 //	@Router      /me/series/index [get]
@@ -81,10 +88,28 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 		respond.ServerError(w, r, err)
 		return
 	}
+	// The per-library Series page redirects here carrying its library, the same
+	// way Contributors does. Without this the reader asks for one library's
+	// series and silently gets every library's.
+	libraryIDs = narrowToReadable(libraryIDsFromQuery(r), libraryIDs)
+	if len(libraryIDs) == 0 {
+		respond.JSON(w, http.StatusOK, map[string]any{"items": []any{}, "total": 0})
+		return
+	}
 
-	items, err := h.series.ListAcross(
+	q := r.URL.Query()
+	filter := repository.SeriesFilter{
+		Status:  strings.TrimSpace(q.Get("status")),
+		Arcs:    strings.TrimSpace(q.Get("arcs")),
+		Reading: strings.TrimSpace(q.Get("reading")),
+		Tag:     strings.TrimSpace(q.Get("tag")),
+		Sort:    strings.TrimSpace(q.Get("sort")),
+		Desc:    q.Get("dir") == "desc",
+	}
+
+	items, err := h.series.ListAcrossFiltered(
 		r.Context(), libraryIDs, callerID(r),
-		strings.TrimSpace(r.URL.Query().Get("q")), seriesIndexVolumes,
+		strings.TrimSpace(q.Get("q")), seriesIndexVolumes, filter,
 	)
 	if err != nil {
 		respond.ServerError(w, r, err)
