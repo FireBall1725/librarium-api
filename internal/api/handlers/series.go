@@ -954,6 +954,9 @@ func previewBooksToBody(preview []models.SeriesPreviewBook) []map[string]any {
 			"book_id":   p.BookID,
 			"title":     p.Title,
 			"cover_url": coverURL,
+			// So a client can draw a volume nobody has differently from one on
+			// the shelf. The strip is the whole run, gaps included.
+			"held": p.Held,
 		})
 	}
 	return out

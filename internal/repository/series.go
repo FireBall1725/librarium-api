@@ -296,12 +296,21 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 		               'book_id', t.id,
 		               'title', t.title,
 		               'updated_at', t.updated_at,
-		               'has_cover', t.has_cover
+		               'has_cover', t.has_cover,
+		               'held', t.held
 		           ) ORDER BY t.position), '[]'::json)
 		           FROM (
 		               SELECT b.id, b.title, b.updated_at, bs2.position,
 		                      EXISTS(SELECT 1 FROM cover_images ci
-		                             WHERE ci.entity_type='book' AND ci.entity_id=b.id AND ci.is_primary=true) AS has_cover
+		                             WHERE ci.entity_type='book' AND ci.entity_id=b.id AND ci.is_primary=true) AS has_cover,
+		                      -- Whether this library actually has it. The strip
+		                      -- shows every volume of the run, promoted gaps
+		                      -- included, so without this a volume nobody owns
+		                      -- is drawn exactly like one on the shelf.
+		                      EXISTS(SELECT 1 FROM held_books hb
+		                             WHERE hb.book_id = b.id
+		                               AND hb.library_id = s.library_id
+		                               AND hb.deleted_at IS NULL) AS held
 		               FROM book_series bs2 JOIN books b ON b.id = bs2.book_id
 		               WHERE bs2.series_id = s.id
 		               ORDER BY bs2.position
@@ -354,12 +363,21 @@ func (r *SeriesRepo) FindByID(ctx context.Context, id, callerID uuid.UUID) (*mod
 		               'book_id', t.id,
 		               'title', t.title,
 		               'updated_at', t.updated_at,
-		               'has_cover', t.has_cover
+		               'has_cover', t.has_cover,
+		               'held', t.held
 		           ) ORDER BY t.position), '[]'::json)
 		           FROM (
 		               SELECT b.id, b.title, b.updated_at, bs2.position,
 		                      EXISTS(SELECT 1 FROM cover_images ci
-		                             WHERE ci.entity_type='book' AND ci.entity_id=b.id AND ci.is_primary=true) AS has_cover
+		                             WHERE ci.entity_type='book' AND ci.entity_id=b.id AND ci.is_primary=true) AS has_cover,
+		                      -- Whether this library actually has it. The strip
+		                      -- shows every volume of the run, promoted gaps
+		                      -- included, so without this a volume nobody owns
+		                      -- is drawn exactly like one on the shelf.
+		                      EXISTS(SELECT 1 FROM held_books hb
+		                             WHERE hb.book_id = b.id
+		                               AND hb.library_id = s.library_id
+		                               AND hb.deleted_at IS NULL) AS held
 		               FROM book_series bs2 JOIN books b ON b.id = bs2.book_id
 		               WHERE bs2.series_id = s.id
 		               ORDER BY bs2.position

@@ -47,6 +47,10 @@ type SeriesPreviewBook struct {
 	Title     string    `json:"title"`
 	HasCover  bool      `json:"has_cover"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Held says the library actually has this volume. The strip shows every
+	// volume of the run, missing ones included, so without it a volume nobody
+	// owns is drawn exactly like one on the shelf.
+	Held bool `json:"held"`
 }
 
 // SeriesArc is an optional named grouping of books inside a series. Manga
