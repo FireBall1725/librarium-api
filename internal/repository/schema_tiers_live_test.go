@@ -12,6 +12,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/models"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2511,5 +2512,49 @@ func TestLocationsListDepthFirst(t *testing.T) {
 	if at[root] > at[office] && at[root] < at[box] {
 		t.Errorf("a root landed inside another root's subtree, at %d between %d and %d",
 			at[root], at[office], at[box])
+	}
+}
+
+// A rating reads down its scale. Every other dimension is ordered by count,
+// which is right for a tag, where the question is what there is a lot of. On a
+// scale it put three and a half stars above five and read as a jumble.
+func TestRatingFacetReadsDownTheScale(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	books := NewBookRepo(pool)
+
+	// The library with the most distinct ratings, not whichever came first: an
+	// arbitrary one can easily hold nothing rated, and a test that skips itself
+	// checks nothing.
+	var libraryID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT c.library_id
+		  FROM copies c
+		  JOIN user_books ub ON ub.book_id = c.book_id AND ub.rating IS NOT NULL
+		 WHERE c.deleted_at IS NULL
+		 GROUP BY c.library_id
+		 ORDER BY count(DISTINCT ub.rating) DESC
+		 LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library holds a rated book: %v", err)
+	}
+	facets, err := books.Facets(ctx, []uuid.UUID{libraryID}, FacetSelection{}, "", nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("counting: %v", err)
+	}
+	if len(facets.Rating) < 2 {
+		t.Skip("fewer than two ratings in use, so there is no order to check")
+	}
+
+	for i := 1; i < len(facets.Rating); i++ {
+		prev, err := strconv.Atoi(facets.Rating[i-1].Value)
+		if err != nil {
+			t.Fatalf("a rating value was not a number: %q", facets.Rating[i-1].Value)
+		}
+		cur, err := strconv.Atoi(facets.Rating[i].Value)
+		if err != nil {
+			t.Fatalf("a rating value was not a number: %q", facets.Rating[i].Value)
+		}
+		if cur >= prev {
+			t.Errorf("rating %d came after %d; the scale has to descend", cur, prev)
+		}
 	}
 }

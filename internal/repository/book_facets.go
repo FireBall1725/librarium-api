@@ -6,6 +6,8 @@ package repository
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/fireball1725/librarium-api/internal/models"
@@ -457,6 +459,28 @@ ORDER BY 1, 4 DESC, 3`,
 	out.ReadStatus = fillClosed(out.ReadStatus, ReadStatusValues)
 	out.Favourite = fillClosed(out.Favourite, FavouriteValues)
 
+	// A rating is a position on a scale, so it reads down that scale. Every
+	// other dimension is ordered by count, which is right for a tag: the
+	// question there is "what is there a lot of". A rating list ordered that
+	// way put three and a half stars above five and read as a jumble, because
+	// the eye expects a scale to descend.
+	//
+	// Not zero-filled. The scale has ten points and most collections use a
+	// handful, so filling it would answer a question nobody asked with six
+	// empty rows.
+	sortByValueDesc(out.Rating)
+	sortByValueDesc(out.MyRating)
+
+	// A rating is a position on a scale, so it reads down that scale. Every
+	// other dimension is ordered by count, which is right for a tag: the
+	// question there is "what is there a lot of". A rating list ordered that
+	// way put three and a half stars above five and read as a jumble, because
+	// the eye expects a scale to descend.
+	//
+	// Not zero-filled. The scale has ten points and most collections use a
+	// handful, so filling it would answer a question nobody asked with six
+	// empty rows.
+
 	return out, nil
 }
 
@@ -474,6 +498,20 @@ var FavouriteValues = []string{"true", "false"}
 // present at zero, and anything unexpected kept on the end rather than dropped:
 // a value the database holds but this list has not heard of is a schema change,
 // and silently hiding it would make that change invisible.
+// sortByValueDesc orders a numeric facet best first, in place.
+func sortByValueDesc(vs []FacetValue) {
+	sort.Slice(vs, func(i, j int) bool {
+		a, errA := strconv.Atoi(vs[i].Value)
+		b, errB := strconv.Atoi(vs[j].Value)
+		if errA != nil || errB != nil {
+			// Not a number after all. Falling back to the string keeps the
+			// order stable rather than letting Slice shuffle equal elements.
+			return vs[i].Value > vs[j].Value
+		}
+		return a > b
+	})
+}
+
 func fillClosed(got []FacetValue, vocab []string) []FacetValue {
 	byValue := make(map[string]FacetValue, len(got))
 	for _, fv := range got {
