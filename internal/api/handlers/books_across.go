@@ -127,7 +127,14 @@ func libraryIDsFromQuery(r *http.Request) []uuid.UUID {
 // @Param       type      query string false "Media type names, comma separated"
 // @Param       genre     query string false "Genre names, comma separated"
 // @Param       tag       query string false "Tag names, comma separated"
-// @Param       rating    query string false "Ratings 0-5, comma separated"
+// @Param       rating    query string false "Average ratings 1-10, comma separated"
+// @Param       my_rating query string false "The caller's own ratings 1-10, comma separated"
+// @Param       own       query string false "Ownership states, comma separated: shelf, wishlist, suggested, gap"
+// @Param       shelf     query string false "List UUIDs, comma separated"
+// @Param       fav       query string false "Favourite: true or false"
+// @Param       contributor  query string false "Contributor UUIDs, comma separated"
+// @Param       series    query string false "Series UUIDs, comma separated"
+// @Param       location  query string false "Location UUIDs, comma separated; matches anything inside them too"
 // @Success     200  {object}  object{items=[]object,total=int,page=int,per_page=int}
 // @Failure     401  {object}  object{error=string}
 // @Router      /me/books [get]
@@ -282,9 +289,27 @@ func parseFacetSelection(r *http.Request) repository.FacetSelection {
 			sel.Contributors = append(sel.Contributors, id)
 		}
 	}
+	// Where the copy sits. By id like a library, because a place name is only
+	// unique within the library that holds it.
+	for _, s := range split("location") {
+		if id, err := uuid.Parse(s); err == nil {
+			sel.Locations = append(sel.Locations, id)
+		}
+	}
+	// 1 to 10, which is what user_books stores and what its CHECK enforces.
+	// This read 0 to 5, so every rating above 5 was dropped on the way in and
+	// the filter silently widened to the whole collection: ticking a rating in
+	// the rail returned every book, and the ratings actually in use are 6
+	// through 10.
 	for _, s := range split("rating") {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 && n <= 5 {
+		if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 10 {
 			sel.Ratings = append(sel.Ratings, int32(n))
+		}
+	}
+	// The caller's own rating, as against the average `rating` now carries.
+	for _, s := range split("my_rating") {
+		if n, err := strconv.Atoi(s); err == nil && n >= 1 && n <= 10 {
+			sel.MyRatings = append(sel.MyRatings, int32(n))
 		}
 	}
 	return sel

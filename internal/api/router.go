@@ -12,7 +12,6 @@ import (
 	"github.com/fireball1725/librarium-api/internal/api/handlers"
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/auth"
-	"github.com/fireball1725/librarium-api/internal/background"
 	"github.com/fireball1725/librarium-api/internal/config"
 	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/repository"
@@ -146,9 +145,6 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	meLookupHandler := handlers.NewMeLookupHandler(libSvc, seriesRepo, tagRepo)
 	meBrowseHandler := handlers.NewMeBrowseHandler(libraryRepo, seriesRepo, contributorRepo, shelfRepo, loanRepo)
 
-	releaseChecker := background.NewReleaseChecker(releaseSyncSvc, 24*time.Hour)
-	go releaseChecker.Start(ctx)
-
 	// The client version gate sits inside auth, not in the global chain, for two
 	// reasons: it needs the claims to tell a personal access token apart from an
 	// interactive session, and the global chain also wraps /health, the setup
@@ -229,6 +225,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/books/{book_id}/me", requireAuth(http.HandlerFunc(readingStateHandler.GetMyBook)))
 	mux.Handle("PUT /api/v1/books/{book_id}/me", requireAuth(http.HandlerFunc(readingStateHandler.PutMyBook)))
 	mux.Handle("DELETE /api/v1/books/{book_id}/me", requireAuth(http.HandlerFunc(readingStateHandler.DeleteMyBook)))
+	mux.Handle("GET /api/v1/books/{book_id}/readers", requireAuth(http.HandlerFunc(readingStateHandler.ListReaders)))
 	mux.Handle("GET /api/v1/books/{book_id}/sessions", requireAuth(http.HandlerFunc(readingStateHandler.ListSessions)))
 	mux.Handle("POST /api/v1/books/{book_id}/sessions", requireAuth(http.HandlerFunc(readingStateHandler.CreateSession)))
 	mux.Handle("PATCH /api/v1/sessions/{session_id}", requireAuth(http.HandlerFunc(readingStateHandler.UpdateSession)))
@@ -258,6 +255,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("DELETE /api/v1/copies/{copy_id}", requireAuth(http.HandlerFunc(copyHandler.DeleteCopy)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/locations", requireLibraryPerm("books:read", http.HandlerFunc(copyHandler.ListLocations)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/locations", requireLibraryPerm("books:update", http.HandlerFunc(copyHandler.CreateLocation)))
+	mux.Handle("PATCH /api/v1/locations/{location_id}", requireAuth(http.HandlerFunc(copyHandler.RenameLocation)))
 	mux.Handle("DELETE /api/v1/locations/{location_id}", requireAuth(http.HandlerFunc(copyHandler.DeleteLocation)))
 
 	// Identifiers and containment: world tier, so no library in the path.
@@ -396,6 +394,17 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	// Contributor profile, metadata, works (instance-scoped, auth required)
 	mux.Handle("PATCH /api/v1/contributors/{contributor_id}", requireAuth(http.HandlerFunc(contributorHandler.UpdateContributor)))
 	mux.Handle("DELETE /api/v1/contributors/{contributor_id}", requireAuth(http.HandlerFunc(contributorHandler.DeleteContributor)))
+	// Merging duplicate contributors. Instance admin, because contributors have
+	// no library_id: folding two names together changes what every household on
+	// the server sees, the same way editing a genre does.
+	contributorMergeHandler := handlers.NewContributorMergeHandler(contributorRepo)
+	mux.Handle("GET /api/v1/admin/contributor-duplicates",
+		requireAuth(middleware.RequireInstanceAdmin(http.HandlerFunc(contributorMergeHandler.ListDuplicates))))
+	mux.Handle("POST /api/v1/admin/contributor-duplicates/merge",
+		requireAuth(middleware.RequireInstanceAdmin(http.HandlerFunc(contributorMergeHandler.MergeContributors))))
+	mux.Handle("POST /api/v1/admin/contributor-duplicates/dismiss",
+		requireAuth(middleware.RequireInstanceAdmin(http.HandlerFunc(contributorMergeHandler.DismissDuplicates))))
+
 	mux.Handle("GET /api/v1/contributors/{contributor_id}/photo", requireAuth(http.HandlerFunc(contributorHandler.ServeContributorPhoto)))
 	mux.Handle("PUT /api/v1/contributors/{contributor_id}/photo", requireAuth(http.HandlerFunc(contributorHandler.UploadContributorPhoto)))
 	mux.Handle("DELETE /api/v1/contributors/{contributor_id}/photo", requireAuth(http.HandlerFunc(contributorHandler.DeleteContributorPhotoHandler)))

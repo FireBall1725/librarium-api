@@ -73,7 +73,7 @@ func (r *BookRepo) ListMediaTypes(ctx context.Context) ([]*models.MediaType, err
 // ListByContributor still scope by one library. Getting this wrong is a runtime
 // "operator does not exist: uuid = uuid[]", not a compile error, so it is a
 // parameter rather than something inferred.
-func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) string {
+func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet, scoped bool) string {
 	// Reading state is one row per work now, so these are lookups rather than
 	// picks. The three subqueries used to share an ORDER BY so they agreed with
 	// each other when someone owned several editions of a book; there is
@@ -171,6 +171,20 @@ func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) strin
 	librariesExpr += `
 	) AS holding_libraries`
 
+	// Where the book stands in relation to the caller. The scope has always
+	// computed it and the row never carried it, so a client could filter on
+	// ownership and then had no way to say which state a row it got back was
+	// in: a missing volume rendered exactly like a book on the shelf.
+	//
+	// Only the list joins the scope. The single-book read and the per
+	// contributor list join held_books instead, which has no such column, and
+	// for both of those the answer is "held" by construction: they cannot
+	// return a book nobody has.
+	ownershipExpr := `'` + OwnershipShelf + `' AS ownership`
+	if scoped {
+		ownershipExpr = "lb.ownership"
+	}
+
 	return `
 	SELECT
 		b.id, b.title, b.subtitle,
@@ -266,7 +280,8 @@ func booksSelect(userStatusArg, loanLibraryArg int, loanLibraryIsSet bool) strin
 		` + userRatingExpr + `,
 		` + userProgressExpr + `,
 		` + activeLoanExpr + `,
-		` + librariesExpr + `
+		` + librariesExpr + `,
+		` + ownershipExpr + `
 	FROM books b
 	JOIN media_types mt ON mt.id = b.media_type_id`
 }
@@ -358,7 +373,7 @@ func (r *BookRepo) FindByID(ctx context.Context, id uuid.UUID, callerID uuid.UUI
 		loanLibraryArg = len(args)
 	}
 
-	q := booksSelect(callerArg, loanLibraryArg, false) + ` WHERE b.id = $1`
+	q := booksSelect(callerArg, loanLibraryArg, false, false) + ` WHERE b.id = $1`
 
 	book, err := scanBook(r.db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -385,10 +400,10 @@ func (r *BookRepo) ListByContributor(ctx context.Context, libraryID, contributor
 		  )
 		ORDER BY natural_sort_key(b.title)`
 	if callerID != uuid.Nil {
-		q = booksSelect(3, 1, false) + scope
+		q = booksSelect(3, 1, false, false) + scope
 		args = []any{libraryID, contributorID, callerID}
 	} else {
-		q = booksSelect(0, 1, false) + scope
+		q = booksSelect(0, 1, false, false) + scope
 		args = []any{libraryID, contributorID}
 	}
 
@@ -836,6 +851,27 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 		argIdx++
 	}
 
+	// Where the physical object is, counted up the tree so narrowing to a room
+	// does not hide what is on the shelves inside it. True if ANY copy is
+	// there: owning two copies means the book is wherever either one sits.
+	if len(sel.Locations) > 0 {
+		conditions = append(conditions, fmt.Sprintf(`EXISTS (
+            WITH RECURSIVE sub(root, id, depth) AS (
+                SELECT id, id, 0 FROM copy_locations
+              UNION ALL
+                SELECT t.root, c.id, t.depth + 1
+                  FROM copy_locations c JOIN sub t ON c.parent_id = t.id
+                 WHERE t.depth < 16
+            )
+            SELECT 1 FROM copies cp4
+              JOIN sub ON sub.id = cp4.location_id
+             WHERE cp4.book_id = b.id AND cp4.deleted_at IS NULL
+               AND sub.root = ANY($%d)
+        )`, argIdx))
+		args = append(args, sel.Locations)
+		argIdx++
+	}
+
 	// Reading state is one row per work, so these are direct lookups. They were
 	// correlated subqueries collapsing per-edition rows, because joining
 	// editions would multiply a work with three printings into three rows and
@@ -858,7 +894,23 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
 		}
 	}
 
+	// What everyone who can see the book thinks of it. Needs no caller: an
+	// average is a fact about the book, so an unauthenticated read gets the
+	// same answer rather than an empty one.
 	if len(sel.Ratings) > 0 {
+		// $1 is the library scope, already bound at the top. Binding the slice
+		// a second time would work and would also make the query text differ
+		// from every other filter here for no reason.
+		conditions = append(conditions, fmt.Sprintf(`%s = ANY($%d)`,
+			avgRatingScalar("$1"), argIdx))
+		args = append(args, sel.Ratings)
+		argIdx++
+	}
+
+	// The caller's own, which is the filter this used to be. Kept because
+	// "books I rated five" and "books the household rates five" are different
+	// questions and both get asked.
+	if len(sel.MyRatings) > 0 {
 		if opts.CallerID == uuid.Nil {
 			conditions = append(conditions, "FALSE") // nobody's ratings to match
 		} else {
@@ -866,7 +918,7 @@ func (r *BookRepo) buildBookFilter(libraryIDs []uuid.UUID, opts ListBooksOpts) b
             SELECT ub.rating FROM user_books ub
             WHERE ub.user_id = $%d AND ub.deleted_at IS NULL AND ub.book_id = b.id
         ) = ANY($%d)`, argIdx, argIdx+1))
-			args = append(args, opts.CallerID, sel.Ratings)
+			args = append(args, opts.CallerID, sel.MyRatings)
 			argIdx += 2
 		}
 	}
@@ -999,9 +1051,9 @@ func (r *BookRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, opts 
 		args = append(args, opts.CallerID)
 		userArgIdx := argIdx
 		argIdx++
-		selectQuery = booksSelect(userArgIdx, 1, true)
+		selectQuery = booksSelect(userArgIdx, 1, true, true)
 	} else {
-		selectQuery = booksSelect(0, 1, true)
+		selectQuery = booksSelect(0, 1, true, true)
 	}
 
 	// List
@@ -1155,7 +1207,7 @@ func scanBook(s scanner) (*models.Book, error) {
 		&contribJSON, &tagsJSON, &genresJSON, &b.HasCover,
 		&seriesJSON, &shelvesJSON, &publisher, &publishYear, &language,
 		&userReadStatus, &userRating, &userProgress, &activeLoans,
-		&librariesJSON,
+		&librariesJSON, &b.Ownership,
 	)
 	if err != nil {
 		return nil, err

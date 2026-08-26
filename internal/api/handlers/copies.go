@@ -351,6 +351,63 @@ func (h *CopyHandler) CreateLocation(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, location)
 }
 
+// RenameLocation godoc
+//
+// @Summary     Rename a place, or move it inside another
+// @Description Moving one under its own descendant is refused: locations are a tree, and a loop in that tree hangs anything that walks it.
+// @Tags        copies
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       location_id  path  string  true  "Location UUID"
+// @Param       body  body  object{name=string,parent_id=string}  true  "The new name, and optionally where to move it"
+// @Success     200  {object}  object{id=string,name=string,parent_id=string}
+// @Failure     400  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Failure     409  {object}  object{error=string}
+// @Router      /locations/{location_id} [patch]
+func (h *CopyHandler) RenameLocation(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("location_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid location id")
+		return
+	}
+
+	var body locationBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	parent, err := optionalUUID(body.ParentID)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid parent id")
+		return
+	}
+
+	// A body carrying parent_id at all means "move it", including to the top
+	// where the value is empty. Absent means leave it where it is, which is why
+	// the repository takes the flag rather than inferring it from a nil parent.
+	reparent := body.ParentID != nil
+
+	location, err := h.locations.Rename(r.Context(), id, body.Name, parent, reparent)
+	switch {
+	case errors.Is(err, repository.ErrLocationCycle):
+		respond.Error(w, http.StatusConflict,
+			"a place cannot be moved inside itself or anything it already contains")
+		return
+	case errors.Is(err, repository.ErrLocationNotInLibrary):
+		respond.Error(w, http.StatusBadRequest, "that parent belongs to a different library")
+		return
+	case errors.Is(err, repository.ErrNotFound):
+		respond.Error(w, http.StatusNotFound, "location not found")
+		return
+	case err != nil:
+		respond.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond.JSON(w, http.StatusOK, location)
+}
+
 // DeleteLocation godoc
 //
 // @Summary     Remove a place

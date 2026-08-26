@@ -473,6 +473,105 @@ func main() {
 		},
 	})
 
+	// Series volume sync, which used to be a bare goroutine with a ticker in
+	// the router. It worked, and it was invisible: no history, no schedule
+	// anyone could change, no way to run it by hand, and no record of what it
+	// found. That is how 448 volumes accumulated across 61 series with nobody
+	// noticing that not one of them could surface anywhere.
+	//
+	// Off by default, because it calls a provider. Everything else that spends
+	// someone else's rate limit waits for an admin to opt in.
+	seriesRepoForSync := repository.NewSeriesRepo(pool)
+	releaseSyncSvc := service.NewReleaseSyncService(
+		seriesRepoForSync, repository.NewSeriesVolumesRepo(pool), providerSvc)
+	jobRegistry.Register(&jobs.Definition{
+		Kind:        jobs.KindSeriesSync,
+		DisplayName: "Series volumes",
+		Description: "Refreshes volume data from the linked provider and turns volumes nobody holds into missing-volume rows.",
+		Schedulable: true,
+		DefaultCron: "0 5 * * *",
+		Enqueue: func(ctx context.Context, trig jobs.TriggerCtx, _ json.RawMessage) error {
+			// Inline rather than through River, like the history sweep: it is
+			// one pass over the series table, and the work is bounded by how
+			// many series have a provider linked.
+			res := releaseSyncSvc.SyncAll(ctx)
+			if progressJSON, perr := json.Marshal(map[string]any{
+				"processed": res.Series,
+				"total":     res.Series,
+				"promoted":  res.Promoted,
+				"matched":   res.Matched,
+				"failed":    res.Failed,
+			}); perr == nil {
+				_ = jobRepo.UpdateProgress(ctx, trig.JobID, progressJSON)
+			}
+			_ = jobRepo.AppendEvent(ctx, trig.JobID, "series_sync_summary", map[string]any{
+				"series":       res.Series,
+				"promoted":     res.Promoted,
+				"matched":      res.Matched,
+				"failed":       res.Failed,
+				"no_seed_book": res.NoSeedBook,
+			})
+			slog.Info("series volumes synced",
+				"series", res.Series, "promoted", res.Promoted,
+				"matched", res.Matched, "failed", res.Failed,
+				"no_seed_book", res.NoSeedBook)
+			return nil
+		},
+	})
+
+	// Duplicate authors: detect and report, never merge.
+	//
+	// An import spells a name three ways and the catalogue believes in three
+	// people. Finding them is a query; deciding they are the same person is a
+	// judgement, and the only signal that would settle it without one is a
+	// shared external id, which contributors almost never carry: enrichment
+	// fills external ids for books and not for the people who wrote them.
+	//
+	// So this leaves a number in job history and nothing else. An unattended
+	// write to instance-wide data on the strength of a name match is not a
+	// trade worth making, and a morning inbox costs one click more than a
+	// morning surprise.
+	dupeContributorRepo := repository.NewContributorRepo(pool)
+	jobRegistry.Register(&jobs.Definition{
+		Kind:        jobs.KindDuplicateAuthors,
+		DisplayName: "Duplicate authors",
+		Description: "Looks for contributors the catalogue believes are several people. Reports what it finds; merging is always a person's decision.",
+		Schedulable: true,
+		DefaultCron: "0 6 * * *",
+		Enqueue: func(ctx context.Context, trig jobs.TriggerCtx, _ json.RawMessage) error {
+			groups, err := dupeContributorRepo.DuplicateCandidates(ctx)
+			if err != nil {
+				return fmt.Errorf("finding duplicate contributors: %w", err)
+			}
+			names := 0
+			for _, g := range groups {
+				names += len(g.Members)
+			}
+			if progressJSON, perr := json.Marshal(map[string]any{
+				"processed": len(groups),
+				"total":     len(groups),
+				"groups":    len(groups),
+				"names":     names,
+			}); perr == nil {
+				_ = jobRepo.UpdateProgress(ctx, trig.JobID, progressJSON)
+			}
+			// The names themselves, so job history says which ones rather than
+			// only how many. A count alone means opening another page to find
+			// out whether it is worth opening another page.
+			found := make([]string, 0, len(groups))
+			for _, g := range groups {
+				for _, m := range g.Members {
+					found = append(found, m.Name)
+				}
+			}
+			_ = jobRepo.AppendEvent(ctx, trig.JobID, "duplicate_authors", map[string]any{
+				"groups": len(groups), "names": names, "found": found,
+			})
+			slog.Info("duplicate authors swept", "groups", len(groups), "names", names)
+			return nil
+		},
+	})
+
 	// Kick the scheduler off after registry is populated.
 	jobRepoForSched := repository.NewJobRepo(pool)
 	// Seed default schedule rows for any schedulable kind that doesn't

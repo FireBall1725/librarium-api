@@ -81,11 +81,14 @@ func (h *ListHandler) ListsHoldingBook(w http.ResponseWriter, r *http.Request) {
 }
 
 type listBody struct {
-	Name            string          `json:"name"`
-	Description     string          `json:"description"`
-	Icon            string          `json:"icon"`
-	Color           string          `json:"color"`
-	Kind            string          `json:"kind"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+	Color       string `json:"color"`
+	Kind        string `json:"kind"`
+	// Surface is which page the view lands on: books or series. Absent means
+	// books, so every client that predates a second surface keeps working.
+	Surface         string          `json:"surface"`
 	Filter          json.RawMessage `json:"filter"`
 	Layout          string          `json:"layout"`
 	Visibility      string          `json:"visibility"`
@@ -100,7 +103,7 @@ type listBody struct {
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
-// @Param       body  body  object{name=string,description=string,icon=string,color=string,kind=string,filter=object,layout=string,visibility=string,shared_library_id=string}  true  "The list"
+// @Param       body  body  object{name=string,description=string,icon=string,color=string,kind=string,surface=string,filter=object,layout=string,visibility=string,shared_library_id=string}  true  "The list"
 // @Success     201  {object}  object{id=string,name=string,kind=string,visibility=string,share_token=string}
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -119,6 +122,7 @@ func (h *ListHandler) CreateList(w http.ResponseWriter, r *http.Request) {
 		Icon:        body.Icon,
 		Color:       body.Color,
 		Kind:        body.Kind,
+		Surface:     body.Surface,
 		Filter:      body.Filter,
 		Layout:      body.Layout,
 		Visibility:  body.Visibility,
@@ -221,11 +225,16 @@ type updateListBody struct {
 	Layout       *string         `json:"layout"`
 	DisplayOrder *int            `json:"display_order"`
 	Filter       json.RawMessage `json:"filter"`
+	// Sharing. Visibility moves the list; SharedLibraryID names where to, and
+	// is required when moving to 'library'.
+	Visibility      *string `json:"visibility"`
+	SharedLibraryID *string `json:"shared_library_id"`
 }
 
 // UpdateList godoc
 //
 // @Summary     Change one of my lists
+// @Description Also moves a list between private, shared with a library and public. Sharing into a library needs a role on it, and a public list keeps the token it already has so links already handed out keep working.
 // @Description Only the keys present are changed, so renaming a list does not require sending the rest of it back. Kind is absent on purpose: a manual list cannot become smart without its enumerated books becoming a lie.
 // @Tags        me
 // @Accept      json
@@ -249,7 +258,7 @@ func (h *ListHandler) UpdateList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.lists.Update(r.Context(), list.ID, repository.UpdateListInput{
+	in := repository.UpdateListInput{
 		Name:         body.Name,
 		Description:  body.Description,
 		Icon:         body.Icon,
@@ -257,7 +266,31 @@ func (h *ListHandler) UpdateList(w http.ResponseWriter, r *http.Request) {
 		Layout:       body.Layout,
 		DisplayOrder: body.DisplayOrder,
 		Filter:       body.Filter,
-	})
+		Visibility:   body.Visibility,
+	}
+	if body.SharedLibraryID != nil && *body.SharedLibraryID != "" {
+		libraryID, err := uuid.Parse(*body.SharedLibraryID)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid library id")
+			return
+		}
+		// Checked here rather than trusted from the body. The library id
+		// arrives from the client, so without this, sharing would be a way to
+		// put a row into the rail of a library the sender cannot reach.
+		allowed, err := h.lists.CanShareInto(r.Context(), callerOf(r), libraryID)
+		if err != nil {
+			respond.ServerError(w, r, err)
+			return
+		}
+		if !allowed {
+			respond.Error(w, http.StatusForbidden,
+				"you cannot share a list into a library you do not belong to")
+			return
+		}
+		in.SharedLibraryID = &libraryID
+	}
+
+	updated, err := h.lists.Update(r.Context(), list.ID, in)
 	switch {
 	case errors.Is(err, repository.ErrSmartListNotEnumerable):
 		respond.Error(w, http.StatusBadRequest,
@@ -275,8 +308,8 @@ func (h *ListHandler) UpdateList(w http.ResponseWriter, r *http.Request) {
 
 // AddBookToList godoc
 //
-// @Summary     Put a book in one of my lists
-// @Description Manual lists only. A smart list computes its own membership, so adding by hand would produce a row its filter disagrees with.
+// @Summary     Put a book on a list
+// @Description Manual lists only: a smart list computes its own membership, so adding by hand would produce a row its filter disagrees with. Allowed for the list's owner, or for anyone holding shelves:update on the library a shared list belongs to.
 // @Tags        me
 // @Produce     json
 // @Security    BearerAuth
@@ -288,7 +321,7 @@ func (h *ListHandler) UpdateList(w http.ResponseWriter, r *http.Request) {
 // @Failure     404  {object}  object{error=string}
 // @Router      /me/lists/{list_id}/books/{book_id} [post]
 func (h *ListHandler) AddBookToList(w http.ResponseWriter, r *http.Request) {
-	list, ok := h.ownedList(w, r)
+	list, ok := h.editableList(w, r)
 	if !ok {
 		return
 	}
@@ -313,7 +346,7 @@ func (h *ListHandler) AddBookToList(w http.ResponseWriter, r *http.Request) {
 
 // RemoveBookFromList godoc
 //
-// @Summary     Take a book out of one of my lists
+// @Summary     Take a book off a list
 // @Tags        me
 // @Produce     json
 // @Security    BearerAuth
@@ -324,7 +357,7 @@ func (h *ListHandler) AddBookToList(w http.ResponseWriter, r *http.Request) {
 // @Failure     404  {object}  object{error=string}
 // @Router      /me/lists/{list_id}/books/{book_id} [delete]
 func (h *ListHandler) RemoveBookFromList(w http.ResponseWriter, r *http.Request) {
-	list, ok := h.ownedList(w, r)
+	list, ok := h.editableList(w, r)
 	if !ok {
 		return
 	}
@@ -344,6 +377,33 @@ func (h *ListHandler) RemoveBookFromList(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// editableList resolves the list in the path and checks the caller may change
+// what is on it: they own it, or they hold shelves:update on the library it is
+// shared into.
+//
+// Separate from ownedList because filing a book is not the same act as renaming
+// or deleting. A shared list nobody but its author could add to would be a list
+// only in name.
+func (h *ListHandler) editableList(w http.ResponseWriter, r *http.Request) (*listRef, bool) {
+	id, err := uuid.Parse(r.PathValue("list_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid list id")
+		return nil, false
+	}
+	allowed, err := h.lists.Editable(r.Context(), callerOf(r), id)
+	if errors.Is(err, repository.ErrNotFound) || (err == nil && !allowed) {
+		// 404 rather than 403, for the same reason ownedList does: a 403 would
+		// confirm the list exists to someone who cannot see it.
+		respond.Error(w, http.StatusNotFound, "list not found")
+		return nil, false
+	}
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return nil, false
+	}
+	return &listRef{ID: id}, true
 }
 
 // ownedList resolves the list in the path and checks the caller owns it.

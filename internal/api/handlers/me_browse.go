@@ -5,6 +5,8 @@ package handlers
 
 import (
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
@@ -71,7 +73,18 @@ func callerID(r *http.Request) uuid.UUID {
 //	@Tags        me
 //	@Produce     json
 //	@Security    BearerAuth
-//	@Param       q  query  string  false  "Name substring"
+//	@Param       q        query  string  false  "Name substring"
+//	@Param       lib      query  string  false  "Comma-separated library ids to narrow to"
+//	@Param       type     query  string  false  "Comma-separated media type names"
+//	@Param       genre    query  string  false  "Comma-separated genre names"
+//	@Param       rating   query  string  false  "Comma-separated stored rating points, 1-10"
+//	@Param       my_rating query string  false  "The same against the caller's own rating"
+//	@Param       status   query  string  false  "ongoing | completed | hiatus | cancelled"
+//	@Param       arcs     query  string  false  "with | without"
+//	@Param       reading  query  string  false  "unread | reading | read_all"
+//	@Param       tag      query  string  false  "Tag name"
+//	@Param       sort     query  string  false  "name | volumes | missing | read | recent"
+//	@Param       dir      query  string  false  "asc | desc"
 //	@Success     200  {object}  object{items=[]github_com_fireball1725_librarium-api_internal_api_responses.SeriesResponse,total=int}
 //	@Failure     401  {object}  object{error=string}
 //	@Router      /me/series/index [get]
@@ -81,11 +94,56 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 		respond.ServerError(w, r, err)
 		return
 	}
+	if len(libraryIDs) == 0 {
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"items": []any{}, "total": 0, "facets": nil,
+		})
+		return
+	}
 
-	items, err := h.series.ListAcross(
-		r.Context(), libraryIDs, callerID(r),
-		strings.TrimSpace(r.URL.Query().Get("q")), seriesIndexVolumes,
+	q := r.URL.Query()
+	search := strings.TrimSpace(q.Get("q"))
+	// Library is a dimension of the rail, not the scope. The per-library Series
+	// page redirects here carrying its library, so the parameter has to narrow
+	// the rows; but the counts are computed over everything readable, or the
+	// rail could only ever offer the library already picked and there would be
+	// no way back out of it.
+	wanted := libraryIDsFromQuery(r)
+	filter := repository.SeriesFilter{
+		Libraries:  narrowToReadable(wanted, libraryIDs),
+		MediaTypes: csv(q.Get("type")),
+		Genres:     csv(q.Get("genre")),
+		Ratings:    csvInts(q.Get("rating")),
+		MyRatings:  csvInts(q.Get("my_rating")),
+		Status:     strings.TrimSpace(q.Get("status")),
+		Arcs:       strings.TrimSpace(q.Get("arcs")),
+		Reading:    strings.TrimSpace(q.Get("reading")),
+		Tag:        strings.TrimSpace(q.Get("tag")),
+		Sort:       strings.TrimSpace(q.Get("sort")),
+		Desc:       q.Get("dir") == "desc",
+	}
+	// Asking only for libraries the caller cannot read is not the same as
+	// asking for none: an empty narrowing would quietly widen back to
+	// everything and show more than was requested.
+	if len(wanted) > 0 && len(filter.Libraries) == 0 {
+		respond.JSON(w, http.StatusOK, map[string]any{
+			"items": []any{}, "total": 0, "facets": nil,
+		})
+		return
+	}
+
+	items, err := h.series.ListAcrossFiltered(
+		r.Context(), libraryIDs, callerID(r), search, volumesWanted(q), filter,
 	)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
+	// Counts come back with the results in one request. That is what makes the
+	// rail worth having: you can see a filter would return nothing before
+	// spending a click on it.
+	facets, err := h.series.Facets(r.Context(), libraryIDs, callerID(r), search, filter)
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -99,7 +157,52 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 	for _, s := range items {
 		bodies = append(bodies, seriesBody(s))
 	}
-	respond.JSON(w, http.StatusOK, map[string]any{"items": bodies, "total": len(bodies)})
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"items": bodies, "total": len(bodies), "facets": facets,
+	})
+}
+
+// csv splits a comma-separated parameter, dropping the empties a trailing
+// comma or a cleared filter leaves behind.
+func csv(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// csvInts is csv for the numeric dimensions. A value that is not a number is
+// dropped rather than erroring: a stale link with an old vocabulary in it
+// should narrow to what it can, not refuse to load the page.
+func csvInts(v string) []int32 {
+	var out []int32
+	for _, part := range csv(v) {
+		// ParseInt bounded to 32 bits rather than Atoi and a cast. Atoi returns
+		// an int, and narrowing that wraps silently: a rating of 2147483648
+		// would arrive as -2147483648 and quietly become a value somebody could
+		// have meant. Out of range is not a number here, so it is dropped like
+		// any other unparseable part.
+		if n, err := strconv.ParseInt(part, 10, 32); err == nil {
+			out = append(out, int32(n))
+		}
+	}
+	return out
+}
+
+// volumesWanted reads how much of each volume strip the caller needs.
+//
+// The rail counts a saved view by asking this endpoint for the total, and it
+// does not draw a single cover: without a way to say so, counting three views
+// meant building sixty preview rows per series three times over for a number.
+// Absent means the full strip, which is what the page itself wants.
+func volumesWanted(q url.Values) int {
+	if n, err := strconv.Atoi(q.Get("volumes")); err == nil && n > 0 && n < seriesIndexVolumes {
+		return n
+	}
+	return seriesIndexVolumes
 }
 
 // Counts godoc
@@ -177,7 +280,7 @@ func authorBody(a *repository.AuthorIndexEntry) map[string]any {
 //	@Security    BearerAuth
 //	@Param       role  query  string  false  "Contributor roles, comma separated. Defaults to author."
 //	@Param       lib   query  string  false  "Library UUIDs, comma separated. Narrows the scope; cannot widen it."
-//	@Success     200  {object}  object{items=[]repository.AuthorIndexEntry,total=int}
+//	@Success     200  {object}  object{items=[]repository.AuthorIndexEntry,total=int,roles=[]repository.RoleCount}
 //	@Failure     401  {object}  object{error=string}
 //	@Router      /me/authors/index [get]
 func (h *MeBrowseHandler) AuthorsIndex(w http.ResponseWriter, r *http.Request) {
@@ -209,11 +312,23 @@ func (h *MeBrowseHandler) AuthorsIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Which roles have somebody behind them, so the page can offer the three
+	// this collection uses rather than the seven the vocabulary defines.
+	// Unaffected by the role being asked for: a control that narrowed itself
+	// would leave no way back to the role you just left.
+	roleCounts, err := h.contributors.RoleCounts(r.Context(), libraryIDs)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+
 	bodies := make([]map[string]any, 0, len(items))
 	for _, a := range items {
 		bodies = append(bodies, authorBody(a))
 	}
-	respond.JSON(w, http.StatusOK, map[string]any{"items": bodies, "total": len(bodies)})
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"items": bodies, "total": len(bodies), "roles": roleCounts,
+	})
 }
 
 // MyShelves godoc

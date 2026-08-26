@@ -663,9 +663,28 @@ func normalizeCategories(cats []string, allGenres []*models.Genre) []uuid.UUID {
 			if part == "" || strings.Contains(part, ">") || strings.Contains(part, ":") {
 				continue
 			}
-			if g, ok := byName[strings.ToLower(part)]; ok && !seen[g.ID] {
+			lower := strings.ToLower(part)
+			if g, ok := byName[lower]; ok && !seen[g.ID] {
 				seen[g.ID] = true
 				matched = append(matched, g)
+				continue
+			}
+			// The genre is usually inside the phrase rather than equal to it.
+			//
+			// Whole-string equality threw away almost everything the providers
+			// send. Open Library answers in natural phrases: "Horror tales",
+			// "Horror stories", "legal thriller", "Young adult fiction". The
+			// genre is sitting right there in each one and none of them matched,
+			// which is why a catalogue of 1,800 books carried three genres and
+			// all of them were really the media type.
+			for _, g := range allGenres {
+				if seen[g.ID] {
+					continue
+				}
+				if containsWords(lower, strings.ToLower(g.Name)) {
+					seen[g.ID] = true
+					matched = append(matched, g)
+				}
 			}
 		}
 	}
@@ -759,4 +778,44 @@ func inferMediaType(types []*models.MediaType, tags string) uuid.UUID {
 		}
 	}
 	return uuid.Nil
+}
+
+// containsWords reports whether needle appears in haystack on word boundaries.
+//
+// Boundaries are the whole point. Plain substring matching makes "Melodrama"
+// a Drama and "Romanesque" a Romance, which is a wrong genre filed under a
+// real person's book rather than a missing one. A boundary is anything that is
+// not a letter or a digit, so "sci-fi" matches inside "hard sci-fi novels" and
+// "drama" does not match inside "melodrama".
+func containsWords(haystack, needle string) bool {
+	if needle == "" || len(needle) < 4 {
+		// Short names are where false positives live: a three-letter genre
+		// would match inside half the words in a subject line.
+		return false
+	}
+	for i := 0; ; {
+		j := strings.Index(haystack[i:], needle)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		end := start + len(needle)
+		if isBoundary(haystack, start-1) && isBoundary(haystack, end) {
+			return true
+		}
+		i = start + 1
+		if i >= len(haystack) {
+			return false
+		}
+	}
+}
+
+// isBoundary reports whether the byte at i is outside the string or is not
+// alphanumeric. Out of range counts, so a match at either end is a match.
+func isBoundary(s string, i int) bool {
+	if i < 0 || i >= len(s) {
+		return true
+	}
+	c := s[i]
+	return (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9')
 }

@@ -465,6 +465,202 @@
                 }
             }
         },
+        "/admin/contributor-duplicates": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Groups of names that differ only by punctuation, or by spacing between initials. Pairs an admin has already rejected are left out. Detection is an inference rather than a fact, so nothing is merged without a person saying so.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Contributors the catalogue believes are several people",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.DuplicateCandidate"
+                                    }
+                                },
+                                "total": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/contributor-duplicates/dismiss": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every pair in the group, so a group of three that is really three people is settled once rather than coming back as three pairs on the next sweep.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Record that these contributors are different people",
+                "parameters": [
+                    {
+                        "description": "The contributors that are not the same person",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "ids": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/contributor-duplicates/merge": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The losers become tombstones rather than being deleted: their credits repoint at the survivor and merged_into records where they went, so a wrong merge is undone by clearing one column and an id a client cached still resolves to a real person.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "Fold contributors into one",
+                "parameters": [
+                    {
+                        "description": "Who survives, and who folds into them",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "loser_ids": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "survivor_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "collapsed": {
+                                    "type": "integer"
+                                },
+                                "credits": {
+                                    "type": "integer"
+                                },
+                                "merged": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/jobs": {
             "get": {
                 "security": [
@@ -3082,17 +3278,29 @@
                 "security": [
                     {
                         "BearerAuth": []
+                    },
+                    {
+                        "BearerAuth": []
                     }
                 ],
-                "description": "The caller's status, rating, review and notes for a work. Reads through containment, so a volume inside an omnibus the caller has read comes back as read with inherited set.",
+                "description": "The caller's status, rating, review and notes for a work. Reads through containment, so a volume inside an omnibus the caller has read comes back as read with inherited set.\nEveryone who shares a library with the caller and has recorded something: their rating, whether they finished it, and the review the product already labels visible to members. Private notes are never returned; the query does not select them.",
                 "produces": [
+                    "application/json",
                     "application/json"
                 ],
                 "tags": [
-                    "me"
+                    "me",
+                    "books"
                 ],
-                "summary": "Get my reading state for a book",
+                "summary": "What everyone has recorded about a book",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book UUID",
+                        "name": "book_id",
+                        "in": "path",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Book UUID",
@@ -3107,29 +3315,11 @@
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "book_id": {
-                                    "type": "string"
-                                },
-                                "inherited": {
-                                    "type": "boolean"
-                                },
-                                "is_favorite": {
-                                    "type": "boolean"
-                                },
-                                "notes": {
-                                    "type": "string"
-                                },
-                                "rating": {
-                                    "type": "integer"
-                                },
-                                "read_status": {
-                                    "type": "string"
-                                },
-                                "review": {
-                                    "type": "string"
-                                },
-                                "wants": {
-                                    "type": "boolean"
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookReader"
+                                    }
                                 }
                             }
                         }
@@ -3307,6 +3497,93 @@
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/books/{book_id}/readers": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The caller's status, rating, review and notes for a work. Reads through containment, so a volume inside an omnibus the caller has read comes back as read with inherited set.\nEveryone who shares a library with the caller and has recorded something: their rating, whether they finished it, and the review the product already labels visible to members. Private notes are never returned; the query does not select them.",
+                "produces": [
+                    "application/json",
+                    "application/json"
+                ],
+                "tags": [
+                    "me",
+                    "books"
+                ],
+                "summary": "What everyone has recorded about a book",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book UUID",
+                        "name": "book_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Book UUID",
+                        "name": "book_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.BookReader"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
                     },
                     "401": {
                         "description": "Unauthorized",
@@ -12208,6 +12485,102 @@
                         }
                     }
                 }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Moving one under its own descendant is refused: locations are a tree, and a loop in that tree hangs anything that walks it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "copies"
+                ],
+                "summary": "Rename a place, or move it inside another",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Location UUID",
+                        "name": "location_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The new name, and optionally where to move it",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "parent_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string"
+                                },
+                                "name": {
+                                    "type": "string"
+                                },
+                                "parent_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         "/lookup/books": {
@@ -12719,6 +13092,12 @@
                                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.AuthorIndexEntry"
                                     }
                                 },
+                                "roles": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.RoleCount"
+                                    }
+                                },
                                 "total": {
                                     "type": "integer"
                                 }
@@ -12806,8 +13185,50 @@
                     },
                     {
                         "type": "string",
-                        "description": "Ratings 0-5, comma separated",
+                        "description": "Average ratings 1-10, comma separated",
                         "name": "rating",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The caller's own ratings 1-10, comma separated",
+                        "name": "my_rating",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ownership states, comma separated: shelf, wishlist, suggested, gap",
+                        "name": "own",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "List UUIDs, comma separated",
+                        "name": "shelf",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Favourite: true or false",
+                        "name": "fav",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Contributor UUIDs, comma separated",
+                        "name": "contributor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Series UUIDs, comma separated",
+                        "name": "series",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Location UUIDs, comma separated; matches anything inside them too",
+                        "name": "location",
                         "in": "query"
                     }
                 ],
@@ -13198,6 +13619,9 @@
                                 "shared_library_id": {
                                     "type": "string"
                                 },
+                                "surface": {
+                                    "type": "string"
+                                },
                                 "visibility": {
                                     "type": "string"
                                 }
@@ -13377,7 +13801,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Only the keys present are changed, so renaming a list does not require sending the rest of it back. Kind is absent on purpose: a manual list cannot become smart without its enumerated books becoming a lie.",
+                "description": "Also moves a list between private, shared with a library and public. Sharing into a library needs a role on it, and a public list keeps the token it already has so links already handed out keep working.\nOnly the keys present are changed, so renaming a list does not require sending the rest of it back. Kind is absent on purpose: a manual list cannot become smart without its enumerated books becoming a lie.",
                 "consumes": [
                     "application/json"
                 ],
@@ -13496,14 +13920,14 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Manual lists only. A smart list computes its own membership, so adding by hand would produce a row its filter disagrees with.",
+                "description": "Manual lists only: a smart list computes its own membership, so adding by hand would produce a row its filter disagrees with. Allowed for the list's owner, or for anyone holding shelves:update on the library a shared list belongs to.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "me"
                 ],
-                "summary": "Put a book in one of my lists",
+                "summary": "Put a book on a list",
                 "parameters": [
                     {
                         "type": "string",
@@ -13571,7 +13995,7 @@
                 "tags": [
                     "me"
                 ],
-                "summary": "Take a book out of one of my lists",
+                "summary": "Take a book off a list",
                 "parameters": [
                     {
                         "type": "string",
@@ -13757,6 +14181,72 @@
                         "type": "string",
                         "description": "Name substring",
                         "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated library ids to narrow to",
+                        "name": "lib",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated media type names",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated genre names",
+                        "name": "genre",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated stored rating points, 1-10",
+                        "name": "rating",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The same against the caller's own rating",
+                        "name": "my_rating",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ongoing | completed | hiatus | cancelled",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "with | without",
+                        "name": "arcs",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "unread | reading | read_all",
+                        "name": "reading",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Tag name",
+                        "name": "tag",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "name | volumes | missing | read | recent",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "asc | desc",
+                        "name": "dir",
                         "in": "query"
                     }
                 ],
@@ -15439,6 +15929,10 @@
                 "media_type_id": {
                     "type": "string"
                 },
+                "ownership": {
+                    "description": "Ownership is where the book stands in relation to the caller: shelf,\nwishlist, suggested, or gap for a volume missing from a run they hold\npart of. Set by the list; a single-book read always means shelf.",
+                    "type": "string"
+                },
                 "publish_year": {
                     "type": "integer"
                 },
@@ -15799,6 +16293,10 @@
                     "type": "string"
                 },
                 "position": {
+                    "type": "number"
+                },
+                "position_end": {
+                    "description": "PositionEnd is the last volume a container covers. Null on an ordinary\nbook, which occupies one position rather than a span.",
                     "type": "number"
                 },
                 "subtitle": {
@@ -16818,7 +17316,20 @@
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
                     }
                 },
+                "location": {
+                    "description": "Location is where the physical copy sits, counted up the tree: a book\nfiled on a shelf counts under the bookcase holding it and the room\nholding that, so narrowing to a room does not hide what is inside it.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
                 "media_type": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
+                    }
+                },
+                "my_rating": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
@@ -16831,6 +17342,7 @@
                     }
                 },
                 "rating": {
+                    "description": "Rating is what everyone who can see the book thinks of it, averaged and\nrounded to a stored point. MyRating is the caller's own.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.FacetValue"
@@ -16865,6 +17377,70 @@
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.BookReader": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "is_favorite": {
+                    "type": "boolean"
+                },
+                "rating": {
+                    "type": "integer"
+                },
+                "read_status": {
+                    "type": "string"
+                },
+                "review": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.DuplicateCandidate": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "description": "Key is the normalised name the members share. Sent so a client has\nsomething stable to key a row on.",
+                    "type": "string"
+                },
+                "members": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_repository.DuplicateMember"
+                    }
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.DuplicateMember": {
+            "type": "object",
+            "properties": {
+                "books": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
                 }
             }
         },
@@ -16905,6 +17481,17 @@
                 },
                 "slug": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_repository.RoleCount": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "count": {
+                    "type": "integer"
                 }
             }
         },

@@ -954,6 +954,9 @@ func previewBooksToBody(preview []models.SeriesPreviewBook) []map[string]any {
 			"book_id":   p.BookID,
 			"title":     p.Title,
 			"cover_url": coverURL,
+			// So a client can draw a volume nobody has differently from one on
+			// the shelf. The strip is the whole run, gaps included.
+			"held": p.Held,
 		})
 	}
 	return out
@@ -986,9 +989,14 @@ func seriesBody(s *models.Series) map[string]any {
 		"read_count":        s.ReadCount,
 		"reading_count":     s.ReadingCount,
 		"preview_books":     previewBooksToBody(s.PreviewBooks),
-		"tags":              tagsToBody(tags),
-		"created_at":        s.CreatedAt,
-		"updated_at":        s.UpdatedAt,
+		// Null when nothing in the run is rated, which is different from a
+		// rating of nought. rated_books says how many volumes it came from.
+		"rating":      s.Rating,
+		"rated_books": s.RatedBooks,
+		"my_rating":   s.MyRating,
+		"tags":        tagsToBody(tags),
+		"created_at":  s.CreatedAt,
+		"updated_at":  s.UpdatedAt,
 	}
 	if s.TotalCount != nil {
 		body["total_count"] = *s.TotalCount
@@ -1023,14 +1031,23 @@ func seriesEntryBody(e *models.SeriesEntry) map[string]any {
 		coverURL = "/api/v1/books/" + e.BookID.String() + "/cover?v=" + itoa(e.UpdatedAt.Unix())
 	}
 	body := map[string]any{
-		"position":         e.Position,
-		"book_id":          e.BookID,
-		"title":            e.Title,
-		"subtitle":         e.Subtitle,
-		"media_type":       e.MediaType,
-		"cover_url":        coverURL,
+		"position": e.Position,
+		// Only when it means something. Sending 0 on every ordinary book asks
+		// a client to know that 0 means "no span" rather than "ends at zero".
+		"position_end": nil,
+		"book_id":      e.BookID,
+		"title":        e.Title,
+		"subtitle":     e.Subtitle,
+		"media_type":   e.MediaType,
+		"cover_url":    coverURL,
+		// So a client can draw a volume nobody has differently from one on the
+		// shelf. A series lists the whole run, gaps included.
+		"held":             e.Held,
 		"user_read_status": e.UserReadStatus,
 		"contributors":     contribs,
+	}
+	if e.PositionEnd > e.Position {
+		body["position_end"] = e.PositionEnd
 	}
 	if e.ArcID != nil {
 		body["arc_id"] = *e.ArcID

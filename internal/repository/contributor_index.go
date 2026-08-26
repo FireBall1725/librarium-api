@@ -152,6 +152,9 @@ SELECT c.id,
        ) AS libraries
 FROM contributors c
 JOIN scope s ON s.contributor_id = c.id
+-- A merged contributor is a tombstone. Its credits were repointed at whoever
+-- absorbed it, so it would draw a card with nothing behind it.
+WHERE c.merged_into IS NULL
 GROUP BY c.id, c.name, c.sort_name
 ORDER BY lower(COALESCE(NULLIF(c.sort_name, ''), c.name)), c.name`, readCount, spinesPerCard)
 
@@ -218,4 +221,48 @@ func indexLetter(sortName string) string {
 		return string(base)
 	}
 	return "#"
+}
+
+// RoleCount is how many people hold one role on a book in scope.
+type RoleCount struct {
+	Code  string `json:"code"`
+	Count int    `json:"count"`
+}
+
+// RoleCounts reports which roles actually have somebody behind them.
+//
+// The vocabulary lists seven and this collection uses three: offering the other
+// four is offering a filter that returns nothing, which is the one thing a
+// count is supposed to prevent. Scoped like the index itself, so a role nobody
+// in these libraries holds does not appear because another library uses it.
+func (r *ContributorRepo) RoleCounts(
+	ctx context.Context, libraryIDs []uuid.UUID,
+) ([]RoleCount, error) {
+	if len(libraryIDs) == 0 {
+		return []RoleCount{}, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT bc.role, count(DISTINCT bc.contributor_id)::int
+		  FROM book_contributors bc
+		 WHERE EXISTS (SELECT 1 FROM held_books hb
+		                WHERE hb.book_id = bc.book_id
+		                  AND hb.library_id = ANY($1) AND hb.deleted_at IS NULL)
+		   AND EXISTS (SELECT 1 FROM contributors c
+		                WHERE c.id = bc.contributor_id AND c.merged_into IS NULL)
+		 GROUP BY bc.role
+		 ORDER BY 2 DESC, 1`, libraryIDs)
+	if err != nil {
+		return nil, fmt.Errorf("counting contributor roles: %w", err)
+	}
+	defer rows.Close()
+
+	out := []RoleCount{}
+	for rows.Next() {
+		var rc RoleCount
+		if err := rows.Scan(&rc.Code, &rc.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, rc)
+	}
+	return out, rows.Err()
 }

@@ -176,6 +176,10 @@ type BookResponse struct {
 	UserRating int `json:"user_rating"`
 	// UserProgressPct is the caller's reading progress 0-100 (0 = none).
 	UserProgressPct float64 `json:"user_progress_pct"`
+	// Ownership is where the book stands in relation to the caller: shelf,
+	// wishlist, suggested, or gap for a volume missing from a run they hold
+	// part of. Set by the list; a single-book read always means shelf.
+	Ownership string `json:"ownership"`
 	// ActiveLoanCount is the number of active (not yet returned) loans for
 	// this book — scoped to the library when the read is library-scoped,
 	// global otherwise. Always populated.
@@ -304,7 +308,10 @@ type SeriesResponse struct {
 
 // SeriesEntryResponse is a book entry within a series list.
 type SeriesEntryResponse struct {
-	Position     float64          `json:"position"`
+	Position float64 `json:"position"`
+	// PositionEnd is the last volume a container covers. Null on an ordinary
+	// book, which occupies one position rather than a span.
+	PositionEnd  *float64         `json:"position_end"`
 	BookID       uuid.UUID        `json:"book_id"`
 	Title        string           `json:"title"`
 	Subtitle     string           `json:"subtitle"`

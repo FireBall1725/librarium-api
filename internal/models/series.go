@@ -31,8 +31,20 @@ type Series struct {
 	// (List / FindByID receive a non-zero callerID). Both default to 0 when
 	// not populated, which is fine because clients gate the indicator behind
 	// the user's `show_read_badges` preference anyway.
-	ReadCount    int                 `json:"read_count"`
-	ReadingCount int                 `json:"reading_count"`
+	ReadCount    int `json:"read_count"`
+	ReadingCount int `json:"reading_count"`
+	// Rating is what the run is worth, averaged from the volumes anyone has
+	// rated. Nil when no volume carries a rating, which is a different thing
+	// from a rating of nought.
+	//
+	// RatedBooks says how many volumes it came from, because a 4 from one
+	// volume of twenty and a 4 from all twenty are not the same claim.
+	Rating     *int `json:"rating"`
+	RatedBooks int  `json:"rated_books"`
+	// MyRating is the caller's own average over the run, nil when they have
+	// rated none of it. "Is this run good" and "did I like it" are two
+	// questions, and in a household they routinely disagree.
+	MyRating     *int                `json:"my_rating"`
 	PreviewBooks []SeriesPreviewBook `json:"preview_books"`
 	Tags         []*Tag              `json:"tags"`
 	CreatedAt    time.Time           `json:"created_at"`
@@ -47,6 +59,10 @@ type SeriesPreviewBook struct {
 	Title     string    `json:"title"`
 	HasCover  bool      `json:"has_cover"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Held says the library actually has this volume. The strip shows every
+	// volume of the run, missing ones included, so without it a volume nobody
+	// owns is drawn exactly like one on the shelf.
+	Held bool `json:"held"`
 }
 
 // SeriesArc is an optional named grouping of books inside a series. Manga
@@ -83,16 +99,27 @@ type SeriesVolume struct {
 
 // SeriesEntry is a book entry within a series, including its reading position.
 type SeriesEntry struct {
-	Position       float64
-	BookID         uuid.UUID
-	ArcID          *uuid.UUID
-	Title          string
-	Subtitle       string
-	MediaType      string
-	HasCover       bool
+	Position  float64
+	BookID    uuid.UUID
+	ArcID     *uuid.UUID
+	Title     string
+	Subtitle  string
+	MediaType string
+	HasCover  bool
+	// Held says a library in scope actually has this volume. A series lists
+	// every volume of the run, promoted gaps included, so without it a volume
+	// nobody owns draws exactly like one on the shelf.
+	Held           bool
 	UpdatedAt      time.Time
 	UserReadStatus string // empty when caller is anonymous or no interactions
 	Contributors   []BookContributor
+	// PositionEnd is the last volume a container covers, for an omnibus or a
+	// bind-up. Zero for an ordinary book, which occupies one position.
+	//
+	// Derived from book_contents rather than stored: the contained rows carry
+	// their own positions already, so a second column would be a copy that can
+	// disagree with them.
+	PositionEnd float64
 }
 
 // BookSeriesRef is a lightweight reference used when looking up which series a book belongs to.
