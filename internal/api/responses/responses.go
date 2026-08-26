@@ -304,7 +304,10 @@ type SeriesResponse struct {
 
 // SeriesEntryResponse is a book entry within a series list.
 type SeriesEntryResponse struct {
-	Position     float64          `json:"position"`
+	Position float64 `json:"position"`
+	// PositionEnd is the last volume a container covers. Null on an ordinary
+	// book, which occupies one position rather than a span.
+	PositionEnd  *float64         `json:"position_end"`
 	BookID       uuid.UUID        `json:"book_id"`
 	Title        string           `json:"title"`
 	Subtitle     string           `json:"subtitle"`

@@ -1023,7 +1023,10 @@ func seriesEntryBody(e *models.SeriesEntry) map[string]any {
 		coverURL = "/api/v1/books/" + e.BookID.String() + "/cover?v=" + itoa(e.UpdatedAt.Unix())
 	}
 	body := map[string]any{
-		"position":         e.Position,
+		"position": e.Position,
+		// Only when it means something. Sending 0 on every ordinary book asks
+		// a client to know that 0 means "no span" rather than "ends at zero".
+		"position_end":     nil,
 		"book_id":          e.BookID,
 		"title":            e.Title,
 		"subtitle":         e.Subtitle,
@@ -1031,6 +1034,9 @@ func seriesEntryBody(e *models.SeriesEntry) map[string]any {
 		"cover_url":        coverURL,
 		"user_read_status": e.UserReadStatus,
 		"contributors":     contribs,
+	}
+	if e.PositionEnd > e.Position {
+		body["position_end"] = e.PositionEnd
 	}
 	if e.ArcID != nil {
 		body["arc_id"] = *e.ArcID

@@ -2644,3 +2644,92 @@ func TestOwningAnOmnibusOwnsWhatIsInsideIt(t *testing.T) {
 	}
 	_ = held
 }
+
+// An omnibus covers a span, it does not occupy one position.
+//
+// A three-in-one sits at volume one and reads as a second volume one beside the
+// single, so a 56-volume run held complete plus one omnibus reports 57 books.
+// The contained rows carry their own positions, so the span is derivable and a
+// stored column would only be a copy that can disagree with them.
+func TestAContainerSpansThePositionsItHolds(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	series := NewSeriesRepo(pool)
+
+	var libraryID, mediaTypeID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM media_types LIMIT 1`).Scan(&mediaTypeID); err != nil {
+		t.Skipf("no media type: %v", err)
+	}
+
+	seriesID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO series (id, library_id, name) VALUES ($1, $2, 'ZZ span series')`,
+		seriesID, libraryID); err != nil {
+		t.Fatalf("creating the series: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM series WHERE id = $1`, seriesID) })
+
+	// A three-in-one at position one, and the three volumes it holds.
+	omnibus := uuid.New()
+	made := []uuid.UUID{omnibus}
+	for i, title := range []string{"ZZ omnibus 1-3", "ZZ volume 1", "ZZ volume 2", "ZZ volume 3"} {
+		id := omnibus
+		if i > 0 {
+			id = uuid.New()
+			made = append(made, id)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO books (id, title, media_type_id) VALUES ($1, $2, $3)`,
+			id, title, mediaTypeID); err != nil {
+			t.Fatalf("creating %s: %v", title, err)
+		}
+		position := float64(i)
+		if i == 0 {
+			position = 1
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO book_series (book_id, series_id, position) VALUES ($1, $2, $3)`,
+			id, seriesID, position); err != nil {
+			t.Fatalf("positioning %s: %v", title, err)
+		}
+		if i > 0 {
+			if _, err := pool.Exec(ctx,
+				`INSERT INTO book_contents (container_id, contained_id, position) VALUES ($1, $2, $3)`,
+				omnibus, id, position); err != nil {
+				t.Fatalf("recording containment for %s: %v", title, err)
+			}
+		}
+	}
+	t.Cleanup(func() {
+		for _, id := range made {
+			_, _ = pool.Exec(ctx, `DELETE FROM books WHERE id = $1`, id)
+		}
+	})
+
+	entries, err := series.ListBooks(ctx, seriesID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("listing the series: %v", err)
+	}
+
+	var spans int
+	for _, e := range entries {
+		switch e.BookID {
+		case omnibus:
+			if e.PositionEnd != 3 {
+				t.Errorf("the omnibus spans to %v, want 3", e.PositionEnd)
+			}
+			spans++
+		default:
+			// A single volume covers itself and nothing else, so it reports no
+			// span at all rather than a span of one.
+			if e.PositionEnd != 0 {
+				t.Errorf("%s reports a span ending at %v, want none", e.Title, e.PositionEnd)
+			}
+		}
+	}
+	if spans != 1 {
+		t.Errorf("found %d containers in the series, want 1", spans)
+	}
+}

@@ -16026,6 +16026,10 @@ const docTemplate = `{
                 "position": {
                     "type": "number"
                 },
+                "position_end": {
+                    "description": "PositionEnd is the last volume a container covers. Null on an ordinary\nbook, which occupies one position rather than a span.",
+                    "type": "number"
+                },
                 "subtitle": {
                     "type": "string"
                 },

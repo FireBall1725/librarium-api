@@ -305,6 +305,19 @@ func (r *SeriesRepo) ListBooks(ctx context.Context, seriesID, callerID uuid.UUID
 	q := `
 		SELECT
 			bs.position,
+			-- The span a container covers. A three-in-one sits at volume one
+			-- and reads as a second volume one beside the single; this is what
+			-- lets it say "1 to 3" instead. Restricted to this series so an
+			-- anthology drawing from several runs does not claim a span in a
+			-- run it only partly holds.
+			COALESCE((
+				SELECT max(inner_bs.position)
+				  FROM book_contents bc
+				  JOIN book_series inner_bs
+				    ON inner_bs.book_id = bc.contained_id
+				   AND inner_bs.series_id = bs.series_id
+				 WHERE bc.container_id = b.id
+			), 0) AS position_end,
 			b.id, b.title, COALESCE(b.subtitle,''), mt.display_name,
 			bs.arc_id,
 			b.updated_at,
@@ -602,6 +615,7 @@ func scanSeriesEntry(s scanner) (*models.SeriesEntry, error) {
 	)
 	if err := s.Scan(
 		&entry.Position,
+		&entry.PositionEnd,
 		&pgBookID, &entry.Title, &entry.Subtitle, &entry.MediaType,
 		&pgArcID,
 		&entry.UpdatedAt,

@@ -93,6 +93,13 @@ type SeriesEntry struct {
 	UpdatedAt      time.Time
 	UserReadStatus string // empty when caller is anonymous or no interactions
 	Contributors   []BookContributor
+	// PositionEnd is the last volume a container covers, for an omnibus or a
+	// bind-up. Zero for an ordinary book, which occupies one position.
+	//
+	// Derived from book_contents rather than stored: the contained rows carry
+	// their own positions already, so a second column would be a copy that can
+	// disagree with them.
+	PositionEnd float64
 }
 
 // BookSeriesRef is a lightweight reference used when looking up which series a book belongs to.
