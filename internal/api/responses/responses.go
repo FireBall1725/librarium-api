@@ -176,6 +176,10 @@ type BookResponse struct {
 	UserRating int `json:"user_rating"`
 	// UserProgressPct is the caller's reading progress 0-100 (0 = none).
 	UserProgressPct float64 `json:"user_progress_pct"`
+	// Ownership is where the book stands in relation to the caller: shelf,
+	// wishlist, suggested, or gap for a volume missing from a run they hold
+	// part of. Set by the list; a single-book read always means shelf.
+	Ownership string `json:"ownership"`
 	// ActiveLoanCount is the number of active (not yet returned) loans for
 	// this book — scoped to the library when the read is library-scoped,
 	// global otherwise. Always populated.

@@ -284,12 +284,19 @@ func (r *BookRepo) booksByID(
 		return out, nil
 	}
 
+	// The same scope the list joins, because these rows are the list's rows:
+	// a series group holds whatever the series holds, missing volumes included,
+	// and a grouped row that claimed to be on the shelf would draw a book
+	// nobody has exactly like one they do.
 	args := []any{libraryIDs, ids}
-	sel := booksSelect(0, 1, true)
+	sel := booksSelect(0, 1, true, true)
+	callerArg := 0
 	if callerID != uuid.Nil {
 		args = append(args, callerID)
-		sel = booksSelect(3, 1, true)
+		callerArg = 3
+		sel = booksSelect(3, 1, true, true)
 	}
+	sel += " JOIN (" + bookScopeCTE(1, callerArg) + ") lb ON lb.book_id = b.id "
 
 	rows, err := r.db.Query(ctx, sel+" WHERE b.id = ANY($2)", args...)
 	if err != nil {

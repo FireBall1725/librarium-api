@@ -71,6 +71,14 @@ type Book struct {
 	// Libraries is the set of libraries holding this book (populated by the
 	// service layer on reads that need it; empty when the book is floating).
 	Libraries []BookLibraryRef
+	// Ownership is where the book stands in relation to the caller: on the
+	// shelf, on a wishlist, suggested, or a volume missing from a run they hold
+	// part of. Set by the list, which is the only read that joins the scope.
+	//
+	// Clients need it to tell a book someone has from one they do not. Without
+	// it a missing volume rendered exactly like a book on the shelf, which is a
+	// cover you could pick up and a cover you could not, drawn identically.
+	Ownership string `json:"ownership"`
 }
 
 // BookLibraryRef is a lightweight reference to a library that holds this book.

@@ -15664,6 +15664,10 @@ const docTemplate = `{
                 "media_type_id": {
                     "type": "string"
                 },
+                "ownership": {
+                    "description": "Ownership is where the book stands in relation to the caller: shelf,\nwishlist, suggested, or gap for a volume missing from a run they hold\npart of. Set by the list; a single-book read always means shelf.",
+                    "type": "string"
+                },
                 "publish_year": {
                     "type": "integer"
                 },

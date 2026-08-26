@@ -759,6 +759,11 @@ func bookBody(b *models.Book) map[string]any {
 		"user_rating":       b.UserRating,
 		"user_progress_pct": b.UserProgressPct,
 		"active_loan_count": b.ActiveLoanCount,
+		// Where the book stands in relation to the caller. The list has always
+		// been filterable by this and the row never carried it, so a client
+		// could ask for missing volumes and then had no way to draw one
+		// differently from a book on the shelf.
+		"ownership": b.Ownership,
 	}
 }
 

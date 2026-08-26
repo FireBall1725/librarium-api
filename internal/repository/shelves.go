@@ -207,7 +207,7 @@ func (r *ShelfRepo) FindByBook(ctx context.Context, libraryID, bookID uuid.UUID)
 // ─── Shelf books ──────────────────────────────────────────────────────────────
 
 func (r *ShelfRepo) ListBooks(ctx context.Context, shelfID uuid.UUID) ([]*models.Book, error) {
-	q := booksSelect(0, 0, false) + `
+	q := booksSelect(0, 0, false, false) + `
 		JOIN library_shelf_books bs ON bs.book_id = b.id
 		WHERE bs.shelf_id = $1
 		ORDER BY bs.added_at DESC`
