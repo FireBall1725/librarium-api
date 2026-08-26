@@ -10603,6 +10603,14 @@ paths:
         in: query
         name: genre
         type: string
+      - description: Comma-separated stored rating points, 1-10
+        in: query
+        name: rating
+        type: string
+      - description: The same against the caller's own rating
+        in: query
+        name: my_rating
+        type: string
       - description: ongoing | completed | hiatus | cancelled
         in: query
         name: status

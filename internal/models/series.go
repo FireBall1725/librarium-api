@@ -31,8 +31,20 @@ type Series struct {
 	// (List / FindByID receive a non-zero callerID). Both default to 0 when
 	// not populated, which is fine because clients gate the indicator behind
 	// the user's `show_read_badges` preference anyway.
-	ReadCount    int                 `json:"read_count"`
-	ReadingCount int                 `json:"reading_count"`
+	ReadCount    int `json:"read_count"`
+	ReadingCount int `json:"reading_count"`
+	// Rating is what the run is worth, averaged from the volumes anyone has
+	// rated. Nil when no volume carries a rating, which is a different thing
+	// from a rating of nought.
+	//
+	// RatedBooks says how many volumes it came from, because a 4 from one
+	// volume of twenty and a 4 from all twenty are not the same claim.
+	Rating     *int `json:"rating"`
+	RatedBooks int  `json:"rated_books"`
+	// MyRating is the caller's own average over the run, nil when they have
+	// rated none of it. "Is this run good" and "did I like it" are two
+	// questions, and in a household they routinely disagree.
+	MyRating     *int                `json:"my_rating"`
 	PreviewBooks []SeriesPreviewBook `json:"preview_books"`
 	Tags         []*Tag              `json:"tags"`
 	CreatedAt    time.Time           `json:"created_at"`

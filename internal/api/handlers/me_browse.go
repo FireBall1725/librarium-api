@@ -77,6 +77,8 @@ func callerID(r *http.Request) uuid.UUID {
 //	@Param       lib      query  string  false  "Comma-separated library ids to narrow to"
 //	@Param       type     query  string  false  "Comma-separated media type names"
 //	@Param       genre    query  string  false  "Comma-separated genre names"
+//	@Param       rating   query  string  false  "Comma-separated stored rating points, 1-10"
+//	@Param       my_rating query string  false  "The same against the caller's own rating"
 //	@Param       status   query  string  false  "ongoing | completed | hiatus | cancelled"
 //	@Param       arcs     query  string  false  "with | without"
 //	@Param       reading  query  string  false  "unread | reading | read_all"
@@ -111,6 +113,8 @@ func (h *MeBrowseHandler) SeriesIndex(w http.ResponseWriter, r *http.Request) {
 		Libraries:  narrowToReadable(wanted, libraryIDs),
 		MediaTypes: csv(q.Get("type")),
 		Genres:     csv(q.Get("genre")),
+		Ratings:    csvInts(q.Get("rating")),
+		MyRatings:  csvInts(q.Get("my_rating")),
 		Status:     strings.TrimSpace(q.Get("status")),
 		Arcs:       strings.TrimSpace(q.Get("arcs")),
 		Reading:    strings.TrimSpace(q.Get("reading")),
@@ -165,6 +169,19 @@ func csv(v string) []string {
 	for _, part := range strings.Split(v, ",") {
 		if p := strings.TrimSpace(part); p != "" {
 			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// csvInts is csv for the numeric dimensions. A value that is not a number is
+// dropped rather than erroring: a stale link with an old vocabulary in it
+// should narrow to what it can, not refuse to load the page.
+func csvInts(v string) []int32 {
+	var out []int32
+	for _, part := range csv(v) {
+		if n, err := strconv.Atoi(part); err == nil {
+			out = append(out, int32(n))
 		}
 	}
 	return out

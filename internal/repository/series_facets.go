@@ -33,8 +33,13 @@ type SeriesFacets struct {
 	// the vocabulary as it actually is, spellings and all. That is the honest
 	// way round: a facet that reports "Sci-Fi 4" beside "Science fiction 3" is
 	// how anyone finds out the two need merging.
-	Genre  []FacetValue `json:"genre"`
-	Status []FacetValue `json:"status"`
+	Genre []FacetValue `json:"genre"`
+	// Rating is what the run is worth, averaged from the volumes anyone rated,
+	// and MyRating is the caller's own average over it. Two questions, the same
+	// way Books splits them: "is this good" and "did I like it".
+	Rating   []FacetValue `json:"rating"`
+	MyRating []FacetValue `json:"my_rating"`
+	Status   []FacetValue `json:"status"`
 	// Arcs is a shape rather than a value: "with" and "without" are the two
 	// answers, counted so a reader can see there is nothing behind one of them.
 	Arcs []FacetValue `json:"arcs"`
@@ -47,6 +52,7 @@ type SeriesFacets struct {
 func emptySeriesFacets() *SeriesFacets {
 	return &SeriesFacets{
 		Library: []FacetValue{}, MediaType: []FacetValue{}, Genre: []FacetValue{},
+		Rating: []FacetValue{}, MyRating: []FacetValue{},
 		Status: []FacetValue{}, Arcs: []FacetValue{}, Reading: []FacetValue{},
 		Tag: []FacetValue{},
 	}
@@ -84,12 +90,13 @@ func (r *SeriesRepo) Facets(
 	// describe, so the counts are computed against a row that matches nothing
 	// rather than the dimension being omitted and the client finding a hole.
 	readExpr, readingExpr := "0", "0"
+	myRatingExpr := "NULL::int"
 	if callerID != uuid.Nil {
 		p := arg(callerID)
 		n := len(args)
-		_ = p
 		readExpr = seriesReadCountExpr(n)
 		readingExpr = seriesReadingCountExpr(n)
+		myRatingExpr = seriesMyRatingScalar(p)
 	}
 
 	// Every dimension's own condition, so each aggregate can use the others.
@@ -97,6 +104,7 @@ func (r *SeriesRepo) Facets(
 	// keeps the format arguments below positional and countable.
 	libCond, statusCond, arcsCond, readingCond, tagCond := "TRUE", "TRUE", "TRUE", "TRUE", "TRUE"
 	mediaCond, genreCond := "TRUE", "TRUE"
+	ratingCond, myRatingCond := "TRUE", "TRUE"
 	if len(f.Libraries) > 0 {
 		libCond = "f.library_id = ANY(" + arg(f.Libraries) + ")"
 	}
@@ -129,6 +137,12 @@ func (r *SeriesRepo) Facets(
 			readingCond = "f.book_count > 0 AND f.read_count >= f.book_count"
 		}
 	}
+	if len(f.Ratings) > 0 {
+		ratingCond = "f.rating = ANY(" + arg(f.Ratings) + ")"
+	}
+	if len(f.MyRatings) > 0 && callerID != uuid.Nil {
+		myRatingCond = "f.my_rating = ANY(" + arg(f.MyRatings) + ")"
+	}
 	if f.Tag != "" {
 		tagCond = fmt.Sprintf(`EXISTS (
             SELECT 1 FROM series_tags st_f JOIN tags t_f ON t_f.id = st_f.tag_id
@@ -140,6 +154,7 @@ func (r *SeriesRepo) Facets(
 		parts := make([]string, 0, 4)
 		for name, cond := range map[string]string{
 			"library": libCond, "media_type": mediaCond, "genre": genreCond,
+			"rating": ratingCond, "my_rating": myRatingCond,
 			"status": statusCond, "arcs": arcsCond,
 			"reading": readingCond, "tag": tagCond,
 		} {
@@ -171,7 +186,9 @@ WITH f AS (
            (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
            %s AS book_count,
            %s AS read_count,
-           %s AS reading_count
+           %s AS reading_count,
+           %s AS rating,
+           %s AS my_rating
       FROM series s
      WHERE s.library_id = ANY($1)%s
 )
@@ -189,6 +206,14 @@ SELECT 'genre', g.name, g.name, COUNT(DISTINCT f.id)
   FROM f JOIN series_genres sg ON sg.series_id = f.id
          JOIN genres g ON g.id = sg.genre_id
  WHERE %s GROUP BY g.name
+UNION ALL
+-- Only rows that carry one. A run nobody has rated has nothing to offer this
+-- dimension, and a row reading "no rating" is the rest of the shelf.
+SELECT 'rating', f.rating::text, f.rating::text, COUNT(*)
+  FROM f WHERE f.rating IS NOT NULL AND %s GROUP BY f.rating
+UNION ALL
+SELECT 'my_rating', f.my_rating::text, f.my_rating::text, COUNT(*)
+  FROM f WHERE f.my_rating IS NOT NULL AND %s GROUP BY f.my_rating
 UNION ALL
 SELECT 'status', f.status, f.status, COUNT(*)
   FROM f WHERE %s GROUP BY f.status
@@ -211,8 +236,10 @@ SELECT 'tag', t.name, t.name, COUNT(DISTINCT f.id)
   FROM f JOIN series_tags st ON st.series_id = f.id
          JOIN tags t ON t.id = st.tag_id AND t.deleted_at IS NULL
  WHERE %s GROUP BY t.name`,
-		seriesBookCountValue, readExpr, readingExpr, textWhere,
+		seriesBookCountValue, readExpr, readingExpr,
+		seriesAvgRatingScalar("$1"), myRatingExpr, textWhere,
 		without("library"), without("media_type"), without("genre"),
+		without("rating"), without("my_rating"),
 		without("status"), without("arcs"), without("reading"), without("tag"))
 
 	rows, err := r.db.Query(ctx, q, args...)
@@ -236,6 +263,13 @@ SELECT 'tag', t.name, t.name, COUNT(DISTINCT f.id)
 			out.MediaType = append(out.MediaType, v)
 		case "genre":
 			out.Genre = append(out.Genre, v)
+		case "rating":
+			out.Rating = append(out.Rating, v)
+		case "my_rating":
+			// Nobody's own rating exists without a caller to own it.
+			if callerID != uuid.Nil {
+				out.MyRating = append(out.MyRating, v)
+			}
 		case "status":
 			out.Status = append(out.Status, v)
 		case "arcs":
@@ -264,6 +298,9 @@ SELECT 'tag', t.name, t.name, COUNT(DISTINCT f.id)
 	// Status, arcs and reading are closed vocabularies with a natural order, so
 	// they keep it: a rail whose rows reshuffle as counts change is one the
 	// reader has to re-read every time they click.
+	// Ratings read down the scale, five stars first, the way Books does it.
+	sortByValueDesc(out.Rating)
+	sortByValueDesc(out.MyRating)
 	orderBy(&out.Status, []string{"ongoing", "completed", "hiatus", "cancelled"})
 	orderBy(&out.Arcs, []string{"with", "without"})
 	orderBy(&out.Reading, []string{"unread", "reading", "read_all"})

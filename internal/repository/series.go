@@ -176,6 +176,11 @@ type SeriesFilter struct {
 	// vocabulary from the controlled one book genres use. Overlap, not
 	// containment: ticking two means either.
 	Genres []string
+	// Ratings narrows on the run's average, as whole stored points. Ticking
+	// several means any of them, the same as every other dimension.
+	Ratings []int32
+	// MyRatings is the same against the caller's own average.
+	MyRatings []int32
 	// Status is a publication status: ongoing, completed, hiatus, cancelled.
 	Status string
 	// Arcs is "with" or "without". Empty means either.
@@ -225,6 +230,18 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 	if len(f.MediaTypes) > 0 {
 		args = append(args, f.MediaTypes)
 		where += " AND " + seriesMediaTypeExists("s.id", fmt.Sprintf("$%d", len(args)))
+	}
+	if len(f.Ratings) > 0 {
+		args = append(args, f.Ratings)
+		where += fmt.Sprintf(` AND %s = ANY($%d)`, seriesAvgRatingScalar("$1"), len(args))
+	}
+	if len(f.MyRatings) > 0 && callerID != uuid.Nil {
+		// Bound here rather than reusing callerArg, which is claimed further
+		// down: the numbering follows the order arguments are appended in.
+		args = append(args, callerID)
+		me := fmt.Sprintf("$%d", len(args))
+		args = append(args, f.MyRatings)
+		where += fmt.Sprintf(` AND %s = ANY($%d)`, seriesMyRatingScalar(me), len(args))
 	}
 	if len(f.Genres) > 0 {
 		args = append(args, f.Genres)
@@ -276,6 +293,18 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 		}
 	}
 
+	// The run's own rating, and the caller's. Scoped to the libraries in play,
+	// matching the book average exactly: an instance can host two households
+	// that share no library, and one household's opinions have no business
+	// moving the other's number.
+	myRating := "NULL::int"
+	if callerArg > 0 {
+		myRating = seriesMyRatingScalar(fmt.Sprintf("$%d", callerArg))
+	}
+	ratingExpr := seriesAvgRatingScalar("$1") + " AS rating, " +
+		seriesRatedBooksScalar("$1") + " AS rated_books, " +
+		myRating + " AS my_rating"
+
 	dir := "ASC"
 	if f.Desc {
 		dir = "DESC"
@@ -295,6 +324,12 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 		if callerArg > 0 {
 			order = " ORDER BY " + seriesReadCountExpr(callerArg) + " " + dir + " NULLS LAST, lower(s.name) ASC"
 		}
+	case "rating":
+		// NULLS LAST both ways. A run nobody has rated is not the worst run;
+		// it is a run with nothing to say, and it belongs at the end whichever
+		// direction the reader asked for.
+		order = " ORDER BY " + seriesAvgRatingScalar("$1") + " " + dir +
+			" NULLS LAST, lower(s.name) ASC"
 	case "recent":
 		order = " ORDER BY s.updated_at " + dir + ", lower(s.name) ASC"
 	}
@@ -309,6 +344,7 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 		       ` + seriesBookCountExpr + `,
 		       (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
 		       ` + readStateSubqueries(callerArg) + `,
+		       ` + ratingExpr + `,
 		       (
 		           SELECT COALESCE(json_agg(jsonb_build_object(
 		               'book_id', t.id,
@@ -366,6 +402,17 @@ func (r *SeriesRepo) FindByID(ctx context.Context, id, callerID uuid.UUID) (*mod
 		args = append(args, callerID)
 		callerArg = len(args)
 	}
+	// One series, so the scope is the library it belongs to. There is no
+	// readable set to intersect with here: the caller already had to be allowed
+	// through to reach this row at all.
+	myRating := "NULL::int"
+	if callerArg > 0 {
+		myRating = seriesMyRatingScalar(fmt.Sprintf("$%d", callerArg))
+	}
+	ratingExpr := seriesAvgRatingScalar("ARRAY[s.library_id]") + " AS rating, " +
+		seriesRatedBooksScalar("ARRAY[s.library_id]") + " AS rated_books, " +
+		myRating + " AS my_rating"
+
 	q := `
 		SELECT s.id, s.library_id, s.name, COALESCE(s.description,''),
 		       s.total_count, s.status, s.original_language, s.publication_year,
@@ -376,6 +423,7 @@ func (r *SeriesRepo) FindByID(ctx context.Context, id, callerID uuid.UUID) (*mod
 		       ` + seriesBookCountExpr + `,
 		       (SELECT COUNT(*) FROM series_arcs sa WHERE sa.series_id = s.id) AS arc_count,
 		       ` + readStateSubqueries(callerArg) + `,
+		       ` + ratingExpr + `,
 		       (
 		           SELECT COALESCE(json_agg(jsonb_build_object(
 		               'book_id', t.id,
@@ -771,6 +819,8 @@ func scanSeries(s scanner) (*models.Series, error) {
 		pgNextDate    pgtype.Date
 		previewJSON   []byte
 		tagsJSON      []byte
+		pgRating      pgtype.Int4
+		pgMyRating    pgtype.Int4
 		ser           models.Series
 	)
 	err := s.Scan(
@@ -782,6 +832,7 @@ func scanSeries(s scanner) (*models.Series, error) {
 		&ser.BookCount,
 		&ser.ArcCount,
 		&ser.ReadCount, &ser.ReadingCount,
+		&pgRating, &ser.RatedBooks, &pgMyRating,
 		&previewJSON,
 		&ser.CreatedAt, &ser.UpdatedAt,
 		&tagsJSON,
@@ -791,6 +842,16 @@ func scanSeries(s scanner) (*models.Series, error) {
 	}
 	ser.ID = uuid.UUID(pgID.Bytes)
 	ser.LibraryID = uuid.UUID(pgLibraryID.Bytes)
+	// Nil rather than nought when nothing is rated. A run nobody has an opinion
+	// on is not a run everybody hated.
+	if pgRating.Valid {
+		v := int(pgRating.Int32)
+		ser.Rating = &v
+	}
+	if pgMyRating.Valid {
+		v := int(pgMyRating.Int32)
+		ser.MyRating = &v
+	}
 	if pgTotal.Valid {
 		v := int(pgTotal.Int32)
 		ser.TotalCount = &v

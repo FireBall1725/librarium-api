@@ -3324,3 +3324,122 @@ func TestSeriesFilterByWhatTheBooksAre(t *testing.T) {
 		}
 	}
 }
+
+// A run is worth what its volumes are worth, each volume counting once.
+//
+// The average of the volume averages, not the average of every rating. A single
+// volume five people loved would otherwise outweigh the rest of the run, and a
+// twenty-volume series would report the opinion of its most-discussed book.
+func TestASeriesRatingAveragesItsVolumes(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	repo := NewSeriesRepo(pool)
+
+	var libraryID, mediaTypeID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id FROM media_types LIMIT 1`).Scan(&mediaTypeID); err != nil {
+		t.Skipf("no media type: %v", err)
+	}
+
+	seriesID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO series (id, library_id, name) VALUES ($1, $2, 'ZZ rating series')`,
+		seriesID, libraryID); err != nil {
+		t.Fatalf("creating the series: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM series WHERE id = $1`, seriesID) })
+
+	var books []uuid.UUID
+	for i := 1; i <= 3; i++ {
+		id := uuid.New()
+		books = append(books, id)
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO books (id, title, media_type_id) VALUES ($1, $2, $3)`,
+			id, "ZZ rating volume", mediaTypeID); err != nil {
+			t.Fatalf("creating volume %d: %v", i, err)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO book_series (book_id, series_id, position) VALUES ($1, $2, $3)`,
+			id, seriesID, i); err != nil {
+			t.Fatalf("positioning volume %d: %v", i, err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, id := range books {
+			_, _ = pool.Exec(ctx, `DELETE FROM books WHERE id = $1`, id)
+		}
+	})
+
+	// Two readers, both holding a role on the library so both count.
+	readers := []uuid.UUID{scratchUser(t, pool, ctx), scratchUser(t, pool, ctx)}
+	var roleID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM roles WHERE scope = 'library' LIMIT 1`).Scan(&roleID); err != nil {
+		t.Skipf("no role to grant: %v", err)
+	}
+	for _, u := range readers {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO user_roles (user_id, role_id, scope, library_id)
+			VALUES ($1, $2, 'library', $3) ON CONFLICT DO NOTHING`,
+			u, roleID, libraryID); err != nil {
+			t.Fatalf("granting a role: %v", err)
+		}
+	}
+	rate := func(u, book uuid.UUID, rating int) {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO user_books (user_id, book_id, rating, read_status)
+			VALUES ($1, $2, $3, 'unread')
+			ON CONFLICT (user_id, book_id) DO UPDATE SET rating = EXCLUDED.rating`,
+			u, book, rating); err != nil {
+			t.Fatalf("rating: %v", err)
+		}
+	}
+
+	// Volume one: two readers, 10 and 8, so the volume averages 9.
+	// Volume two: one reader, 3.
+	// Volume three: nobody.
+	//
+	// Average of the volume averages is (9 + 3) / 2 = 6. The average of every
+	// rating would be (10 + 8 + 3) / 3 = 7, which is the answer this test
+	// exists to refuse.
+	rate(readers[0], books[0], 10)
+	rate(readers[1], books[0], 8)
+	rate(readers[0], books[1], 3)
+
+	got, err := repo.FindByID(ctx, seriesID, readers[0])
+	if err != nil {
+		t.Fatalf("reading the series back: %v", err)
+	}
+	if got.Rating == nil {
+		t.Fatal("the run has rated volumes and reported no rating")
+	}
+	if *got.Rating != 6 {
+		t.Errorf("the run rates %d, want 6: one volume averaging 9 and one at 3", *got.Rating)
+	}
+	// Two of three volumes carry a rating, which is what lets a reader judge
+	// whether to trust the number at all.
+	if got.RatedBooks != 2 {
+		t.Errorf("the run reports %d rated volumes, want 2", got.RatedBooks)
+	}
+	// The first reader gave 10 and 3, so their own average is 6.5, rounding to
+	// 7. Their own opinion is a different question from the run's.
+	if got.MyRating == nil || *got.MyRating != 7 {
+		t.Errorf("the caller's own average is %v, want 7", got.MyRating)
+	}
+
+	// A run nobody has rated has no rating, which is not a rating of nought.
+	bare := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO series (id, library_id, name) VALUES ($1, $2, 'ZZ unrated series')`,
+		bare, libraryID); err != nil {
+		t.Fatalf("creating the unrated series: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM series WHERE id = $1`, bare) })
+	unrated, err := repo.FindByID(ctx, bare, readers[0])
+	if err != nil {
+		t.Fatalf("reading the unrated series: %v", err)
+	}
+	if unrated.Rating != nil {
+		t.Errorf("a run nobody rated reports %v, want no rating at all", *unrated.Rating)
+	}
+}

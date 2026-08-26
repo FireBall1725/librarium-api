@@ -14007,6 +14007,18 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Comma-separated stored rating points, 1-10",
+                        "name": "rating",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The same against the caller's own rating",
+                        "name": "my_rating",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "ongoing | completed | hiatus | cancelled",
                         "name": "status",
                         "in": "query"

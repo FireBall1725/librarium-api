@@ -989,9 +989,14 @@ func seriesBody(s *models.Series) map[string]any {
 		"read_count":        s.ReadCount,
 		"reading_count":     s.ReadingCount,
 		"preview_books":     previewBooksToBody(s.PreviewBooks),
-		"tags":              tagsToBody(tags),
-		"created_at":        s.CreatedAt,
-		"updated_at":        s.UpdatedAt,
+		// Null when nothing in the run is rated, which is different from a
+		// rating of nought. rated_books says how many volumes it came from.
+		"rating":      s.Rating,
+		"rated_books": s.RatedBooks,
+		"my_rating":   s.MyRating,
+		"tags":        tagsToBody(tags),
+		"created_at":  s.CreatedAt,
+		"updated_at":  s.UpdatedAt,
 	}
 	if s.TotalCount != nil {
 		body["total_count"] = *s.TotalCount
