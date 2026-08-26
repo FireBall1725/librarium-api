@@ -67,6 +67,31 @@ func (r *JobRepo) CreateJob(ctx context.Context, j *models.Job) error {
 }
 
 // MarkRunning flips a job to running and stamps started_at if still null.
+// IsKindRunning reports whether this kind is already going.
+//
+// Triggering a job never checked, so pressing Run now twice started two
+// concurrent runs of the same kind. For a kind that walks the catalogue that is
+// not a duplicate of the work but a race with it: two series syncs put 175
+// duplicate books in a real collection, because each promoted the volumes the
+// other had not committed yet.
+//
+// A stale row cannot block a kind forever. A run whose process died leaves its
+// status running with nothing behind it, so anything older than the cutoff is
+// treated as gone rather than as a reason to refuse.
+func (r *JobRepo) IsKindRunning(ctx context.Context, kind string, staleAfter time.Duration) (bool, error) {
+	var running bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1 FROM jobs
+		     WHERE kind = $1 AND status = 'running'
+		       AND COALESCE(started_at, created_at) > NOW() - $2::interval)`,
+		kind, staleAfter.String()).Scan(&running)
+	if err != nil {
+		return false, fmt.Errorf("checking whether %s is running: %w", kind, err)
+	}
+	return running, nil
+}
+
 func (r *JobRepo) MarkRunning(ctx context.Context, jobID uuid.UUID) error {
 	_, err := r.db.Exec(ctx, `
 		UPDATE jobs
