@@ -37,13 +37,42 @@ func NewCopyLocationRepo(db *pgxpool.Pool) *CopyLocationRepo {
 // List returns a library's locations with a live count of what is filed at
 // each, ordered so parents read before their children.
 func (r *CopyLocationRepo) List(ctx context.Context, libraryID uuid.UUID) ([]*models.CopyLocation, error) {
+	// Depth first, down a path built from the names on the way, so a place and
+	// everything inside it stay together.
+	//
+	// This ordered by COALESCE(parent_id, id), which groups a node with its
+	// siblings and nothing more: the key is the parent's UUID, which sorts
+	// arbitrarily, and a grandchild sorts under its own parent's id with no
+	// relation to where the grandparent landed. A room could appear between
+	// another room and the shelf inside it.
 	const q = `
+		WITH RECURSIVE tree AS (
+		    SELECT l.id, l.parent_id,
+		           ARRAY[lower(l.name), l.id::text] AS path,
+		           0 AS depth
+		      FROM copy_locations l
+		     WHERE l.library_id = $1 AND l.parent_id IS NULL
+		  UNION ALL
+		    SELECT c.id, c.parent_id,
+		           t.path || lower(c.name) || c.id::text,
+		           t.depth + 1
+		      FROM copy_locations c
+		      JOIN tree t ON c.parent_id = t.id
+		     -- Bounded, for the same reason every walk of this tree is: a loop
+		     -- is refused on write, and a bound is what stops one already in
+		     -- the data from hanging the read.
+		     WHERE c.library_id = $1 AND t.depth < 16
+		)
 		SELECT l.id, l.library_id, l.name, l.parent_id, l.created_at,
 		       (SELECT count(*) FROM copies c
 		         WHERE c.location_id = l.id AND c.deleted_at IS NULL)
 		  FROM copy_locations l
+		  -- LEFT, and unreachable rows sort last rather than vanishing. A node
+		  -- inside a cycle has no root to descend from, and a place that cannot
+		  -- be listed is a place nobody can delete to fix the cycle.
+		  LEFT JOIN tree t ON t.id = l.id
 		 WHERE l.library_id = $1
-		 ORDER BY COALESCE(l.parent_id::text, l.id::text), l.name`
+		 ORDER BY (t.path IS NULL), t.path, lower(l.name), l.id`
 
 	rows, err := r.db.Query(ctx, q, libraryID)
 	if err != nil {

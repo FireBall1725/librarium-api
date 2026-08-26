@@ -2445,3 +2445,71 @@ func TestReadersOfShowsMembersAndHidesPrivateNotes(t *testing.T) {
 		t.Error("private notes reached a reader they do not belong to")
 	}
 }
+
+// A place and everything inside it read as one block. The order was
+// COALESCE(parent_id, id), which groups a node with its siblings and no
+// further: a grandchild sorted under its own parent's UUID, so a room could
+// appear between another room and the shelf inside it.
+//
+// The ids are fixed rather than generated. The old ordering sorted on them, so
+// with random ids this test passed or failed on luck; these are chosen so the
+// old query puts the second root inside the first root's subtree every time.
+func TestLocationsListDepthFirst(t *testing.T) {
+	pool, ctx := tiersPool(t)
+	locs := NewCopyLocationRepo(pool)
+
+	var libraryID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM libraries LIMIT 1`).Scan(&libraryID); err != nil {
+		t.Skipf("no library: %v", err)
+	}
+
+	office := uuid.MustParse("11111111-1111-4111-8111-111111111111")
+	root := uuid.MustParse("22222222-2222-4222-8222-222222222222")
+	shelf := uuid.MustParse("33333333-3333-4333-8333-333333333333")
+	box := uuid.MustParse("44444444-4444-4444-8444-444444444444")
+
+	for _, n := range []struct {
+		id     uuid.UUID
+		name   string
+		parent *uuid.UUID
+	}{
+		{office, "ZZ office", nil},
+		{root, "ZZ root", nil},
+		{shelf, "ZZ shelf", &office},
+		{box, "ZZ box", &shelf},
+	} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO copy_locations (id, library_id, name, parent_id) VALUES ($1, $2, $3, $4)`,
+			n.id, libraryID, n.name, n.parent); err != nil {
+			t.Fatalf("creating %s: %v", n.name, err)
+		}
+		id := n.id
+		t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM copy_locations WHERE id = $1`, id) })
+	}
+
+	all, err := locs.List(ctx, libraryID)
+	if err != nil {
+		t.Fatalf("listing: %v", err)
+	}
+
+	at := map[uuid.UUID]int{}
+	for i, l := range all {
+		at[l.ID] = i
+	}
+	for _, id := range []uuid.UUID{office, shelf, box, root} {
+		if _, ok := at[id]; !ok {
+			t.Fatal("a place was not listed at all")
+		}
+	}
+
+	if !(at[office] < at[shelf] && at[shelf] < at[box]) {
+		t.Errorf("the office subtree is out of order: office=%d shelf=%d box=%d",
+			at[office], at[shelf], at[box])
+	}
+	// The whole point: the other root cannot sit between a place and something
+	// inside it.
+	if at[root] > at[office] && at[root] < at[box] {
+		t.Errorf("a root landed inside another root's subtree, at %d between %d and %d",
+			at[root], at[office], at[box])
+	}
+}
