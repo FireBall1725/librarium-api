@@ -481,15 +481,29 @@ func interactionBody(i *models.UserBookInteraction) map[string]any {
 	} else {
 		body["rating"] = nil
 	}
-	if i.DateStarted != nil {
-		body["date_started"] = i.DateStarted.Format("2006-01-02")
-	} else {
-		body["date_started"] = nil
-	}
-	if i.DateFinished != nil {
-		body["date_finished"] = i.DateFinished.Format("2006-01-02")
-	} else {
-		body["date_finished"] = nil
-	}
+	body["date_started"] = readingDate(i.DateStarted)
+	body["date_finished"] = readingDate(i.DateFinished)
 	return body
+}
+
+// readingDate flattens a reading session's timestamp to the day it was written
+// as, in UTC.
+//
+// These two are dates wearing a timestamp: the client sends YYYY-MM-DD, the
+// handler parses it to midnight UTC, and `reading_sessions` stores it in a
+// `timestamptz` because the same column also carries real instants for
+// progress tracking. Formatting it back in the server's local zone moves it:
+// midnight UTC read as anything west of Greenwich is the previous day, so a
+// book finished on the first of January came back finished on the thirty-first
+// of December. The deployment images mount /etc/localtime, so this is every
+// self-hosted instance outside UTC and none of the CI that tests it.
+//
+// Every other date the API returns is a real DATE column and needs no such
+// care; these two are the exception, which is why it is spelled out here
+// rather than applied everywhere.
+func readingDate(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC().Format("2006-01-02")
 }
