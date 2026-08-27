@@ -104,6 +104,14 @@ func (h *SyncHandler) GetChanges(w http.ResponseWriter, r *http.Request) {
 	// Safe: an extra round-trip never hurts correctness.
 	hasMore := len(ops) >= limit
 
+	// An empty list, not null. A nil slice marshals to `null`, and "nothing has
+	// changed since you last asked" is the ordinary answer here: every
+	// caught-up client got a null where its decoder expected an array, so sync
+	// failed at every launch of a client that was already up to date.
+	if ops == nil {
+		ops = []responses.SyncOp{}
+	}
+
 	respond.JSON(w, http.StatusOK, responses.SyncChangesResponse{
 		Ops:        ops,
 		ServerTime: serverTime,
