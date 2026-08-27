@@ -3955,3 +3955,62 @@ func TestAJobKindDoesNotRunTwiceAtOnce(t *testing.T) {
 		t.Error("a completed job reports as running")
 	}
 }
+
+// A curly apostrophe sorts where a straight one does.
+//
+// Three volumes of one run came back 1, 3, 2 because volume two was catalogued
+// with U+2019 and its siblings with U+0027. The characters are the same
+// apostrophe to a reader and forty-eight code points apart to a sort, so every
+// straight-quoted title in a run groups ahead of every curly-quoted one and the
+// numbering falls apart in between.
+//
+// Providers are not consistent with themselves about this, so it is not a
+// matter of picking a good one.
+func TestTypographicPunctuationSortsWithItsPlainForm(t *testing.T) {
+	pool, ctx := tiersPool(t)
+
+	cases := []struct{ curly, plain string }{
+		{"Can’t Fear Your Own World", "Can't Fear Your Own World"},
+		{"L’Assommoir", "L'Assommoir"},
+		{"A – Dash", "A - Dash"},
+		{"“Quoted”", "\"Quoted\""},
+	}
+	for _, c := range cases {
+		var a, b string
+		if err := pool.QueryRow(ctx,
+			`SELECT natural_sort_key($1), natural_sort_key($2)`, c.curly, c.plain).Scan(&a, &b); err != nil {
+			t.Fatalf("keying %q: %v", c.curly, err)
+		}
+		if a != b {
+			t.Errorf("%q keys to %q but %q keys to %q; they must sort together",
+				c.curly, a, c.plain, b)
+		}
+	}
+
+	// The whole point: a run numbered 1 to 3 with one odd apostrophe reads in
+	// order rather than 1, 3, 2.
+	rows, err := pool.Query(ctx, `
+		SELECT t FROM unnest(ARRAY[
+			'Bleach: Can''t Fear Your Own World #1',
+			'Bleach: Can`+"’"+`t Fear Your Own World #2',
+			'Bleach: Can''t Fear Your Own World #3'
+		]) AS t ORDER BY natural_sort_key(t)`)
+	if err != nil {
+		t.Fatalf("ordering: %v", err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var t2 string
+		if err := rows.Scan(&t2); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, t2[len(t2)-2:])
+	}
+	want := []string{"#1", "#2", "#3"}
+	for i := range want {
+		if i >= len(got) || got[i] != want[i] {
+			t.Fatalf("the run sorted %v, want %v", got, want)
+		}
+	}
+}
