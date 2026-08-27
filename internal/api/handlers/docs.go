@@ -51,9 +51,14 @@ func ServeScalarUI(w http.ResponseWriter, r *http.Request) {
     </style>
   </head>
   <body>
+    <!-- Relative, so the page works wherever the API is mounted. This route is
+         /api/docs, so a relative reference resolves against /api/ and gives
+         /api/openapi.json at the root and /<prefix>/api/openapi.json behind a
+         reverse proxy. An absolute path asks the host root, which is the one
+         place the spec is not when the API is served under a prefix. -->
     <script
       id="api-reference"
-      data-url="/api/openapi.json"
+      data-url="openapi.json"
       data-configuration='{"theme":"purple"}'></script>
     <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
   </body>
