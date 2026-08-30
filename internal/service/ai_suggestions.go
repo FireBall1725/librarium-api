@@ -710,13 +710,10 @@ func (s *SuggestionsService) resolveFloatingBook(ctx context.Context, callerID u
 	}
 
 	var publishDate *time.Time
-	if meta.PublishDate != "" {
-		for _, layout := range []string{"2006-01-02", "2006-01", "2006", "January 2, 2006", "Jan 2, 2006"} {
-			if t, perr := time.Parse(layout, meta.PublishDate); perr == nil {
-				publishDate = &t
-				break
-			}
-		}
+	var publishPrecision models.DatePrecision
+	if t, precision, ok := models.ParseFlexDate(meta.PublishDate); ok {
+		publishDate = &t
+		publishPrecision = precision
 	}
 
 	bookID := uuid.New()
@@ -744,7 +741,7 @@ func (s *SuggestionsService) resolveFloatingBook(ctx context.Context, callerID u
 	if err := s.editions.Create(ctx, tx, editionID, bookID,
 		models.EditionFormatPaperback, // placeholder until real enrichment
 		meta.Language, "", "",         // language, edition_name, narrator
-		meta.Publisher, publishDate,
+		meta.Publisher, publishDate, publishPrecision,
 		meta.ISBN10, meta.ISBN13, "", // description lives on book, not edition
 		nil,            // duration_seconds
 		meta.PageCount, // page_count

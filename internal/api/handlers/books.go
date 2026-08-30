@@ -9,10 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
@@ -766,78 +764,6 @@ func bookBody(b *models.Book) map[string]any {
 		"ownership": b.Ownership,
 	}
 }
-
-// parseFlexDate tries several date formats and returns the parsed time.
-// Accepts: YYYY-MM-DD, YYYY-MM, YYYY, "January 2006", "January 2, 2006",
-// "Jan 2, 2006", "Jan 2006", "2 January 2006", "2 Jan 2006".
-func parseFlexDate(s string) (time.Time, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}, false
-	}
-
-	// Exact formats tried in order
-	for _, layout := range []string{
-		"2006-01-02",
-		"2006-01",
-		"2006",
-	} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t, true
-		}
-	}
-
-	// Year-only bare number
-	if reYear.MatchString(s) {
-		if t, err := time.Parse("2006", s); err == nil {
-			return t, true
-		}
-	}
-
-	// "Month DD, YYYY" or "Month D YYYY" (full or abbreviated)
-	if m := reFullDate.FindStringSubmatch(s); m != nil {
-		day := m[2]
-		if len(day) == 1 {
-			day = "0" + day
-		}
-		for _, mfmt := range []string{"January", "Jan"} {
-			if t, err := time.Parse(mfmt+" 02 2006", m[1]+" "+day+" "+m[3]); err == nil {
-				return t, true
-			}
-		}
-	}
-
-	// "Month YYYY" (full or abbreviated)
-	if m := reMonYear.FindStringSubmatch(s); m != nil {
-		for _, mfmt := range []string{"January 2006", "Jan 2006"} {
-			if t, err := time.Parse(mfmt, m[1]+" "+m[2]); err == nil {
-				return t, true
-			}
-		}
-	}
-
-	// "D Month YYYY" or "D Mon YYYY" (day-first European)
-	if m := reDayFirst.FindStringSubmatch(s); m != nil {
-		day := m[1]
-		if len(day) == 1 {
-			day = "0" + day
-		}
-		for _, mfmt := range []string{"January", "Jan"} {
-			if t, err := time.Parse("02 "+mfmt+" 2006", day+" "+m[2]+" "+m[3]); err == nil {
-				return t, true
-			}
-		}
-	}
-
-	return time.Time{}, false
-}
-
-var (
-	reYear     = regexp.MustCompile(`^\d{4}$`)
-	reFullDate = regexp.MustCompile(`^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$`)
-	reMonYear  = regexp.MustCompile(`^([A-Za-z]+)\s+(\d{4})$`)
-	reDayFirst = regexp.MustCompile(`^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$`)
-)
 
 // ─── Bulk operations ──────────────────────────────────────────────────────────
 

@@ -152,7 +152,7 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 		editionID := uuid.New()
 		if err := s.editions.Create(ctx, tx, editionID, bookID,
 			e.Format, e.Language, e.EditionName, e.Narrator, e.Publisher,
-			e.PublishDate, e.ISBN10, e.ISBN13, e.Description,
+			e.PublishDate, e.PublishPrecision, e.ISBN10, e.ISBN13, e.Description,
 			e.DurationSeconds, e.PageCount, e.IsPrimary,
 			e.NarratorContributorID,
 		); err != nil {
@@ -310,6 +310,7 @@ type EditionRequest struct {
 	Narrator              string
 	Publisher             string
 	PublishDate           *time.Time
+	PublishPrecision      models.DatePrecision
 	ISBN10                string
 	ISBN13                string
 	Description           string
@@ -340,7 +341,7 @@ func (s *BookService) CreateEdition(ctx context.Context, bookID uuid.UUID, req E
 
 	if err := s.editions.Create(ctx, tx, editionID, bookID,
 		req.Format, req.Language, req.EditionName, req.Narrator, req.Publisher,
-		req.PublishDate, req.ISBN10, req.ISBN13, req.Description,
+		req.PublishDate, req.PublishPrecision, req.ISBN10, req.ISBN13, req.Description,
 		req.DurationSeconds, req.PageCount, req.IsPrimary,
 		req.NarratorContributorID,
 	); err != nil {
@@ -369,7 +370,7 @@ func (s *BookService) UpdateEdition(ctx context.Context, id uuid.UUID, req Editi
 
 	if err := s.editions.Update(ctx, tx, id,
 		req.Format, req.Language, req.EditionName, req.Narrator, req.Publisher,
-		req.PublishDate, req.ISBN10, req.ISBN13, req.Description,
+		req.PublishDate, req.PublishPrecision, req.ISBN10, req.ISBN13, req.Description,
 		req.DurationSeconds, req.PageCount, req.IsPrimary,
 		req.NarratorContributorID,
 	); err != nil {

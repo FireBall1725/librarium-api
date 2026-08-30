@@ -312,9 +312,11 @@ func parseEditionRequestBody(body *editionRequestBody) (*service.EditionRequest,
 	}
 
 	var publishDate *time.Time
+	var publishPrecision models.DatePrecision
 	if body.PublishDate != "" {
-		if t, ok := parseFlexDate(body.PublishDate); ok {
+		if t, precision, ok := models.ParseFlexDate(body.PublishDate); ok {
 			publishDate = &t
+			publishPrecision = precision
 		}
 		// Silently treat unparseable dates as null — provider data varies.
 	}
@@ -346,6 +348,7 @@ func parseEditionRequestBody(body *editionRequestBody) (*service.EditionRequest,
 		EditionName:           body.EditionName,
 		Narrator:              body.Narrator,
 		Publisher:             body.Publisher,
+		PublishPrecision:      publishPrecision,
 		PublishDate:           publishDate,
 		ISBN10:                body.ISBN10,
 		ISBN13:                body.ISBN13,
