@@ -77,7 +77,17 @@ docker compose up -d
 
 Compose will replace the api and web containers and leave the db untouched. Database migrations run automatically on API startup.
 
-If something breaks after an upgrade, roll back by pinning the previous tag and re-running `docker compose up -d`. (This only works cleanly within the same schema version — check the CHANGELOG for migration-related notes before upgrading across larger jumps.)
+Rolling back is pinning the previous tag and re-running `docker compose up -d`, but only within the same schema version. Migrations run forward, and an older image refuses to start against a database a newer one has already migrated. Check the CHANGELOG for migration notes before a larger jump, and take a dump first.
+
+### Before a large upgrade
+
+Migrations run at boot, so one that refuses is a server that will not start. `preflight` asks the same questions ahead of time, against the new image, and changes nothing:
+
+```bash
+docker compose run --rm api preflight
+```
+
+Lines marked `!` have to be resolved before upgrading. The rest are counts you can check against the result afterwards.
 
 ## Data persistence
 
@@ -153,4 +163,22 @@ docker compose down -v
 
 **Images won't pull (`denied` or `unauthorized`).** The GHCR images are public, so this is almost always a stale Docker login. `docker logout ghcr.io` and try again.
 
-**Migration fails on startup, API crash-loops.** Open an issue with the full `librarium-api` log output. Migrations are applied in order and never edited after release, so a failure usually means a partially-applied migration from a previous crash. Recovery instructions will depend on where it stopped.
+### Migration failures
+
+Read the last `migration failed` line first. It names the migration, the line it stopped on, and what Postgres said.
+
+**A migration failed.** The API puts the version back on its way out, so the next start retries from the schema it began with and prints the same error until the cause is fixed. Nothing needs clearing by hand.
+
+**"it was migrated by a newer release than the one now running".** This database has been through a newer image than the tag now in `.env`. Put `API_TAG` back to the version that last ran, or restore a dump taken before that upgrade.
+
+**"Run `librarium-api repair`".** The version in `schema_migrations` names a migration that never ran, which is what a row edited by hand looks like. `repair` checks which migrations left their tables behind and prints what it found before changing anything:
+
+```bash
+docker compose run --rm api repair
+```
+
+Take a dump first. It asks before writing, and refuses outright when the evidence does not settle the question.
+
+Do not edit `schema_migrations` yourself. Setting the version to the migration that just failed marks it as applied, and the next start resumes at the one after it, which then fails on tables its predecessor never created.
+
+If the cause is not something you can fix in your own data, open an issue with the full `librarium-api` log output.

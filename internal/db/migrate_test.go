@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,8 +15,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 )
-
-var migrationName = regexp.MustCompile(`^(\d{6})_([a-z0-9_]+)\.(up|down)\.sql$`)
 
 // TestMigrationFilesAreWellFormed needs no database, so it runs everywhere and
 // catches the mistakes that are cheap to make and expensive to discover on a
@@ -95,7 +92,14 @@ func TestMigrationFilesAreWellFormed(t *testing.T) {
 // Point LIBRARIUM_MIGRATE_TEST_DSN at any Postgres the test may create and drop
 // databases on. It is deliberately not LIBRARIUM_TEST_DSN, which points at a
 // restored copy of a real collection and must not be written to.
-func TestMigrationsApplyToEmptyDatabase(t *testing.T) {
+// withScratchDatabase creates a throwaway database, hands its DSN to fn, and
+// drops it afterwards. Point LIBRARIUM_MIGRATE_TEST_DSN at any Postgres the
+// test may create and drop databases on. It is deliberately not
+// LIBRARIUM_TEST_DSN, which points at a restored copy of a real collection and
+// must not be written to.
+func withScratchDatabase(t *testing.T, fn func(dsn string)) {
+	t.Helper()
+
 	adminDSN := os.Getenv("LIBRARIUM_MIGRATE_TEST_DSN")
 	if adminDSN == "" {
 		t.Skip("set LIBRARIUM_MIGRATE_TEST_DSN to run")
@@ -127,77 +131,90 @@ func TestMigrationsApplyToEmptyDatabase(t *testing.T) {
 		t.Fatalf("building scratch DSN: %v", err)
 	}
 
-	if err := Migrate(scratchDSN); err != nil {
-		t.Fatalf("migrating an empty database: %v", err)
-	}
+	fn(scratchDSN)
+}
 
-	conn, err := pgx.Connect(ctx, scratchDSN)
-	if err != nil {
-		t.Fatalf("connecting to scratch database: %v", err)
-	}
-	defer func() { _ = conn.Close(ctx) }()
+// TestMigrationsApplyToEmptyDatabase runs the real migrator against a scratch
+// database created for this test and dropped afterwards. It exists because
+// nothing else in the repo ever executes a migration: the live tests skip
+// without a DSN and CI never sets one, so until now a migration reached a real
+// instance without having been run once.
+func TestMigrationsApplyToEmptyDatabase(t *testing.T) {
+	withScratchDatabase(t, func(scratchDSN string) {
+		ctx := context.Background()
 
-	// The head on disk is the only correct answer, so derive it rather than
-	// hardcoding a number this test would then need updating for.
-	entries, err := migrationsFS.ReadDir("migrations")
-	if err != nil {
-		t.Fatalf("reading embedded migrations: %v", err)
-	}
-	wantVersion := 0
-	for _, e := range entries {
-		if m := migrationName.FindStringSubmatch(e.Name()); m != nil && m[3] == "up" {
-			if n, _ := strconv.Atoi(m[1]); n > wantVersion {
-				wantVersion = n
+		if err := Migrate(scratchDSN); err != nil {
+			t.Fatalf("migrating an empty database: %v", err)
+		}
+
+		conn, err := pgx.Connect(ctx, scratchDSN)
+		if err != nil {
+			t.Fatalf("connecting to scratch database: %v", err)
+		}
+		defer func() { _ = conn.Close(ctx) }()
+
+		// The head on disk is the only correct answer, so derive it rather than
+		// hardcoding a number this test would then need updating for.
+		entries, err := migrationsFS.ReadDir("migrations")
+		if err != nil {
+			t.Fatalf("reading embedded migrations: %v", err)
+		}
+		wantVersion := 0
+		for _, e := range entries {
+			if m := migrationName.FindStringSubmatch(e.Name()); m != nil && m[3] == "up" {
+				if n, _ := strconv.Atoi(m[1]); n > wantVersion {
+					wantVersion = n
+				}
 			}
 		}
-	}
 
-	var version int
-	var dirty bool
-	if err := conn.QueryRow(ctx, `SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty); err != nil {
-		t.Fatalf("reading schema_migrations: %v", err)
-	}
-	if dirty {
-		t.Error("migrations finished dirty, which should now be impossible: Migrate refuses to continue past a dirty state")
-	}
-	if version != wantVersion {
-		t.Errorf("schema_migrations version = %d, want %d (the highest up migration on disk)", version, wantVersion)
-	}
+		var version int
+		var dirty bool
+		if err := conn.QueryRow(ctx, `SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty); err != nil {
+			t.Fatalf("reading schema_migrations: %v", err)
+		}
+		if dirty {
+			t.Error("migrations finished dirty, which should now be impossible: Migrate refuses to continue past a dirty state")
+		}
+		if version != wantVersion {
+			t.Errorf("schema_migrations version = %d, want %d (the highest up migration on disk)", version, wantVersion)
+		}
 
-	// A handful of invariants, chosen because each has actually been wrong at
-	// some point rather than to pad the count.
-	var roles, permissions, mediaTypes int
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM roles`).Scan(&roles); err != nil {
-		t.Fatalf("counting roles: %v", err)
-	}
-	if roles == 0 {
-		t.Error("no roles seeded; RequireLibraryPermission has nothing to resolve against")
-	}
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM permissions`).Scan(&permissions); err != nil {
-		t.Fatalf("counting permissions: %v", err)
-	}
-	if permissions == 0 {
-		t.Error("no permissions seeded")
-	}
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM media_types`).Scan(&mediaTypes); err != nil {
-		t.Fatalf("counting media types: %v", err)
-	}
-	if mediaTypes == 0 {
-		t.Error("no media types seeded; 000008 refuses to backfill floating books without one")
-	}
+		// A handful of invariants, chosen because each has actually been wrong at
+		// some point rather than to pad the count.
+		var roles, permissions, mediaTypes int
+		if err := conn.QueryRow(ctx, `SELECT count(*) FROM roles`).Scan(&roles); err != nil {
+			t.Fatalf("counting roles: %v", err)
+		}
+		if roles == 0 {
+			t.Error("no roles seeded; RequireLibraryPermission has nothing to resolve against")
+		}
+		if err := conn.QueryRow(ctx, `SELECT count(*) FROM permissions`).Scan(&permissions); err != nil {
+			t.Fatalf("counting permissions: %v", err)
+		}
+		if permissions == 0 {
+			t.Error("no permissions seeded")
+		}
+		if err := conn.QueryRow(ctx, `SELECT count(*) FROM media_types`).Scan(&mediaTypes); err != nil {
+			t.Fatalf("counting media types: %v", err)
+		}
+		if mediaTypes == 0 {
+			t.Error("no media types seeded; 000008 refuses to backfill floating books without one")
+		}
 
-	// Every permission granted to a role must exist. A typo here means a role
-	// silently grants nothing, which is the failure mode that is hardest to see
-	// from the admin UI.
-	var orphanGrants int
-	if err := conn.QueryRow(ctx, `
-		SELECT count(*) FROM role_permissions rp
-		WHERE NOT EXISTS (SELECT 1 FROM permissions p WHERE p.id = rp.permission_id)`).Scan(&orphanGrants); err != nil {
-		t.Fatalf("checking role_permissions: %v", err)
-	}
-	if orphanGrants != 0 {
-		t.Errorf("%d role_permissions rows reference a permission that does not exist", orphanGrants)
-	}
+		// Every permission granted to a role must exist. A typo here means a role
+		// silently grants nothing, which is the failure mode that is hardest to see
+		// from the admin UI.
+		var orphanGrants int
+		if err := conn.QueryRow(ctx, `
+			SELECT count(*) FROM role_permissions rp
+			WHERE NOT EXISTS (SELECT 1 FROM permissions p WHERE p.id = rp.permission_id)`).Scan(&orphanGrants); err != nil {
+			t.Fatalf("checking role_permissions: %v", err)
+		}
+		if orphanGrants != 0 {
+			t.Errorf("%d role_permissions rows reference a permission that does not exist", orphanGrants)
+		}
+	})
 }
 
 // replaceDatabase swaps the database name in a postgres DSN, keeping every
