@@ -617,9 +617,20 @@ INSERT INTO user_books (user_id, book_id, read_status, rating, is_favorite, revi
                         read_status_updated_at, rating_updated_at, is_favorite_updated_at,
                         created_at, updated_at)
 SELECT i.user_id, e.book_id,
-       (ARRAY_AGG(i.read_status ORDER BY CASE i.read_status
+       -- user_book_interactions.read_status is a VARCHAR(32) with a default
+       -- and no CHECK, so an empty string has always been a legal value there
+       -- and collections in the wild carry them. user_books constrains the
+       -- column, so a status that is not a status has to be resolved here
+       -- rather than rejected halfway through this migration. Prefer any real
+       -- status the reader recorded on another edition of the work; fall back
+       -- to unread, which is what the column defaults to and what an empty
+       -- string was always standing in for.
+       COALESCE(NULLIF((ARRAY_AGG(i.read_status ORDER BY CASE i.read_status
             WHEN 'read' THEN 1 WHEN 'reading' THEN 2
-            WHEN 'did_not_finish' THEN 3 ELSE 4 END))[1],
+            WHEN 'did_not_finish' THEN 3 ELSE 4 END)
+            FILTER (WHERE i.read_status IN
+              ('unread', 'reading', 'read', 'did_not_finish')))[1], ''),
+         'unread'),
        MAX(i.rating),
        BOOL_OR(i.is_favorite),
        COALESCE((ARRAY_AGG(i.review ORDER BY i.updated_at DESC)

@@ -199,14 +199,20 @@ func explainFailure(version int, err error) error {
 		name = source.Name
 	}
 
+	// Position is zero for anything Postgres cannot pin to a character, which
+	// includes every constraint violation raised while a statement runs. The
+	// line golang-migrate computes from a zero position is 1, so reporting it
+	// would point at the licence header of whatever migration failed.
+	located := pgErr.Position > 0 && dbErr.Line > 0
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "migration %d (%s) failed", version, name)
-	if dbErr.Line > 0 {
+	if located {
 		fmt.Fprintf(&b, " at line %d", dbErr.Line)
 	}
 	fmt.Fprintf(&b, ": %s (SQLSTATE %s)", pgErr.Message, pgErr.Code)
 
-	if stmt := sourceLine(dbErr.Query, dbErr.Line); stmt != "" {
+	if stmt := sourceLine(dbErr.Query, dbErr.Line); located && stmt != "" {
 		fmt.Fprintf(&b, "\n    %s", stmt)
 	}
 	if pgErr.Detail != "" {
