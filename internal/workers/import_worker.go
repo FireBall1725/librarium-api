@@ -355,13 +355,10 @@ func (w *ImportWorker) processItem(
 	finalISBN13 := strings.TrimSpace(row["isbn_13"])
 
 	var publishDate *time.Time
-	if ds := strings.TrimSpace(row["publish_date"]); ds != "" {
-		for _, layout := range []string{"2006-01-02", "2006-01", "2006", "January 2, 2006", "Jan 2, 2006"} {
-			if t, err := time.Parse(layout, ds); err == nil {
-				publishDate = &t
-				break
-			}
-		}
+	var publishPrecision models.DatePrecision
+	if t, precision, ok := models.ParseFlexDate(row["publish_date"]); ok {
+		publishDate = &t
+		publishPrecision = precision
 	}
 
 	// ── Media type ────────────────────────────────────────────────────────────
@@ -485,18 +482,15 @@ func (w *ImportWorker) processItem(
 	// ── Acquired date ─────────────────────────────────────────────────────────
 	var acquiredAt *time.Time
 	if ds := strings.TrimSpace(row["acquired_date"]); ds != "" {
-		for _, layout := range []string{"2006-01-02", "2006-01", "2006", "January 2, 2006", "Jan 2, 2006"} {
-			if t, err := time.Parse(layout, ds); err == nil {
-				acquiredAt = &t
-				break
-			}
+		if t, _, ok := models.ParseFlexDate(ds); ok {
+			acquiredAt = &t
 		}
 	}
 
 	editionID := uuid.New()
 	if err := w.editions.Create(ctx, tx, editionID, bookID,
 		format, editionLang, "", "", finalPublisher,
-		publishDate, finalISBN10, finalISBN13, finalDescription,
+		publishDate, publishPrecision, finalISBN10, finalISBN13, finalDescription,
 		nil, pageCount, true, nil,
 	); err != nil {
 		return models.ImportItemFailed, fmt.Sprintf("creating edition: %v", err), nil, false

@@ -79,20 +79,28 @@ func (r *EditionRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.BookE
 	return e, nil
 }
 
-func (r *EditionRepo) Create(ctx context.Context, tx pgx.Tx, id, bookID uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, isbn10, isbn13, description string, durationSeconds, pageCount any, isPrimary bool, narratorContributorID any) error {
+// Create inserts an edition. publishPrecision travels with publishDate because
+// editions_precision_needs_date requires the pair to be NULL together: writing a
+// date without saying how much of it the source gave violates the constraint,
+// and the insert fails rather than storing a date nobody can interpret.
+func (r *EditionRepo) Create(ctx context.Context, tx pgx.Tx, id, bookID uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, publishPrecision models.DatePrecision, isbn10, isbn13, description string, durationSeconds, pageCount any, isPrimary bool, narratorContributorID any) error {
 	const q = `
 		INSERT INTO book_editions
-			(id, book_id, format, language, edition_name, narrator, publisher, publish_date, isbn_10, isbn_13, description, duration_seconds, page_count, is_primary, narrator_contributor_id)
+			(id, book_id, format, language, edition_name, narrator, publisher, publish_date, publish_date_precision, isbn_10, isbn_13, description, duration_seconds, page_count, is_primary, narrator_contributor_id)
 		VALUES
-			($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), $8, NULLIF($9,''), NULLIF($10,''), NULLIF($11,''), $12, $13, $14, $15)`
-	_, err := tx.Exec(ctx, q, id, bookID, format, language, editionName, narrator, publisher, publishDate, isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
+			($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), $8, CASE WHEN $8::date IS NULL THEN NULL ELSE $9 END, NULLIF($10,''), NULLIF($11,''), NULLIF($12,''), $13, $14, $15, $16)`
+	_, err := tx.Exec(ctx, q, id, bookID, format, language, editionName, narrator, publisher, publishDate, precisionOrDay(publishPrecision), isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
 	if err != nil {
 		return fmt.Errorf("inserting edition: %w", err)
 	}
 	return nil
 }
 
-func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, isbn10, isbn13, description string, durationSeconds, pageCount any, isPrimary bool, narratorContributorID any) error {
+// Update rewrites an edition. The precision is derived from the date on every
+// write rather than left alone, because clearing a date on a row that had one
+// would otherwise leave a precision behind and violate
+// editions_precision_needs_date.
+func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, publishPrecision models.DatePrecision, isbn10, isbn13, description string, durationSeconds, pageCount any, isPrimary bool, narratorContributorID any) error {
 	const q = `
 		UPDATE book_editions
 		SET format                   = $2,
@@ -101,15 +109,16 @@ func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, forma
 		    narrator                 = NULLIF($5, ''),
 		    publisher                = NULLIF($6, ''),
 		    publish_date             = $7,
-		    isbn_10                  = NULLIF($8, ''),
-		    isbn_13                  = NULLIF($9, ''),
-		    description              = NULLIF($10, ''),
-		    duration_seconds         = $11,
-		    page_count               = $12,
-		    is_primary               = $13,
-		    narrator_contributor_id  = $14
+		    publish_date_precision   = CASE WHEN $7::date IS NULL THEN NULL ELSE $8 END,
+		    isbn_10                  = NULLIF($9, ''),
+		    isbn_13                  = NULLIF($10, ''),
+		    description              = NULLIF($11, ''),
+		    duration_seconds         = $12,
+		    page_count               = $13,
+		    is_primary               = $14,
+		    narrator_contributor_id  = $15
 		WHERE id = $1`
-	_, err := tx.Exec(ctx, q, id, format, language, editionName, narrator, publisher, publishDate, isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
+	_, err := tx.Exec(ctx, q, id, format, language, editionName, narrator, publisher, publishDate, precisionOrDay(publishPrecision), isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
 	if err != nil {
 		return fmt.Errorf("updating edition: %w", err)
 	}
@@ -506,4 +515,14 @@ func (r *EditionRepo) DeleteInteraction(ctx context.Context, userID, editionID u
 		return ErrNotFound
 	}
 	return nil
+}
+
+// precisionOrDay fills in a precision for callers that have a date but never
+// established how specific it was. Day is the honest default for a value that
+// arrived already parsed: it claims exactly what the stored date says.
+func precisionOrDay(p models.DatePrecision) models.DatePrecision {
+	if p == "" {
+		return models.DatePrecisionDay
+	}
+	return p
 }

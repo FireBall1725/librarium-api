@@ -90,6 +90,36 @@ var checks = []check{
 			return "a rating or review would have to be dropped; resolve these before upgrading"
 		},
 	},
+	// user_book_interactions.read_status is a VARCHAR(32) with a default and no
+	// CHECK, so an empty string has always been a legal value there. user_books
+	// constrains it, and the backfill copies whatever it finds, so one of these
+	// rows stops the upgrade with a constraint violation partway through the
+	// migration. Reported for the value that would actually be chosen rather
+	// than for every bad row, because the aggregate prefers a real status when
+	// any edition of that work has one.
+	{
+		question: "reading records whose status is not a status",
+		severity: Blocking,
+		sql: `SELECT count(*) FROM (
+		        SELECT (ARRAY_AGG(i.read_status ORDER BY CASE i.read_status
+		                   WHEN 'read' THEN 1 WHEN 'reading' THEN 2
+		                   WHEN 'did_not_finish' THEN 3 ELSE 4 END))[1] AS chosen
+		          FROM user_book_interactions i
+		          JOIN book_editions e ON e.id = i.book_edition_id
+		         WHERE i.deleted_at IS NULL
+		         GROUP BY i.user_id, e.book_id) t
+		 WHERE chosen IS NULL
+		    OR chosen NOT IN ('unread', 'reading', 'read', 'did_not_finish')`,
+		meaning: func(n int) string {
+			if n == 0 {
+				return "every reading record carries a status the new table accepts"
+			}
+			return "the migration will stop on these: set them to 'unread' first, " +
+				"UPDATE user_book_interactions SET read_status = 'unread' " +
+				"WHERE read_status IS NULL OR read_status NOT IN " +
+				"('unread', 'reading', 'read', 'did_not_finish')"
+		},
+	},
 	// Deliberately counts duplicate names anywhere, not just across libraries.
 	// De-scoping merges by name globally, so two rows sharing a name inside one
 	// library get merged exactly like two rows spread across two. An earlier
