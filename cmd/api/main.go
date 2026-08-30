@@ -70,8 +70,10 @@ func main() {
 		switch os.Args[1] {
 		case "preflight":
 			os.Exit(runPreflight(os.Args[2:]))
+		case "repair":
+			os.Exit(runRepair(os.Args[2:]))
 		default:
-			fmt.Fprintf(os.Stderr, "unknown command %q (known commands: preflight)\n", os.Args[1])
+			fmt.Fprintf(os.Stderr, "unknown command %q (known commands: preflight, repair)\n", os.Args[1])
 			os.Exit(2)
 		}
 	}

@@ -59,7 +59,7 @@ internal/
   service/               business logic. Handlers call these; workers call these
   repository/            SQL. One file per aggregate, hand-written queries
   models/                domain structs shared across layers
-  db/migrations/         numbered golang-migrate pairs, 22 and counting
+  db/migrations/         numbered golang-migrate pairs, 39 and counting
   jobs/                  the unified job framework: kind registry and cron scheduler
   workers/               River workers for import, enrichment, AI suggestions
   providers/             book metadata sources: Open Library, Google Books, ISBNdb,
@@ -107,6 +107,12 @@ than adding a container dependency to the default `go test` path.
 - **Never edit a shipped migration.** Add a new numbered pair in
   `internal/db/migrations/`. Both `.up.sql` and `.down.sql`, and the down has to
   actually reverse the up.
+- **A migration has to roll back in full.** golang-migrate sends each file as
+  one simple query and Postgres runs that in an implicit transaction, which is
+  what lets `Migrate` retry a failed migration instead of leaving a dirty flag
+  for someone to clear by hand. `CREATE INDEX CONCURRENTLY`, `VACUUM` and
+  explicit `BEGIN`/`COMMIT` break that, and `TestEveryMigrationIsAtomic` fails
+  if one appears.
 - **Never hand-edit the version.** `internal/version/version.go` reports
   `0.0.0-dev` and the release workflow injects the real `YY.M.R` via ldflags.
   A version bump in a feature diff will be asked out of the PR.
