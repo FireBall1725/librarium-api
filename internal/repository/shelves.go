@@ -246,6 +246,20 @@ func (r *ShelfRepo) AddBook(ctx context.Context, shelfID, bookID, addedBy uuid.U
 	return nil
 }
 
+// AddBookTx puts a book on a shelf inside a caller's transaction, so an import
+// that fails partway leaves no shelf membership pointing at a book that was
+// rolled back. Membership is additive: a book already on the shelf stays put.
+func (r *ShelfRepo) AddBookTx(ctx context.Context, tx pgx.Tx, shelfID, bookID uuid.UUID) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO list_books (book_id, list_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+		bookID, shelfID,
+	)
+	if err != nil {
+		return fmt.Errorf("adding book to shelf: %w", err)
+	}
+	return nil
+}
+
 func (r *ShelfRepo) RemoveBook(ctx context.Context, shelfID, bookID uuid.UUID) error {
 	result, err := r.db.Exec(ctx,
 		`DELETE FROM list_books WHERE list_id = $1 AND book_id = $2`,

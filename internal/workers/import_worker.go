@@ -39,6 +39,7 @@ type ImportWorker struct {
 	editions     *repository.EditionRepo
 	tags         *repository.TagRepo
 	genres       *repository.GenreRepo
+	shelves      *repository.ShelfRepo
 	batches      *repository.EnrichmentBatchRepo
 	riverClient  *river.Client[pgx.Tx]
 }
@@ -52,6 +53,7 @@ func NewImportWorker(
 	editions *repository.EditionRepo,
 	tags *repository.TagRepo,
 	genres *repository.GenreRepo,
+	shelves *repository.ShelfRepo,
 	batches *repository.EnrichmentBatchRepo,
 	riverClient *river.Client[pgx.Tx],
 ) *ImportWorker {
@@ -64,6 +66,7 @@ func NewImportWorker(
 		editions:     editions,
 		tags:         tags,
 		genres:       genres,
+		shelves:      shelves,
 		batches:      batches,
 		riverClient:  riverClient,
 	}
@@ -98,7 +101,8 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[models.ImportJob
 		return fmt.Errorf("loading pending items: %w", err)
 	}
 
-	tagCache := make(map[string]uuid.UUID) // lowercase name → id
+	tagCache := make(map[string]uuid.UUID)   // lowercase name → id
+	shelfCache := make(map[string]uuid.UUID) // lowercase name → id
 
 	allGenres, err := w.genres.List(ctx)
 	if err != nil {
@@ -114,7 +118,7 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[models.ImportJob
 			return nil
 		}
 
-		status, msg, bookID, addedToLibrary := w.processItem(ctx, importJob, &item, tagCache, allGenres)
+		status, msg, bookID, addedToLibrary := w.processItem(ctx, importJob, &item, tagCache, shelfCache, allGenres)
 		_ = w.importJobs.UpdateItemStatus(ctx, item.ID, status, msg, bookID)
 
 		switch status {
@@ -268,6 +272,7 @@ func (w *ImportWorker) processItem(
 	job *models.ImportJob,
 	item *models.ImportJobItem,
 	tagCache map[string]uuid.UUID,
+	shelfCache map[string]uuid.UUID,
 	allGenres []*models.Genre,
 ) (models.ImportItemStatus, string, *uuid.UUID, bool) {
 	opts := job.Options
@@ -414,6 +419,30 @@ func (w *ImportWorker) processItem(
 		}
 	}
 
+	// ── Shelves ───────────────────────────────────────────────────────────────
+	// Same shape as tags: a comma-separated list, and a name that does not match
+	// an existing shelf creates one. Both spellings are accepted because a
+	// spreadsheet exported by hand is as likely to say "shelves" as "shelf".
+	var shelfIDs []uuid.UUID
+	shelfStr := row["shelf"]
+	if shelfStr == "" {
+		shelfStr = row["shelves"]
+	}
+	if shelfStr != "" {
+		for _, rawName := range strings.Split(shelfStr, ",") {
+			name := strings.TrimSpace(rawName)
+			if name == "" {
+				continue
+			}
+			id, err := w.resolveShelf(ctx, job.LibraryID, job.CreatedBy, name, shelfCache)
+			if err != nil {
+				slog.Warn("resolving shelf", "name", name, "error", err)
+				continue
+			}
+			shelfIDs = append(shelfIDs, id)
+		}
+	}
+
 	// ── Genres (from CSV tags only; provider enrichment adds more if enabled) ─
 	var genreIDs []uuid.UUID
 	if tagStr := row["tags"]; tagStr != "" {
@@ -471,6 +500,12 @@ func (w *ImportWorker) processItem(
 	if len(genreIDs) > 0 {
 		if err := w.genres.SetBookGenres(ctx, tx, bookID, genreIDs); err != nil {
 			return models.ImportItemFailed, fmt.Sprintf("setting genres: %v", err), nil, false
+		}
+	}
+
+	for _, sid := range shelfIDs {
+		if err := w.shelves.AddBookTx(ctx, tx, sid, bookID); err != nil {
+			return models.ImportItemFailed, fmt.Sprintf("adding to shelf: %v", err), nil, false
 		}
 	}
 
@@ -638,7 +673,42 @@ func (w *ImportWorker) resolveTag(ctx context.Context, libraryID, createdBy uuid
 	return tag.ID, nil
 }
 
-// ─── Genre normalization ──────────────────────────────────────────────────────
+// resolveShelf finds a shelf by name in the library, creating it when nothing
+// matches. A shelf is a manual list shared with the library, so a created one
+// gets the importing user as its owner and no colour or icon.
+//
+// It looks before it creates, which is the opposite of resolveTag. Tag names
+// are unique per library, so resolveTag can insert and treat the conflict as
+// "already there". Shelves are rows in `lists` with no unique constraint on
+// name, so an insert always succeeds and a second row named "To Read" would
+// quietly become a second shelf. The cache means the lookup runs once per
+// distinct name in an import, not once per row.
+func (w *ImportWorker) resolveShelf(ctx context.Context, libraryID, createdBy uuid.UUID, name string, cache map[string]uuid.UUID) (uuid.UUID, error) {
+	key := strings.ToLower(name)
+	if id, ok := cache[key]; ok {
+		return id, nil
+	}
+
+	existing, err := w.shelves.List(ctx, libraryID, "", "")
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("listing shelves: %w", err)
+	}
+	for _, shelf := range existing {
+		if strings.EqualFold(shelf.Name, name) {
+			cache[key] = shelf.ID
+			return shelf.ID, nil
+		}
+	}
+
+	shelf, err := w.shelves.Create(ctx, uuid.New(), libraryID, name, "", "", "", 0, createdBy)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("creating shelf %q: %w", name, err)
+	}
+	cache[key] = shelf.ID
+	return shelf.ID, nil
+}
+
+// ─── Genre normalization ────────────────────────────────────────────────────
 
 // normalizeCategories maps provider category strings against the known genres.
 // Splits on "/" and ",", skips strings with ">" or ":", caps at 4.
