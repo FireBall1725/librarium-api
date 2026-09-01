@@ -208,6 +208,7 @@ func main() {
 		repository.NewEditionRepo(pool),
 		repository.NewTagRepo(pool),
 		repository.NewGenreRepo(pool),
+		repository.NewShelfRepo(pool),
 		repository.NewEnrichmentBatchRepo(pool),
 		nil, // riverClient set below after construction
 	)
