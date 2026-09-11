@@ -1,0 +1,196 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 FireBall1725 (Adaléa)
+
+package books
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+// finnaResponse is a trimmed but faithful sample of a Finna /v1/search reply,
+// captured from api.finna.fi for a real Finnish ISBN.
+const finnaResponse = `{
+  "resultCount": 2,
+  "records": [
+    {
+      "id": "anders.audiobook-id",
+      "title": "Kaikki mitä tiedän rakkaudesta",
+      "authors": {"primary": {"Alderton, Dolly": {"role": ["kirjoittaja"]}}, "secondary": [], "corporate": []},
+      "year": "2020",
+      "publishers": ["WSOY"],
+      "languages": ["fin"],
+      "formats": [{"value": "1/Book/AudioBook/", "translated": "Äänikirja"}],
+      "images": [],
+      "cleanIsbn": "9789510450741",
+      "isbns": ["9789510450741"]
+    },
+    {
+      "id": "anders.7a1c2448-42fe-4176-a9f3-b415a9123269",
+      "title": "Kaikki mitä tiedän rakkaudesta",
+      "authors": {
+        "primary": {"Alderton, Dolly": {"role": ["kirjoittaja"]}, "Viitanen, Viia": {"role": ["-"]}},
+        "secondary": {"Viitanen, Viia 1973- kääntäjä": {"role": ["kääntäjä"]}},
+        "corporate": []
+      },
+      "year": "2020",
+      "publishers": ["WSOY"],
+      "languages": ["fin"],
+      "formats": [{"value": "0/Book/", "translated": "Kirja"}, {"value": "1/Book/Book/", "translated": "Kirja"}],
+      "images": ["/Cover/Show?id=anders.7a1c2448"],
+      "cleanIsbn": "9789510450741",
+      "isbns": ["9789510450741"]
+    }
+  ],
+  "status": "OK"
+}`
+
+func newTestFinnaProvider(t *testing.T, handler http.HandlerFunc) *FinnaProvider {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	p := NewFinnaProvider()
+	p.searchURL = srv.URL
+	return p
+}
+
+func TestFinnaProvider_LookupByISBN(t *testing.T) {
+	var gotUA, gotType, gotLookfor string
+	p := newTestFinnaProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		gotType = r.URL.Query().Get("type")
+		gotLookfor = r.URL.Query().Get("lookfor")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(finnaResponse))
+	})
+
+	got, err := p.LookupByISBN(context.Background(), "978-951-0-45074-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("got nil, want a book result")
+	}
+
+	// Finna rejects requests without a User-Agent, so it must always be sent.
+	if gotUA == "" {
+		t.Error("no User-Agent header sent; Finna returns 403 without one")
+	}
+	if gotType != "ISN" {
+		t.Errorf("type = %q, want ISN", gotType)
+	}
+	// Hyphenated ISBN-13 should be normalised before it hits the API.
+	if gotLookfor != "9789510450741" {
+		t.Errorf("lookfor = %q, want normalised 9789510450741", gotLookfor)
+	}
+
+	if got.Title != "Kaikki mitä tiedän rakkaudesta" {
+		t.Errorf("Title = %q", got.Title)
+	}
+	if got.Provider != "finna" || got.ProviderDisplay != "Finna" {
+		t.Errorf("Provider = %q / %q", got.Provider, got.ProviderDisplay)
+	}
+	// The printed book (1/Book/Book/) must win over the audiobook record, and
+	// that record's primary authors are the two below in order.
+	if len(got.Authors) != 2 || got.Authors[0] != "Alderton, Dolly" || got.Authors[1] != "Viitanen, Viia" {
+		t.Errorf("Authors = %#v, want the printed record's primary authors in order", got.Authors)
+	}
+	if got.Publisher != "WSOY" {
+		t.Errorf("Publisher = %q, want WSOY", got.Publisher)
+	}
+	if got.PublishDate != "2020-01-01" {
+		t.Errorf("PublishDate = %q, want 2020-01-01", got.PublishDate)
+	}
+	if got.Language != "fi" {
+		t.Errorf("Language = %q, want fi (mapped from fin)", got.Language)
+	}
+	if got.ISBN13 != "9789510450741" {
+		t.Errorf("ISBN13 = %q", got.ISBN13)
+	}
+	if got.ISBN10 != "951045074X" {
+		t.Errorf("ISBN10 = %q, want 951045074X (derived)", got.ISBN10)
+	}
+	// Relative image path made absolute against finna.fi.
+	if got.CoverURL != "https://www.finna.fi/Cover/Show?id=anders.7a1c2448" {
+		t.Errorf("CoverURL = %q", got.CoverURL)
+	}
+}
+
+func TestFinnaProvider_LookupByISBN_NotFound(t *testing.T) {
+	p := newTestFinnaProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"resultCount":0,"records":[],"status":"OK"}`))
+	})
+
+	got, err := p.LookupByISBN(context.Background(), "9780000000002")
+	if err != nil {
+		t.Fatalf("empty result set should not be an error, got: %v", err)
+	}
+	if got != nil {
+		t.Errorf("got %+v, want nil for no records", got)
+	}
+}
+
+func TestFinnaProvider_LookupByISBN_ServerError(t *testing.T) {
+	p := newTestFinnaProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	})
+
+	got, err := p.LookupByISBN(context.Background(), "9789510450741")
+	if err == nil {
+		t.Fatal("expected an error for a 500 response")
+	}
+	if got != nil {
+		t.Errorf("got %+v, want nil alongside the error", got)
+	}
+}
+
+func TestFinnaProvider_CoverFallbackToISBN(t *testing.T) {
+	p := newTestFinnaProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"resultCount":1,"status":"OK","records":[{
+			"title":"X","cleanIsbn":"9789510450741","isbns":["9789510450741"],
+			"formats":[{"value":"1/Book/Book/"}],"images":[]}]}`))
+	})
+
+	got, err := p.LookupByISBN(context.Background(), "9789510450741")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "https://api.finna.fi/Cover/Show?isbn=9789510450741&size=large"
+	if got.CoverURL != want {
+		t.Errorf("CoverURL = %q, want ISBN cover fallback %q", got.CoverURL, want)
+	}
+}
+
+func TestNormalizeISBN(t *testing.T) {
+	cases := map[string]string{
+		"978-951-0-45074-1": "9789510450741",
+		" 951045074x ":      "951045074X",
+		"9510450741":        "9510450741",
+	}
+	for in, want := range cases {
+		if got := normalizeISBN(in); got != want {
+			t.Errorf("normalizeISBN(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestISBNForms(t *testing.T) {
+	cases := []struct {
+		in             string
+		want13, want10 string
+	}{
+		{"9789510450741", "9789510450741", "951045074X"},
+		{"951045074X", "9789510450741", "951045074X"},
+		{"9791234567896", "9791234567896", ""}, // 979 has no ISBN-10 form
+		{"1234567890123", "", ""},              // bad checksum/prefix
+		{"notanisbn", "", ""},
+	}
+	for _, tc := range cases {
+		got13, got10 := isbnForms(normalizeISBN(tc.in))
+		if got13 != tc.want13 || got10 != tc.want10 {
+			t.Errorf("isbnForms(%q) = %q/%q, want %q/%q", tc.in, got13, got10, tc.want13, tc.want10)
+		}
+	}
+}

@@ -1,0 +1,494 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 FireBall1725 (Adaléa)
+
+package books
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/fireball1725/librarium-api/internal/providers"
+	"github.com/fireball1725/librarium-api/internal/version"
+)
+
+// FinnaProvider looks up books via Finna (finna.fi), the shared discovery
+// interface for Finnish libraries, archives, and museums run by the National
+// Library of Finland. Free, no API key, no registration.
+//
+// Finna exists because the other book providers barely cover Finnish-language
+// publishing: Open Library / Google Books / Hardcover routinely miss even
+// mainstream WSOY/Otava titles, and ISBNdb's Finnish coverage is thin. Finna
+// aggregates the actual holdings of Finnish libraries, so for a book bought in
+// Finland it is usually the only source that has it.
+//
+// The field mapping (author extraction from the nested authors object, record
+// scoring, cover-image selection) is ported from the finna-isbn microservice
+// (github.com/tonipuh/finna-isbn), where it was worked out and tested against
+// live Finna responses.
+type FinnaProvider struct {
+	base
+	client    *http.Client
+	userAgent string
+	// searchURL is the VuFind search endpoint. Not admin-configurable — there
+	// is a single canonical public Finna, so unlike the ISFDB mirror there is
+	// no user-supplied URL to validate — but a field rather than a const so
+	// tests can point it at an httptest server.
+	searchURL string
+}
+
+// finnaSearchBase is the public Finna search endpoint.
+const finnaSearchBase = "https://api.finna.fi/v1/search"
+
+const (
+	finnaCoverBase = "https://api.finna.fi/Cover/Show"
+	finnaWebBase   = "https://www.finna.fi"
+)
+
+func NewFinnaProvider() *FinnaProvider {
+	return &FinnaProvider{
+		base:      base{enabled: true},
+		client:    &http.Client{Timeout: 10 * time.Second},
+		searchURL: finnaSearchBase,
+		// Finna rejects requests without a descriptive User-Agent (HTTP 403),
+		// so this is not optional politeness — the lookup fails without it.
+		userAgent: fmt.Sprintf("librarium-finna/%s (+https://github.com/fireball1725/librarium-api)", finnaVersion()),
+	}
+}
+
+func finnaVersion() string {
+	if version.Version == "" {
+		return version.LocalVersion
+	}
+	return version.Version
+}
+
+func (p *FinnaProvider) Info() providers.ProviderInfo {
+	return providers.ProviderInfo{
+		Name:         "finna",
+		DisplayName:  "Finna",
+		Description:  "Finnish libraries' shared catalogue (finna.fi), run by the National Library of Finland. Best source for Finnish-language books, which other providers cover poorly. Free, no API key.",
+		RequiresKey:  false,
+		Capabilities: []string{providers.CapBookISBN},
+		HelpText:     "No configuration needed. Finna aggregates Finnish library holdings and is the strongest source for books published in Finland.",
+		HelpURL:      "https://www.finna.fi",
+		// The default probe ISBN is a UK edition Finna doesn't carry; test
+		// against a Finnish book (Alderton, *Kaikki mitä tiedän rakkaudesta*).
+		TestISBN: "9789510450741",
+	}
+}
+
+func (p *FinnaProvider) Configure(cfg map[string]string) {
+	if v, ok := cfg["enabled"]; ok {
+		p.enabled = v != "false"
+	} else {
+		p.enabled = true
+	}
+}
+
+func (p *FinnaProvider) LookupByISBN(ctx context.Context, isbn string) (*providers.BookResult, error) {
+	// Search by the 13-digit form when we can derive it, so a scanned ISBN-10
+	// still matches records catalogued under the 13-digit ISBN. If the input
+	// isn't a recognisable ISBN we fall back to searching it verbatim.
+	norm := normalizeISBN(isbn)
+	isbn13, isbn10 := isbnForms(norm)
+	lookfor := isbn13
+	if lookfor == "" {
+		lookfor = norm
+	}
+
+	params := url.Values{}
+	params.Set("lookfor", lookfor)
+	params.Set("type", "ISN") // VuFind's ISBN/ISSN index.
+	params.Set("limit", "5")  // A single ISBN can hit several editions; we score and pick one.
+	params.Set("lng", "fi")
+	// Bracketed repeated params: net/url encodes the key, Finna wants field[].
+	for _, f := range []string{
+		"id", "title", "shortTitle", "subTitle", "authors", "year",
+		"publishers", "languages", "formats", "images", "cleanIsbn", "isbns",
+	} {
+		params.Add("field[]", f)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.searchURL+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", p.userAgent)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("finna search: status %d", resp.StatusCode)
+	}
+
+	var body finnaSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	if len(body.Records) == 0 {
+		return nil, nil // not found is not an error, per the other providers
+	}
+
+	rec := selectBestFinnaRecord(body.Records, isbn13, isbn10)
+	return finnaRecordToBookResult(rec, isbn13, isbn10), nil
+}
+
+// selectBestFinnaRecord scores the candidate records and returns the best one.
+// A single ISBN search can return the printed book, an e-book, and an
+// audiobook as separate records; we prefer the record whose ISBN actually
+// matches and, among those, the printed book. Stable: first wins on ties.
+func selectBestFinnaRecord(records []finnaRecord, isbn13, isbn10 string) finnaRecord {
+	wanted := map[string]bool{}
+	if isbn13 != "" {
+		wanted[isbn13] = true
+	}
+	if isbn10 != "" {
+		wanted[isbn10] = true
+	}
+
+	score := func(r finnaRecord) int {
+		s := 0
+		candidates := []string{}
+		if r.CleanISBN != "" {
+			candidates = append(candidates, normalizeISBN(r.CleanISBN))
+		}
+		for _, raw := range r.ISBNs {
+			candidates = append(candidates, normalizeISBN(raw))
+		}
+		for _, c := range candidates {
+			if wanted[c] {
+				s += 4
+				break
+			}
+		}
+		// formats look like "1/Book/Book/" (printed) or "0/Book/" (family).
+		printed, anyBook := false, false
+		for _, f := range r.Formats {
+			v := strings.ToLower(f.Value)
+			if strings.Contains(v, "book/book") {
+				printed = true
+			} else if strings.Contains(v, "book") {
+				anyBook = true
+			}
+		}
+		if printed {
+			s += 2
+		} else if anyBook {
+			s += 1
+		}
+		return s
+	}
+
+	best, bestScore := 0, score(records[0])
+	for i := 1; i < len(records); i++ {
+		if s := score(records[i]); s > bestScore {
+			best, bestScore = i, s
+		}
+	}
+	return records[best]
+}
+
+func finnaRecordToBookResult(r finnaRecord, isbn13, isbn10 string) *providers.BookResult {
+	result := &providers.BookResult{
+		Provider:        "finna",
+		ProviderDisplay: "Finna",
+		Title:           firstNonEmpty(r.Title, r.ShortTitle),
+		Subtitle:        r.SubTitle,
+		Authors:         extractFinnaAuthors(r.Authors),
+		Publisher:       firstFinnaString(r.Publishers),
+		ISBN13:          isbn13,
+		ISBN10:          isbn10,
+		Language:        finnaLanguage(r.Languages),
+		CoverURL:        finnaCoverURL(r, isbn13),
+	}
+	// Finna records carry only a year, not a full date; normalise to the
+	// YYYY-MM-DD the rest of the pipeline expects (matching Open Library's
+	// year-only handling).
+	if y := parseFinnaYear(r.Year); y != "" {
+		result.PublishDate = y + "-01-01"
+	}
+	return result
+}
+
+// extractFinnaAuthors pulls the author names out of Finna's nested authors
+// object, whose groups are JSON objects keyed by the name.
+//
+// Only the primary group is used. Secondary keys are the full library heading
+// form with birth year and role baked into the string
+// ("Viitanen, Viia 1973- kääntäjä"), which is neither a clean author name nor,
+// for a translator/editor, an author of the work at all. The corporate group
+// is the fallback for the rare work catalogued solely under an organisation.
+func extractFinnaAuthors(a finnaAuthors) []string {
+	names := a.Primary.keys()
+	if len(names) == 0 {
+		names = a.Corporate.keys()
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range names {
+		if n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// finnaCoverURL prefers the record's own image; the ISBN-keyed cover endpoint
+// is the fallback. Relative image paths are made absolute against finna.fi.
+func finnaCoverURL(r finnaRecord, isbn13 string) string {
+	if len(r.Images) > 0 {
+		img := r.Images[0]
+		switch {
+		case strings.HasPrefix(img, "http://"), strings.HasPrefix(img, "https://"):
+			return img
+		case strings.HasPrefix(img, "/"):
+			return finnaWebBase + img
+		default:
+			return finnaWebBase + "/" + img
+		}
+	}
+	if isbn13 != "" {
+		return fmt.Sprintf("%s?isbn=%s&size=large", finnaCoverBase, isbn13)
+	}
+	return ""
+}
+
+// finnaLanguage maps Finna's ISO 639-2/B three-letter codes to the two-letter
+// ISO 639-1 codes the clients use, matching Open Library's language handling.
+// Unknown codes pass through unchanged.
+func finnaLanguage(langs []string) string {
+	if len(langs) == 0 {
+		return ""
+	}
+	iso := map[string]string{
+		"fin": "fi", "swe": "sv", "eng": "en", "ger": "de", "fre": "fr",
+		"spa": "es", "ita": "it", "por": "pt", "rus": "ru", "jpn": "ja",
+		"chi": "zh", "kor": "ko", "dan": "da", "nor": "no", "est": "et",
+	}
+	if v, ok := iso[langs[0]]; ok {
+		return v
+	}
+	return langs[0]
+}
+
+// parseFinnaYear returns the leading four-digit year, or "" if there isn't one.
+func parseFinnaYear(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) < 4 {
+		return ""
+	}
+	y := s[:4]
+	if _, err := strconv.Atoi(y); err != nil {
+		return ""
+	}
+	return y
+}
+
+// ─── ISBN helpers ─────────────────────────────────────────────────────────────
+
+// normalizeISBN strips hyphens and whitespace and upper-cases the ISBN-10
+// check character X.
+func normalizeISBN(raw string) string {
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == 'x' || r == 'X':
+			b.WriteRune('X')
+		}
+	}
+	return b.String()
+}
+
+// isbnForms returns the 13- and 10-digit forms for a normalised ISBN, deriving
+// whichever is missing. Either return value is "" when it can't be produced
+// (an invalid ISBN, or a 979-prefixed ISBN-13 which has no ISBN-10 form).
+func isbnForms(norm string) (isbn13, isbn10 string) {
+	switch len(norm) {
+	case 13:
+		if isValidISBN13(norm) {
+			return norm, isbn13To10(norm)
+		}
+	case 10:
+		if isValidISBN10(norm) {
+			return isbn10To13(norm), norm
+		}
+	}
+	return "", ""
+}
+
+func isbn10CheckDigit(body9 string) byte {
+	sum := 0
+	for i := 0; i < 9; i++ {
+		sum += (10 - i) * int(body9[i]-'0')
+	}
+	r := (11 - (sum % 11)) % 11
+	if r == 10 {
+		return 'X'
+	}
+	return byte('0' + r)
+}
+
+func isbn13CheckDigit(body12 string) byte {
+	sum := 0
+	for i := 0; i < 12; i++ {
+		w := 1
+		if i%2 == 1 {
+			w = 3
+		}
+		sum += w * int(body12[i]-'0')
+	}
+	return byte('0' + (10-(sum%10))%10)
+}
+
+func isValidISBN10(v string) bool {
+	if len(v) != 10 {
+		return false
+	}
+	for i := 0; i < 9; i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	last := v[9]
+	if (last < '0' || last > '9') && last != 'X' {
+		return false
+	}
+	return isbn10CheckDigit(v[:9]) == last
+}
+
+func isValidISBN13(v string) bool {
+	if len(v) != 13 {
+		return false
+	}
+	for i := 0; i < 13; i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	if !strings.HasPrefix(v, "978") && !strings.HasPrefix(v, "979") {
+		return false
+	}
+	return isbn13CheckDigit(v[:12]) == v[12]
+}
+
+func isbn10To13(isbn10 string) string {
+	body := "978" + isbn10[:9]
+	return body + string(isbn13CheckDigit(body))
+}
+
+// isbn13To10 converts a 978-prefixed ISBN-13 to ISBN-10. The 979 prefix has no
+// ISBN-10 equivalent, so it returns "".
+func isbn13To10(isbn13 string) string {
+	if !strings.HasPrefix(isbn13, "978") {
+		return ""
+	}
+	body := isbn13[3:12]
+	return body + string(isbn10CheckDigit(body))
+}
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func firstFinnaString(vals []string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ─── Finna API types ──────────────────────────────────────────────────────────
+
+type finnaSearchResponse struct {
+	ResultCount int           `json:"resultCount"`
+	Records     []finnaRecord `json:"records"`
+	Status      string        `json:"status"`
+}
+
+type finnaRecord struct {
+	ID         string        `json:"id"`
+	Title      string        `json:"title"`
+	ShortTitle string        `json:"shortTitle"`
+	SubTitle   string        `json:"subTitle"`
+	Authors    finnaAuthors  `json:"authors"`
+	Year       string        `json:"year"`
+	Publishers []string      `json:"publishers"`
+	Languages  []string      `json:"languages"`
+	Formats    []finnaFormat `json:"formats"`
+	Images     []string      `json:"images"`
+	CleanISBN  string        `json:"cleanIsbn"`
+	ISBNs      []string      `json:"isbns"`
+}
+
+type finnaFormat struct {
+	Value      string `json:"value"`
+	Translated string `json:"translated"`
+}
+
+// finnaAuthors is Finna's authors object. Each group is a map keyed by the
+// author name (the value holds roles, which we don't use for the book record).
+type finnaAuthors struct {
+	Primary   finnaAuthorGroup `json:"primary"`
+	Secondary finnaAuthorGroup `json:"secondary"`
+	Corporate finnaAuthorGroup `json:"corporate"`
+}
+
+// finnaAuthorGroup decodes to either a name-keyed object or, when Finna returns
+// an empty group, a JSON array ([]). A custom unmarshaller tolerates both so a
+// record with no corporate authors doesn't fail the whole decode.
+type finnaAuthorGroup struct {
+	names []string
+}
+
+func (g *finnaAuthorGroup) keys() []string { return g.names }
+
+func (g *finnaAuthorGroup) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" || strings.HasPrefix(trimmed, "[") {
+		// Empty group: Finna serialises it as [] rather than {}.
+		g.names = nil
+		return nil
+	}
+	// json.Unmarshal into a map loses key order, so decode the object with a
+	// token stream to keep the author order Finna returned.
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	if _, err := dec.Token(); err != nil { // opening '{'
+		return err
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		g.names = append(g.names, key.(string))
+		// Skip the value (role object) — we only need the key.
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return err
+		}
+	}
+	return nil
+}
