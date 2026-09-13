@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fireball1725/librarium-api/internal/providers"
@@ -41,6 +42,13 @@ type FinnaProvider struct {
 	// no user-supplied URL to validate — but a field rather than a const so
 	// tests can point it at an httptest server.
 	searchURL string
+
+	// minInterval spaces requests (see throttle). A field, not a const, so
+	// tests can shrink it instead of sleeping real seconds.
+	minInterval time.Duration
+	// limMu guards limNext, the earliest instant the next request may start.
+	limMu   sync.Mutex
+	limNext time.Time
 }
 
 // finnaSearchBase is the public Finna search endpoint.
@@ -49,11 +57,22 @@ const finnaSearchBase = "https://api.finna.fi/v1/search"
 // finnaWebBase prefixes the record's relative cover image path.
 const finnaWebBase = "https://www.finna.fi"
 
+// Finna's API terms ask for no more than roughly one request per second. A bulk
+// enrichment fans out a lookup per book, so without pacing Finna answers 429
+// and the lookups come back empty — which, under a force re-enrich, wiped book
+// records. finnaDefaultInterval enforces the cap across all callers sharing the
+// provider; finnaMaxRetries bounds the 429 backoff.
+const (
+	finnaDefaultInterval = time.Second
+	finnaMaxRetries      = 4
+)
+
 func NewFinnaProvider() *FinnaProvider {
 	return &FinnaProvider{
-		base:      base{enabled: true},
-		client:    &http.Client{Timeout: 10 * time.Second},
-		searchURL: finnaSearchBase,
+		base:        base{enabled: true},
+		client:      &http.Client{Timeout: 10 * time.Second},
+		searchURL:   finnaSearchBase,
+		minInterval: finnaDefaultInterval,
 		// Finna rejects requests without a descriptive User-Agent (HTTP 403),
 		// so this is not optional politeness — the lookup fails without it.
 		userAgent: fmt.Sprintf("librarium-finna/%s (+https://github.com/fireball1725/librarium-api)", finnaVersion()),
@@ -115,25 +134,8 @@ func (p *FinnaProvider) LookupByISBN(ctx context.Context, isbn string) (*provide
 		params.Add("field[]", f)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.searchURL+"?"+params.Encode(), nil)
+	body, err := p.search(ctx, p.searchURL+"?"+params.Encode())
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", p.userAgent)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("finna search: status %d", resp.StatusCode)
-	}
-
-	var body finnaSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, err
 	}
 	if len(body.Records) == 0 {
@@ -142,6 +144,103 @@ func (p *FinnaProvider) LookupByISBN(ctx context.Context, isbn string) (*provide
 
 	rec := selectBestFinnaRecord(body.Records, isbn13, isbn10)
 	return finnaRecordToBookResult(rec, isbn13, isbn10), nil
+}
+
+// search performs the rate-limited, 429-aware GET. Every request first waits
+// for its throttle slot; a 429 is retried with the Retry-After delay Finna
+// sends, or exponential backoff, up to finnaMaxRetries. A non-nil body is
+// always a decoded 200 response.
+func (p *FinnaProvider) search(ctx context.Context, rawURL string) (*finnaSearchResponse, error) {
+	for attempt := 0; ; attempt++ {
+		if err := p.throttle(ctx); err != nil {
+			return nil, err
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", p.userAgent)
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := p.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			wait := finnaRetryAfter(resp, attempt)
+			resp.Body.Close()
+			if attempt >= finnaMaxRetries {
+				return nil, fmt.Errorf("finna search: rate-limited (429) after %d retries", finnaMaxRetries)
+			}
+			if err := sleepCtx(ctx, wait); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("finna search: status %d", resp.StatusCode)
+		}
+
+		var body finnaSearchResponse
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		return &body, nil
+	}
+}
+
+// throttle blocks until this provider is allowed to make its next request,
+// spacing all concurrent callers minInterval apart. Reserves the slot before
+// sleeping so parallel goroutines queue rather than all firing at once.
+func (p *FinnaProvider) throttle(ctx context.Context) error {
+	if p.minInterval <= 0 {
+		return nil
+	}
+	p.limMu.Lock()
+	start := p.limNext
+	now := time.Now()
+	if start.Before(now) {
+		start = now
+	}
+	p.limNext = start.Add(p.minInterval)
+	p.limMu.Unlock()
+
+	return sleepCtx(ctx, time.Until(start))
+}
+
+// finnaRetryAfter is how long to wait before retrying a 429: Finna's
+// Retry-After header when present, otherwise capped exponential backoff.
+func finnaRetryAfter(resp *http.Response, attempt int) time.Duration {
+	if ra := strings.TrimSpace(resp.Header.Get("Retry-After")); ra != "" {
+		if secs, err := strconv.Atoi(ra); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	d := time.Second << attempt // 1s, 2s, 4s, 8s, …
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d
+}
+
+// sleepCtx waits for d or until ctx is cancelled, whichever comes first.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // selectBestFinnaRecord scores the candidate records and returns the best one.

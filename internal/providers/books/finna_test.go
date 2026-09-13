@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // finnaResponse is a trimmed but faithful sample of a Finna /v1/search reply,
@@ -57,6 +58,7 @@ func newTestFinnaProvider(t *testing.T, handler http.HandlerFunc) *FinnaProvider
 	t.Cleanup(srv.Close)
 	p := NewFinnaProvider()
 	p.searchURL = srv.URL
+	p.minInterval = 0 // don't pace test requests
 	return p
 }
 
@@ -135,6 +137,75 @@ func TestFinnaProvider_LookupByISBN(t *testing.T) {
 	}
 	if got.PageCount == nil || *got.PageCount != 320 {
 		t.Errorf("PageCount = %v, want 320 (from \"320 sivua\")", got.PageCount)
+	}
+}
+
+func TestFinnaProvider_RetriesOn429(t *testing.T) {
+	var calls int
+	p := newTestFinnaProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "0") // don't actually sleep in the test
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(finnaResponse))
+	})
+
+	got, err := p.LookupByISBN(context.Background(), "9789510450741")
+	if err != nil {
+		t.Fatalf("expected the retry to succeed, got: %v", err)
+	}
+	if got == nil || calls != 2 {
+		t.Errorf("calls = %d, want 2 (one 429 then a successful retry)", calls)
+	}
+}
+
+func TestFinnaProvider_429Exhausted(t *testing.T) {
+	var calls int
+	p := newTestFinnaProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "0")
+		http.Error(w, "slow down", http.StatusTooManyRequests)
+	})
+
+	got, err := p.LookupByISBN(context.Background(), "9789510450741")
+	if err == nil {
+		t.Fatal("expected an error after exhausting retries")
+	}
+	if got != nil {
+		t.Errorf("got %+v, want nil on persistent 429", got)
+	}
+	if calls != finnaMaxRetries+1 {
+		t.Errorf("calls = %d, want %d (initial + %d retries)", calls, finnaMaxRetries+1, finnaMaxRetries)
+	}
+}
+
+func TestFinnaThrottle_Spaces(t *testing.T) {
+	p := NewFinnaProvider()
+	p.minInterval = 40 * time.Millisecond
+	ctx := context.Background()
+
+	if err := p.throttle(ctx); err != nil { // first slot is immediate
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if err := p.throttle(ctx); err != nil { // second must wait ~minInterval
+		t.Fatal(err)
+	}
+	if waited := time.Since(start); waited < 30*time.Millisecond {
+		t.Errorf("second throttle waited %v, want >= ~40ms", waited)
+	}
+}
+
+func TestFinnaThrottle_CancelledContext(t *testing.T) {
+	p := NewFinnaProvider()
+	p.minInterval = time.Hour // force a long wait so cancellation is what returns
+	_ = p.throttle(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := p.throttle(ctx); err == nil {
+		t.Error("throttle should return the context error when cancelled while waiting")
 	}
 }
 
