@@ -41,7 +41,11 @@ const finnaResponse = `{
       "formats": [{"value": "0/Book/", "translated": "Kirja"}, {"value": "1/Book/Book/", "translated": "Kirja"}],
       "images": ["/Cover/Show?id=anders.7a1c2448"],
       "cleanIsbn": "9789510450741",
-      "isbns": ["9789510450741"]
+      "isbns": ["9789510450741"],
+      "subjects": [["rakkaus"], ["ystävyys"], ["rakkaus"]],
+      "genres": ["muistelmat", "memoarer"],
+      "summary": ["Underhållande och insiktsfull debut."],
+      "physicalDescriptions": ["320 sivua"]
     }
   ],
   "status": "OK"
@@ -93,9 +97,9 @@ func TestFinnaProvider_LookupByISBN(t *testing.T) {
 		t.Errorf("Provider = %q / %q", got.Provider, got.ProviderDisplay)
 	}
 	// The printed book (1/Book/Book/) must win over the audiobook record, and
-	// that record's primary authors are the two below in order.
-	if len(got.Authors) != 2 || got.Authors[0] != "Alderton, Dolly" || got.Authors[1] != "Viitanen, Viia" {
-		t.Errorf("Authors = %#v, want the printed record's primary authors in order", got.Authors)
+	// its primary authors come back flipped to "Given Surname" order.
+	if len(got.Authors) != 2 || got.Authors[0] != "Dolly Alderton" || got.Authors[1] != "Viia Viitanen" {
+		t.Errorf("Authors = %#v, want [Dolly Alderton, Viia Viitanen]", got.Authors)
 	}
 	if got.Publisher != "WSOY" {
 		t.Errorf("Publisher = %q, want WSOY", got.Publisher)
@@ -115,6 +119,64 @@ func TestFinnaProvider_LookupByISBN(t *testing.T) {
 	// Relative image path made absolute against finna.fi.
 	if got.CoverURL != "https://www.finna.fi/Cover/Show?id=anders.7a1c2448" {
 		t.Errorf("CoverURL = %q", got.CoverURL)
+	}
+	// genres first, then subjects, deduped ("rakkaus" appears twice in subjects).
+	wantCats := []string{"muistelmat", "memoarer", "rakkaus", "ystävyys"}
+	if len(got.Categories) != len(wantCats) {
+		t.Fatalf("Categories = %#v, want %#v", got.Categories, wantCats)
+	}
+	for i, c := range wantCats {
+		if got.Categories[i] != c {
+			t.Errorf("Categories[%d] = %q, want %q", i, got.Categories[i], c)
+		}
+	}
+	if got.Description != "Underhållande och insiktsfull debut." {
+		t.Errorf("Description = %q", got.Description)
+	}
+	if got.PageCount == nil || *got.PageCount != 320 {
+		t.Errorf("PageCount = %v, want 320 (from \"320 sivua\")", got.PageCount)
+	}
+}
+
+func TestNaturalName(t *testing.T) {
+	cases := map[string]string{
+		"Alderton, Dolly":   "Dolly Alderton",
+		"Tolkien, J. R. R.": "J. R. R. Tolkien",
+		"Dolly Alderton":    "Dolly Alderton", // already natural
+		"Madonna":           "Madonna",        // mononym
+		"WSOY":              "WSOY",
+	}
+	for in, want := range cases {
+		if got := naturalName(in); got != want {
+			t.Errorf("naturalName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestParseFinnaPageCount(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want int // 0 means want nil
+	}{
+		{[]string{"320 sivua"}, 320},
+		{[]string{"320 s."}, 320},
+		{[]string{"1 verkkoaineisto (280 sivua)"}, 280},
+		{[]string{"320 sidor"}, 320},
+		{[]string{"1 verkkoaineisto"}, 0}, // no page word after the digit
+		{[]string{""}, 0},
+		{nil, 0},
+	}
+	for _, tc := range cases {
+		got := parseFinnaPageCount(tc.in)
+		if tc.want == 0 {
+			if got != nil {
+				t.Errorf("parseFinnaPageCount(%q) = %v, want nil", tc.in, *got)
+			}
+			continue
+		}
+		if got == nil || *got != tc.want {
+			t.Errorf("parseFinnaPageCount(%q) = %v, want %d", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -146,7 +208,10 @@ func TestFinnaProvider_LookupByISBN_ServerError(t *testing.T) {
 	}
 }
 
-func TestFinnaProvider_CoverFallbackToISBN(t *testing.T) {
+func TestFinnaProvider_NoCoverWhenNoImage(t *testing.T) {
+	// No images[] means Finna has no cover. We must NOT synthesise a
+	// Cover/Show?isbn=... URL — it 200s with a blank placeholder that then gets
+	// stored as the book's cover.
 	p := newTestFinnaProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"resultCount":1,"status":"OK","records":[{
 			"title":"X","cleanIsbn":"9789510450741","isbns":["9789510450741"],
@@ -157,9 +222,26 @@ func TestFinnaProvider_CoverFallbackToISBN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "https://api.finna.fi/Cover/Show?isbn=9789510450741&size=large"
+	if got.CoverURL != "" {
+		t.Errorf("CoverURL = %q, want empty (no image on the record)", got.CoverURL)
+	}
+}
+
+func TestFinnaProvider_CoverFromRecordImage(t *testing.T) {
+	p := newTestFinnaProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"resultCount":1,"status":"OK","records":[{
+			"title":"X","cleanIsbn":"9789510450741","isbns":["9789510450741"],
+			"formats":[{"value":"1/Book/Book/"}],
+			"images":["/Cover/Show?source=Solr&id=eepos.2522540&index=0&size=large"]}]}`))
+	})
+
+	got, err := p.LookupByISBN(context.Background(), "9789510450741")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "https://www.finna.fi/Cover/Show?source=Solr&id=eepos.2522540&index=0&size=large"
 	if got.CoverURL != want {
-		t.Errorf("CoverURL = %q, want ISBN cover fallback %q", got.CoverURL, want)
+		t.Errorf("CoverURL = %q, want %q", got.CoverURL, want)
 	}
 }
 

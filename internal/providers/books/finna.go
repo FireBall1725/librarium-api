@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -45,10 +46,8 @@ type FinnaProvider struct {
 // finnaSearchBase is the public Finna search endpoint.
 const finnaSearchBase = "https://api.finna.fi/v1/search"
 
-const (
-	finnaCoverBase = "https://api.finna.fi/Cover/Show"
-	finnaWebBase   = "https://www.finna.fi"
-)
+// finnaWebBase prefixes the record's relative cover image path.
+const finnaWebBase = "https://www.finna.fi"
 
 func NewFinnaProvider() *FinnaProvider {
 	return &FinnaProvider{
@@ -111,6 +110,7 @@ func (p *FinnaProvider) LookupByISBN(ctx context.Context, isbn string) (*provide
 	for _, f := range []string{
 		"id", "title", "shortTitle", "subTitle", "authors", "year",
 		"publishers", "languages", "formats", "images", "cleanIsbn", "isbns",
+		"subjects", "genres", "summary", "physicalDescriptions",
 	} {
 		params.Add("field[]", f)
 	}
@@ -210,7 +210,6 @@ func finnaRecordToBookResult(r finnaRecord, isbn13, isbn10 string) *providers.Bo
 		ISBN13:          isbn13,
 		ISBN10:          isbn10,
 		Language:        finnaLanguage(r.Languages),
-		CoverURL:        finnaCoverURL(r, isbn13),
 	}
 	// Finna records carry only a year, not a full date; normalise to the
 	// YYYY-MM-DD the rest of the pipeline expects (matching Open Library's
@@ -218,8 +217,65 @@ func finnaRecordToBookResult(r finnaRecord, isbn13, isbn10 string) *providers.Bo
 	if y := parseFinnaYear(r.Year); y != "" {
 		result.PublishDate = y + "-01-01"
 	}
+	// genres before subjects: the genre ("muistelmat") is the most useful
+	// signal for the client's media-type detection, and subjects are the long
+	// tail of topical headings. Both feed Categories.
+	result.Categories = extractFinnaCategories(r.Genres, r.Subjects)
+	if len(r.Summary) > 0 {
+		result.Description = strings.TrimSpace(r.Summary[0])
+	}
+	result.PageCount = parseFinnaPageCount(r.PhysicalDescriptions)
+	result.CoverURL = finnaCoverURL(r)
 	return result
 }
+
+// extractFinnaCategories flattens Finna's genres and subjects into a single
+// deduped Categories list. subjects arrives as a list of single-element lists
+// ([["rakkaus"], ["ystävyys"], ...]) and mixes Finnish and Swedish translations
+// of the same heading; we keep them all (order preserved, duplicates dropped)
+// rather than trying to guess which language the caller wants.
+func extractFinnaCategories(genres []string, subjects [][]string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(genres)+len(subjects))
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, g := range genres {
+		add(g)
+	}
+	for _, group := range subjects {
+		for _, s := range group {
+			add(s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// parseFinnaPageCount pulls a page count out of Finna's free-text physical
+// description ("320 sivua", "320 s.", "1 verkkoaineisto (320 sivua)"). Returns
+// nil when no leading run of digits is present.
+func parseFinnaPageCount(descs []string) *int {
+	for _, d := range descs {
+		if m := reFinnaPages.FindStringSubmatch(d); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+				return &n
+			}
+		}
+	}
+	return nil
+}
+
+// First run of digits that is immediately followed by a Finnish/Swedish page
+// word (sivu/s./sidor/p.), so "320 sivua" matches but "1 verkkoaineisto" and a
+// bare year don't.
+var reFinnaPages = regexp.MustCompile(`(\d+)\s*(?:sivu|s\.|sidor|sid\.|p\.|pages)`)
 
 // extractFinnaAuthors pulls the author names out of Finna's nested authors
 // object, whose groups are JSON objects keyed by the name.
@@ -229,14 +285,26 @@ func finnaRecordToBookResult(r finnaRecord, isbn13, isbn10 string) *providers.Bo
 // ("Viitanen, Viia 1973- kääntäjä"), which is neither a clean author name nor,
 // for a translator/editor, an author of the work at all. The corporate group
 // is the fallback for the rare work catalogued solely under an organisation.
+//
+// Personal names are flipped from Finna's library "Surname, Given" form to the
+// "Given Surname" form the other providers emit. This matters beyond looks:
+// MergeBookResults joins authors with ", " and the clients split on it, so a
+// name that itself contains a comma ("Alderton, Dolly") round-trips into two
+// broken half-names. Corporate names are left as-is (an organisation isn't
+// "Surname, Given").
 func extractFinnaAuthors(a finnaAuthors) []string {
 	names := a.Primary.keys()
+	flip := true
 	if len(names) == 0 {
 		names = a.Corporate.keys()
+		flip = false
 	}
 	seen := map[string]bool{}
 	var out []string
 	for _, n := range names {
+		if flip {
+			n = naturalName(n)
+		}
 		if n != "" && !seen[n] {
 			seen[n] = true
 			out = append(out, n)
@@ -245,24 +313,43 @@ func extractFinnaAuthors(a finnaAuthors) []string {
 	return out
 }
 
-// finnaCoverURL prefers the record's own image; the ISBN-keyed cover endpoint
-// is the fallback. Relative image paths are made absolute against finna.fi.
-func finnaCoverURL(r finnaRecord, isbn13 string) string {
-	if len(r.Images) > 0 {
-		img := r.Images[0]
-		switch {
-		case strings.HasPrefix(img, "http://"), strings.HasPrefix(img, "https://"):
-			return img
-		case strings.HasPrefix(img, "/"):
-			return finnaWebBase + img
-		default:
-			return finnaWebBase + "/" + img
-		}
+// naturalName turns "Surname, Given" into "Given Surname". Names without a
+// single splitting comma (already natural, or mononyms) are returned unchanged.
+func naturalName(s string) string {
+	parts := strings.SplitN(s, ",", 2)
+	if len(parts) != 2 {
+		return strings.TrimSpace(s)
 	}
-	if isbn13 != "" {
-		return fmt.Sprintf("%s?isbn=%s&size=large", finnaCoverBase, isbn13)
+	last := strings.TrimSpace(parts[0])
+	first := strings.TrimSpace(parts[1])
+	if last == "" || first == "" {
+		return strings.TrimSpace(s)
 	}
-	return ""
+	return first + " " + last
+}
+
+// finnaCoverURL returns the record's own cover image, made absolute against
+// finna.fi. Returns "" when the record has no image.
+//
+// It deliberately does NOT fall back to Cover/Show?isbn=... . That endpoint
+// answers 200 with a 49-byte transparent placeholder GIF whenever Finna has no
+// cover for the ISBN, and since Librarium downloads and stores cover URLs, the
+// fallback poisoned the book with a blank image instead of leaving the cover
+// empty for another provider (or none) to fill. The record's images[] entry is
+// the only source that is a real cover when present.
+func finnaCoverURL(r finnaRecord) string {
+	if len(r.Images) == 0 {
+		return ""
+	}
+	img := r.Images[0]
+	switch {
+	case strings.HasPrefix(img, "http://"), strings.HasPrefix(img, "https://"):
+		return img
+	case strings.HasPrefix(img, "/"):
+		return finnaWebBase + img
+	default:
+		return finnaWebBase + "/" + img
+	}
 }
 
 // finnaLanguage maps Finna's ISO 639-2/B three-letter codes to the two-letter
@@ -441,6 +528,11 @@ type finnaRecord struct {
 	Images     []string      `json:"images"`
 	CleanISBN  string        `json:"cleanIsbn"`
 	ISBNs      []string      `json:"isbns"`
+	// subjects is a list of single-element lists in Finna's JSON.
+	Subjects             [][]string `json:"subjects"`
+	Genres               []string   `json:"genres"`
+	Summary              []string   `json:"summary"`
+	PhysicalDescriptions []string   `json:"physicalDescriptions"`
 }
 
 type finnaFormat struct {
