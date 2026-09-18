@@ -69,7 +69,10 @@ const (
 
 func NewFinnaProvider() *FinnaProvider {
 	return &FinnaProvider{
-		base:        base{enabled: true},
+		// Off by default, like every other optional provider — only Open Library
+		// ships on. Otherwise every install would send every ISBN lookup to Finna
+		// even for collections with no Finnish books; an admin turns it on.
+		base:        base{enabled: false},
 		client:      &http.Client{Timeout: 10 * time.Second},
 		searchURL:   finnaSearchBase,
 		minInterval: finnaDefaultInterval,
@@ -93,7 +96,7 @@ func (p *FinnaProvider) Info() providers.ProviderInfo {
 		Description:  "Finnish libraries' shared catalogue (finna.fi), run by the National Library of Finland. Best source for Finnish-language books, which other providers cover poorly. Free, no API key.",
 		RequiresKey:  false,
 		Capabilities: []string{providers.CapBookISBN},
-		HelpText:     "No configuration needed. Finna aggregates Finnish library holdings and is the strongest source for books published in Finland.",
+		HelpText:     "Off by default — enable it here (no API key needed). Finna aggregates Finnish library holdings and is the strongest source for books published in Finland.",
 		HelpURL:      "https://www.finna.fi",
 		// The default probe ISBN is a UK edition Finna doesn't carry; test
 		// against a Finnish book (Alderton, *Kaikki mitä tiedän rakkaudesta*).
@@ -103,9 +106,9 @@ func (p *FinnaProvider) Info() providers.ProviderInfo {
 
 func (p *FinnaProvider) Configure(cfg map[string]string) {
 	if v, ok := cfg["enabled"]; ok {
-		p.enabled = v != "false"
+		p.enabled = v == "true"
 	} else {
-		p.enabled = true
+		p.enabled = false
 	}
 }
 
