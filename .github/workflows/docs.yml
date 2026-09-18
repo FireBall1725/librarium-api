@@ -8,8 +8,21 @@ on:
       - "docs/swagger.yaml"
       - "docs/scalar.html"
       - ".github/workflows/docs.yml"
+  # Inert in practice, and kept only because it costs nothing and would start
+  # working the day a release is published by something other than the default
+  # token. GitHub refuses to start a workflow from an event created with
+  # GITHUB_TOKEN, and the shared release workflow publishes through
+  # softprops/action-gh-release with no token of its own, so it falls back to
+  # exactly that. Every API Docs run in this repo's history has come from a
+  # push; not one has come from a release.
   release:
     types: [published]
+  # So this is what actually catches a release. workflow_run fires on the run
+  # completing rather than on the Release object being created, which sidesteps
+  # the GITHUB_TOKEN rule without anyone having to mint a PAT.
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -23,6 +36,11 @@ concurrency:
 
 jobs:
   build:
+    # A Release that failed, or was a dry run that tagged nothing, must not
+    # republish the docs. Every other trigger is unconditional.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -49,7 +67,21 @@ jobs:
           if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+            # Newest STABLE tag, version-sorted.
+            #
+            # Deliberately not `git describe --tags --abbrev=0`. A stable
+            # release is normally cut from the exact commit an rc already
+            # tagged, so both tags land on one commit and describe returns
+            # whichever it reaches first, which in practice is the rc. On
+            # 2026-09-17 main sat on f556f8b carrying both v26.8.1-rc.11 and
+            # v26.9.0, and describe answered rc.11.
+            #
+            # An rc exists so a build can be deployed without moving :latest.
+            # Published docs should describe what people actually run, so the
+            # pre-releases are filtered out rather than sorted around.
+            VERSION="$(git tag --list 'v*' --sort=-v:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | head -n1 | sed 's/^v//' || true)"
           fi
           if [ -n "${VERSION}" ]; then
             echo "Stamping spec version: ${VERSION}"
