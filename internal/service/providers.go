@@ -143,6 +143,7 @@ func (s *ProviderService) GetAllProviderStatus(ctx context.Context) ([]ProviderS
 			status.Kind = providers.KindData
 		}
 		status.Config, status.HasAPIKey = maskProviderConfig(info, cfg)
+		status.Listed = providerListed(cfg, status.Enabled)
 
 		out = append(out, status)
 	}
@@ -156,6 +157,18 @@ func (s *ProviderService) GetAllProviderStatus(ctx context.Context) ([]ProviderS
 // if any password field is set. Providers with no ConfigFields fall back to
 // the legacy single api_key convention, unchanged from before ConfigFields
 // existed.
+// providerListed reads the "listed" flag. Providers that were on before the
+// flag existed stay on the list without anyone re-adding them.
+func providerListed(cfg map[string]string, enabled bool) bool {
+	switch cfg["listed"] {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	return enabled
+}
+
 func maskProviderConfig(info providers.ProviderInfo, cfg map[string]string) (config map[string]string, hasAPIKey bool) {
 	if len(info.ConfigFields) > 0 {
 		masked := make(map[string]string, len(info.ConfigFields))
@@ -560,6 +573,11 @@ type ProviderStatus struct {
 	HasAPIKey    bool                    `json:"has_api_key"`
 	Config       map[string]string       `json:"config,omitempty"`
 	ConfigFields []providers.ConfigField `json:"config_fields,omitempty"`
+
+	// Listed is whether the provider shows on the admin Lookups list rather
+	// than only in the catalogue. Kept as the "listed" config key, which no
+	// provider reads; a provider that's on counts as listed unless removed.
+	Listed bool `json:"listed"`
 
 	Kind          string   `json:"kind"`
 	Region        string   `json:"region,omitempty"`

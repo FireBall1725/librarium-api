@@ -18113,6 +18113,10 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "listed": {
+                    "description": "Listed is whether the provider shows on the admin Lookups list rather\nthan only in the catalogue. Kept as the \"listed\" config key, which no\nprovider reads; a provider that's on counts as listed unless removed.",
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
                 },
