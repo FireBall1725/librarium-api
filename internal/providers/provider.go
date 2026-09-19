@@ -57,7 +57,32 @@ type ProviderInfo struct {
 	// which only carries Finnish library holdings) must set this to an ISBN it
 	// actually has, or the test always reports a false negative.
 	TestISBN string
+
+	// Catalogue details, so the admin page can search and filter providers.
+	// All optional.
+
+	// Kind is KindData for metadata or KindBuy for a Where to buy link.
+	// Empty means KindData.
+	Kind string
+	// Region is where its data is strongest, e.g. "Worldwide" or "Finland".
+	Region string
+	// Languages are the book languages it covers best, as ISO 639-1 codes.
+	// Empty means no particular language.
+	Languages []string
+	// Sends says what leaves the server when it's asked.
+	Sends string
+	// ContributedBy is the GitHub handle of a community contributor; empty
+	// for providers built in-house.
+	ContributedBy string
+	// DocsURL links to the provider's own API documentation.
+	DocsURL string
 }
+
+// Provider kinds for the catalogue.
+const (
+	KindData = "data"
+	KindBuy  = "buy"
+)
 
 // BookResult is a normalised book record returned by a BookISBNProvider.
 type BookResult struct {

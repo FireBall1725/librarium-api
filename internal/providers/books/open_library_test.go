@@ -68,3 +68,30 @@ func TestOpenLibrary_UnknownBookIsNoRecord(t *testing.T) {
 		t.Errorf("want no record, got %+v, %v", r, err)
 	}
 }
+
+// Some editions name no authors; the work does.
+func TestOpenLibrary_AuthorsFromTheWork(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/books", http.NotFound)
+	mux.HandleFunc("/isbn/9780553103540.json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"title":"A Game of Thrones","works":[{"key":"/works/OL257943W"}]}`))
+	})
+	mux.HandleFunc("/works/OL257943W.json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"description":"Winter is coming.","authors":[{"author":{"key":"/authors/OL234664A"}}]}`))
+	})
+	mux.HandleFunc("/authors/OL234664A.json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"George R. R. Martin"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	p := NewOpenLibraryProvider()
+	p.baseURL = srv.URL
+	r, err := p.LookupByISBN(context.Background(), "9780553103540")
+	if err != nil || r == nil {
+		t.Fatalf("lookup: %v, %v", r, err)
+	}
+	if len(r.Authors) != 1 || r.Authors[0] != "George R. R. Martin" || r.Description != "Winter is coming." {
+		t.Errorf("authors %v description %q", r.Authors, r.Description)
+	}
+}

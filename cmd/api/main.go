@@ -219,6 +219,7 @@ func main() {
 		providerSvc,
 		workerBookSvc,
 	)
+	metadataWorker.SetAnswers(repository.NewEditionAnswerRepo(pool))
 	aiMetadataRepo := repository.NewAIMetadataRepo(pool)
 	aiMetadataSvc := service.NewAIMetadataService(aiRegistry, aiMetadataRepo)
 	enrichmentBatchWorker := workers.NewEnrichmentBatchWorker(

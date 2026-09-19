@@ -38,14 +38,17 @@ func NormalizeEditionFormat(s string) string {
 }
 
 type BookEdition struct {
-	ID                      uuid.UUID
-	BookID                  uuid.UUID
-	Format                  string // paperback | hardcover | ebook | audiobook | digital
-	Language                string
-	EditionName             string
-	Narrator                string
-	Publisher               string
-	PublishDate             *time.Time
+	ID          uuid.UUID
+	BookID      uuid.UUID
+	Format      string // paperback | hardcover | ebook | audiobook | digital
+	Language    string
+	EditionName string
+	Narrator    string
+	Publisher   string
+	PublishDate *time.Time
+	// PublishDatePrecision says how much of PublishDate is real: a year-only
+	// date is stored as 1 January. Empty when there's no date.
+	PublishDatePrecision    DatePrecision
 	ISBN10                  string
 	ISBN13                  string
 	Description             string

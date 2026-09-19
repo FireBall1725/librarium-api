@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fireball1725/librarium-api/internal/providers"
@@ -44,6 +45,9 @@ func NewOpenLibraryProvider() *OpenLibraryProvider {
 func (p *OpenLibraryProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
 		Name:         "open_library",
+		Region:       "Worldwide",
+		Sends:        "The ISBN, or your search text",
+		DocsURL:      "https://openlibrary.org/developers/api",
 		DisplayName:  "Open Library",
 		Description:  "Free book metadata from the Internet Archive. No API key required.",
 		RequiresKey:  false,
@@ -299,27 +303,43 @@ func (p *OpenLibraryProvider) SearchBooks(ctx context.Context, query string) ([]
 }
 
 func (p *OpenLibraryProvider) fetchWorkDescription(ctx context.Context, workKey string) string {
+	desc, _ := p.fetchWork(ctx, workKey)
+	return desc
+}
+
+// fetchWork returns a work's description and its author keys. Some editions
+// carry no authors of their own and only the work says who wrote it.
+func (p *OpenLibraryProvider) fetchWork(ctx context.Context, workKey string) (string, []string) {
 	url := p.baseURL + workKey + ".json"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	resp, err := p.client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		return ""
+		return "", nil
 	}
 	defer resp.Body.Close()
 
 	var work struct {
 		Description any `json:"description"`
+		Authors     []struct {
+			Author olKey `json:"author"`
+		} `json:"authors"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&work); err != nil {
-		return ""
+		return "", nil
 	}
-	return cleanDescription(olDescription(work.Description))
+	var keys []string
+	for _, a := range work.Authors {
+		if a.Author.Key != "" {
+			keys = append(keys, a.Author.Key)
+		}
+	}
+	return cleanDescription(olDescription(work.Description)), keys
 }
 
 // resultFromEdition builds a lookup result from the edition JSON alone, for
@@ -354,13 +374,45 @@ func (p *OpenLibraryProvider) resultFromEdition(ctx context.Context, isbn string
 	if len(ed.Covers) > 0 && ed.Covers[0] > 0 {
 		result.CoverURL = fmt.Sprintf("https://covers.openlibrary.org/b/id/%d-M.jpg", ed.Covers[0])
 	}
-	for _, a := range ed.Authors {
-		if name := p.fetchAuthorName(ctx, a.Key); name != "" {
-			result.Authors = append(result.Authors, name)
-		}
-	}
+	// The work gives the description, and the authors when the edition has
+	// none. Edition authors and the work are asked for together so the lookup
+	// isn't the sum of them; a merged lookup only waits a few seconds for a
+	// provider after the first one answers.
+	var workAuthors []string
+	var wg sync.WaitGroup
 	if len(ed.Works) > 0 {
-		result.Description = p.fetchWorkDescription(ctx, ed.Works[0].Key)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result.Description, workAuthors = p.fetchWork(ctx, ed.Works[0].Key)
+		}()
+	}
+	editionAuthors := make([]string, len(ed.Authors))
+	for i, a := range ed.Authors {
+		wg.Add(1)
+		go func(i int, key string) {
+			defer wg.Done()
+			editionAuthors[i] = p.fetchAuthorName(ctx, key)
+		}(i, a.Key)
+	}
+	wg.Wait()
+
+	names := editionAuthors
+	if len(ed.Authors) == 0 && len(workAuthors) > 0 {
+		names = make([]string, len(workAuthors))
+		for i, key := range workAuthors {
+			wg.Add(1)
+			go func(i int, key string) {
+				defer wg.Done()
+				names[i] = p.fetchAuthorName(ctx, key)
+			}(i, key)
+		}
+		wg.Wait()
+	}
+	for _, n := range names {
+		if n != "" {
+			result.Authors = append(result.Authors, n)
+		}
 	}
 	return result
 }
@@ -505,16 +557,16 @@ func normalizeDate(s string) string {
 	if s == "" {
 		return ""
 	}
+	// A year or a month is returned as it is, not padded to the 1st: padding
+	// turned every "1987" into 1 January 1987, which nothing downstream could
+	// tell apart from a real date. ParseFlexDate reads all three shapes.
 	for _, layout := range []string{"2006-01-02", "2006-01"} {
 		if _, err := time.Parse(layout, s); err == nil {
-			if layout == "2006-01" {
-				return s + "-01"
-			}
 			return s
 		}
 	}
 	if reYearOnly.MatchString(s) {
-		return s + "-01-01"
+		return s
 	}
 	// "Month D, YYYY" or "Mon D, YYYY" (full or abbreviated month)
 	if m := reFullDate.FindStringSubmatch(s); m != nil {
@@ -532,7 +584,7 @@ func normalizeDate(s string) string {
 	if m := reMonthYear.FindStringSubmatch(s); m != nil {
 		for _, mfmt := range []string{"January 2006", "Jan 2006"} {
 			if t, err := time.Parse(mfmt, m[1]+" "+m[2]); err == nil {
-				return t.Format("2006-01-02")
+				return t.Format("2006-01")
 			}
 		}
 	}

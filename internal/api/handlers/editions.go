@@ -453,8 +453,12 @@ func editionBody(e *models.BookEdition) map[string]any {
 	}
 	if e.PublishDate != nil {
 		body["publish_date"] = e.PublishDate.Format("2006-01-02")
+		// Added alongside publish_date, which stays a full date for older
+		// clients: "year" means only the year is real.
+		body["publish_date_precision"] = e.PublishDatePrecision
 	} else {
 		body["publish_date"] = nil
+		body["publish_date_precision"] = nil
 	}
 	if e.DurationSeconds != nil {
 		body["duration_seconds"] = *e.DurationSeconds

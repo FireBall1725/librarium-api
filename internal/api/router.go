@@ -116,6 +116,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	apiTokenRepo := repository.NewAPITokenRepo(db)
 
 	providerHandler := handlers.NewProviderHandler(providerSvc)
+	editionAnswerRepo := repository.NewEditionAnswerRepo(db)
+	bookSvc.SetAnswerStore(editionAnswerRepo, providerSvc.RecentAnswers)
+	sourcesHandler := handlers.NewSourcesHandler(editionRepo, editionAnswerRepo, providerSvc)
 	aiHandler := handlers.NewAIHandler(aiSvc)
 	aiUserHandler := handlers.NewAIUserHandler(aiUserSvc)
 	jobsHandler := handlers.NewJobsHandler(jobSvc)
@@ -266,6 +269,8 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.ListEditionIdentifiers)))
 	mux.Handle("POST /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.AddEditionIdentifier)))
 	mux.Handle("DELETE /api/v1/editions/{edition_id}/identifiers/{scheme}/{value}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveEditionIdentifier)))
+	mux.Handle("GET /api/v1/editions/{edition_id}/sources", requireAuth(http.HandlerFunc(sourcesHandler.GetEditionSources)))
+	mux.Handle("POST /api/v1/editions/{edition_id}/sources/{provider}", requireAuth(http.HandlerFunc(sourcesHandler.AskEditionSource)))
 	mux.Handle("GET /api/v1/books/{book_id}/contents", requireAuth(http.HandlerFunc(catalogueHandler.ListBookContents)))
 	mux.Handle("POST /api/v1/books/{book_id}/contents", requireAuth(http.HandlerFunc(catalogueHandler.AddBookContent)))
 	mux.Handle("DELETE /api/v1/books/{book_id}/contents/{contained_id}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveBookContent)))

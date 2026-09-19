@@ -34,6 +34,9 @@ func NewMangaDexProvider() *MangaDexProvider {
 func (p *MangaDexProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
 		Name:         "mangadex",
+		Region:       "Worldwide",
+		Sends:        "The series name you search for",
+		DocsURL:      "https://api.mangadex.org/docs/",
 		DisplayName:  "MangaDex",
 		Description:  "Manga series metadata from MangaDex. Free, no API key required.",
 		RequiresKey:  false,

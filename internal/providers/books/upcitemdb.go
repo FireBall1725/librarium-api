@@ -42,6 +42,9 @@ func NewUPCitemdbProvider() *UPCitemdbProvider {
 func (p *UPCitemdbProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
 		Name:         "upcitemdb",
+		Region:       "Worldwide",
+		Sends:        "The UPC",
+		DocsURL:      "https://devs.upcitemdb.com/",
 		DisplayName:  "UPCitemdb",
 		Description:  "Looks up the UPC barcode on comics, manga and mass-market paperbacks that have no ISBN barcode. Free for 100 lookups a day without a key.",
 		RequiresKey:  false,
