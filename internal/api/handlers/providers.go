@@ -137,10 +137,53 @@ func (h *ProviderHandler) LookupISBN(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, results)
 }
 
+// LookupUPC godoc
+//
+// @Summary     Lookup book by UPC or EAN
+// @Description Queries every enabled provider that can look up a UPC-A or non-ISBN EAN-13 and returns per-provider results. Send 12 or 13 digits, plus the 5-digit add-on when the scanner read one: on comics the add-on picks the issue and the variant. A result that carries an ISBN can be added through the normal ISBN path.
+// @Tags        lookup
+// @Produce     json
+// @Security    BearerAuth
+// @Param       code  path      string  true  "UPC-A or EAN-13, 12 or 13 digits, optionally followed by a 5-digit add-on"
+// @Success     200   {array}   providers.BookResult
+// @Failure     400   {object}  object{error=string}
+// @Failure     401   {object}  object{error=string}
+// @Router      /lookup/upc/{code} [get]
+func (h *ProviderHandler) LookupUPC(w http.ResponseWriter, r *http.Request) {
+	code := r.PathValue("code")
+	if !isUPCOrEAN(code) {
+		respond.Error(w, http.StatusBadRequest, "code must be 12 or 13 digits, optionally followed by a 5-digit add-on")
+		return
+	}
+
+	results := h.svc.LookupUPC(r.Context(), code)
+	if results == nil {
+		results = []*providers.BookResult{}
+	}
+	respond.JSON(w, http.StatusOK, results)
+}
+
+// isUPCOrEAN checks the shape only. The check digit is the client's job, and a
+// provider that doesn't know the code just returns nothing. The add-on is
+// kept because a comic's 12 digits are shared by a whole run of issues.
+func isUPCOrEAN(code string) bool {
+	switch len(code) {
+	case 12, 13, 17, 18:
+	default:
+		return false
+	}
+	for _, c := range code {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // LookupISBNMerged godoc
 //
 // @Summary     Lookup ISBN merged
-// @Description Returns a single merged result across all providers with per-field source attribution.
+// @Description Asks every enabled provider at once and returns one merged result. Each field has a pre-selected value, the reason it was chosen (agreed, only, longest, most_detail, first), every provider that gave it, and the other values. Covers come largest first, and providers says who answered, who had no record and who missed the deadline.
 // @Tags        lookup
 // @Produce     json
 // @Security    BearerAuth
@@ -166,7 +209,7 @@ func (h *ProviderHandler) LookupISBNMerged(w http.ResponseWriter, r *http.Reques
 // GetProviderOrder godoc
 //
 // @Summary     Get provider priority order (admin)
-// @Description Returns the ordered list of provider names used when merging results.
+// @Description Returns the saved provider order. Kept for older clients; lookups no longer use it, each field is pre-selected from the answers.
 // @Tags        admin,providers
 // @Produce     json
 // @Security    BearerAuth
@@ -186,7 +229,7 @@ func (h *ProviderHandler) GetProviderOrder(w http.ResponseWriter, r *http.Reques
 // SetProviderOrder godoc
 //
 // @Summary     Set provider priority order (admin)
-// @Description Sets the ordered list of provider names used when merging results.
+// @Description Saves a provider order. Kept for older clients; lookups no longer use it, each field is pre-selected from the answers.
 // @Tags        admin,providers
 // @Accept      json
 // @Security    BearerAuth

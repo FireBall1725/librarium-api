@@ -63,7 +63,7 @@ internal/
   jobs/                  the unified job framework: kind registry and cron scheduler
   workers/               River workers for import, enrichment, AI suggestions
   providers/             book metadata sources: Open Library, Google Books, ISBNdb,
-                         Hardcover, ISFDB, MangaDex
+                         Hardcover, ISFDB, MangaDex, and UPCitemdb for UPCs
   ai/                    AI provider registry: Anthropic, OpenAI, Ollama
   auth/                  JWT issuing and verification, PAT handling
 docs/                    generated OpenAPI. Never hand-edit

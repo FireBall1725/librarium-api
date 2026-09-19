@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fireball1725/librarium-api/internal/models"
+	"github.com/fireball1725/librarium-api/internal/providers"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,6 +41,41 @@ type BookService struct {
 	covers       *repository.CoverRepo
 	suggestions  *repository.AISuggestionsRepo
 	coverPath    string
+
+	// answers and recent keep each provider's answer with a new edition. Both
+	// are optional; SetAnswerStore wires them.
+	answers *repository.EditionAnswerRepo
+	recent  func(code string) []*providers.BookResult
+}
+
+// SetAnswerStore lets a new edition keep the provider answers from the lookup
+// that found it. recent returns a recent lookup's answers for an ISBN or UPC.
+func (s *BookService) SetAnswerStore(answers *repository.EditionAnswerRepo, recent func(code string) []*providers.BookResult) {
+	s.answers, s.recent = answers, recent
+}
+
+// saveLookupAnswers stores the answers from the lookup that found this
+// edition, if there was one recently. Best effort: the book is already saved,
+// and missing answers only mean the Sources view offers to ask again.
+func (s *BookService) saveLookupAnswers(ctx context.Context, editionID uuid.UUID, e *EditionRequest) {
+	if s.answers == nil || s.recent == nil || e == nil {
+		return
+	}
+	codes := []string{e.ISBN13, e.ISBN10}
+	for _, id := range e.Identifiers {
+		codes = append(codes, id.Value)
+	}
+	for _, code := range codes {
+		if code == "" {
+			continue
+		}
+		if results := s.recent(code); len(results) > 0 {
+			if err := s.answers.Save(ctx, editionID, providers.BarcodeKey(code), results); err != nil {
+				slog.WarnContext(ctx, "saving lookup answers", "edition_id", editionID, "error", err)
+			}
+			return
+		}
+	}
 }
 
 func NewBookService(pool *pgxpool.Pool, books *repository.BookRepo, libraryBooks *repository.LibraryBookRepo, contributors *repository.ContributorRepo, editions *repository.EditionRepo, tags *repository.TagRepo, genres *repository.GenreRepo, covers *repository.CoverRepo, suggestions *repository.AISuggestionsRepo, coverPath string) *BookService {
@@ -84,8 +120,8 @@ type BookRequest struct {
 }
 
 func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.UUID, req BookRequest) (*models.Book, error) {
-	// If an ISBN is provided and already exists globally (in any library or
-	// floating), we reuse the existing book + edition and bump the copy count
+	// If an ISBN or other identifier is provided and already exists globally
+	// (in any library or floating), we reuse the existing book + edition and bump the copy count
 	// for *this* library via the junction. If this library didn't already
 	// hold the book, a copy gets recorded too.
 	if req.Edition != nil {
@@ -93,28 +129,31 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 		if isbn == "" {
 			isbn = req.Edition.ISBN10
 		}
-		if isbn != "" {
-			if existing, err := s.editions.FindByISBN(ctx, isbn); err == nil && existing != nil {
-				tx, txErr := s.pool.Begin(ctx)
-				if txErr != nil {
-					return nil, fmt.Errorf("beginning transaction: %w", txErr)
-				}
-				defer tx.Rollback(ctx)
-				if err := s.libraryBooks.AddBookToLibrary(ctx, tx, libraryID, existing.BookID, &callerID); err != nil {
-					return nil, err
-				}
-				if err := tx.Commit(ctx); err != nil {
-					return nil, fmt.Errorf("committing transaction: %w", err)
-				}
-				if incrErr := s.editions.IncrementCopyCount(ctx, libraryID, existing.ID); incrErr != nil {
-					return nil, fmt.Errorf("incrementing copy count: %w", incrErr)
-				}
-				return s.books.FindByID(ctx, existing.BookID, callerID, libraryID)
+		existing := s.findExistingEdition(ctx, isbn, req.Edition.Identifiers)
+		if existing != nil {
+			tx, txErr := s.pool.Begin(ctx)
+			if txErr != nil {
+				return nil, fmt.Errorf("beginning transaction: %w", txErr)
 			}
+			defer tx.Rollback(ctx)
+			if err := s.libraryBooks.AddBookToLibrary(ctx, tx, libraryID, existing.BookID, &callerID); err != nil {
+				return nil, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, fmt.Errorf("committing transaction: %w", err)
+			}
+			if incrErr := s.editions.IncrementCopyCount(ctx, libraryID, existing.ID); incrErr != nil {
+				return nil, fmt.Errorf("incrementing copy count: %w", incrErr)
+			}
+			// The lookup that found it is as good for the existing edition,
+			// and fills in answers for editions added before they were kept.
+			s.saveLookupAnswers(ctx, existing.ID, req.Edition)
+			return s.books.FindByID(ctx, existing.BookID, callerID, libraryID)
 		}
 	}
 
 	bookID := uuid.New()
+	var newEditionID uuid.UUID
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -150,12 +189,16 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 	if req.Edition != nil {
 		e := req.Edition
 		editionID := uuid.New()
+		newEditionID = editionID
 		if err := s.editions.Create(ctx, tx, editionID, bookID,
 			e.Format, e.Language, e.EditionName, e.Narrator, e.Publisher,
 			e.PublishDate, e.PublishPrecision, e.ISBN10, e.ISBN13, e.Description,
 			e.DurationSeconds, e.PageCount, e.IsPrimary,
 			e.NarratorContributorID,
 		); err != nil {
+			return nil, err
+		}
+		if err := repository.AddIdentifiersInTx(ctx, tx, editionID, e.Identifiers); err != nil {
 			return nil, err
 		}
 		// Record that this library holds 1 copy of this new edition.
@@ -172,8 +215,28 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
+	if newEditionID != uuid.Nil {
+		s.saveLookupAnswers(ctx, newEditionID, req.Edition)
+	}
 
 	return s.books.FindByID(ctx, bookID, callerID, libraryID)
+}
+
+// findExistingEdition returns the edition a new book should reuse: the one
+// with this ISBN, else the one already holding any of the given identifiers,
+// so a comic scanned into a second library by its UPC isn't added twice.
+func (s *BookService) findExistingEdition(ctx context.Context, isbn string, ids []models.EditionIdentifierInput) *models.BookEdition {
+	if isbn != "" {
+		if e, err := s.editions.FindByISBN(ctx, isbn); err == nil {
+			return e
+		}
+	}
+	for _, id := range ids {
+		if e, err := s.editions.FindByIdentifier(ctx, id.Scheme, id.Value); err == nil {
+			return e
+		}
+	}
+	return nil
 }
 
 // GetBook returns one book with caller-scoped fields hydrated. callerID
@@ -209,6 +272,14 @@ func (s *BookService) hydrateLibraries(ctx context.Context, books []*models.Book
 
 func (s *BookService) FindBookByISBN(ctx context.Context, libraryID uuid.UUID, isbn string) (*models.Book, error) {
 	edition, err := s.editions.FindByISBNInLibrary(ctx, libraryID, isbn)
+	if err != nil {
+		return nil, err
+	}
+	return s.books.FindByID(ctx, edition.BookID, uuid.Nil, libraryID)
+}
+
+func (s *BookService) FindBookByIdentifier(ctx context.Context, libraryID uuid.UUID, scheme, value string) (*models.Book, error) {
+	edition, err := s.editions.FindByIdentifierInLibrary(ctx, libraryID, scheme, value)
 	if err != nil {
 		return nil, err
 	}
@@ -320,6 +391,9 @@ type EditionRequest struct {
 	IsPrimary             bool
 	AcquiredAt            *time.Time
 	NarratorContributorID *uuid.UUID
+	// Identifiers are extra ones such as a scanned UPC, saved with a new
+	// edition. Updates ignore them; use the edition identifiers endpoints.
+	Identifiers []models.EditionIdentifierInput
 }
 
 func (s *BookService) ListEditions(ctx context.Context, bookID uuid.UUID) ([]*models.BookEdition, error) {
@@ -347,6 +421,9 @@ func (s *BookService) CreateEdition(ctx context.Context, bookID uuid.UUID, req E
 	); err != nil {
 		return nil, err
 	}
+	if err := repository.AddIdentifiersInTx(ctx, tx, editionID, req.Identifiers); err != nil {
+		return nil, err
+	}
 
 	if req.NarratorContributorID != nil {
 		if err := s.books.EnsureBookContributor(ctx, tx, bookID, *req.NarratorContributorID, "narrator"); err != nil {
@@ -357,6 +434,7 @@ func (s *BookService) CreateEdition(ctx context.Context, bookID uuid.UUID, req E
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
+	s.saveLookupAnswers(ctx, editionID, &req)
 
 	return s.editions.FindByID(ctx, editionID)
 }

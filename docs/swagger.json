@@ -1385,7 +1385,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the ordered list of provider names used when merging results.",
+                "description": "Returns the saved provider order. Kept for older clients; lookups no longer use it, each field is pre-selected from the answers.",
                 "produces": [
                     "application/json"
                 ],
@@ -1439,7 +1439,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sets the ordered list of provider names used when merging results.",
+                "description": "Saves a provider order. Kept for older clients; lookups no longer use it, each field is pre-selected from the answers.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4815,6 +4815,195 @@
                 }
             }
         },
+        "/editions/{edition_id}/sources": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every stored provider answer for the edition, and the same merged view a lookup returns, built from those answers without asking any provider. Switching a field to another answer is a normal edition update.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalogue"
+                ],
+                "summary": "What each provider said about a printing",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Edition UUID",
+                        "name": "edition_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "answers": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "fetched_at": {
+                                                "type": "string"
+                                            },
+                                            "lookup_key": {
+                                                "type": "string"
+                                            },
+                                            "provider": {
+                                                "type": "string"
+                                            },
+                                            "result": {
+                                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult"
+                                            }
+                                        }
+                                    }
+                                },
+                                "has_answers": {
+                                    "type": "boolean"
+                                },
+                                "merged": {
+                                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.MergedBookResult"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/editions/{edition_id}/sources/{provider}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Looks the edition's ISBN up with one provider and stores its answer next to the others, replacing that provider's earlier one. For a provider turned on after the book was added. found is false when the provider has no record.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalogue"
+                ],
+                "summary": "Ask one provider about a printing now",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Edition UUID",
+                        "name": "edition_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider name, e.g. open_library",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "answers": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "fetched_at": {
+                                                "type": "string"
+                                            },
+                                            "lookup_key": {
+                                                "type": "string"
+                                            },
+                                            "provider": {
+                                                "type": "string"
+                                            },
+                                            "result": {
+                                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult"
+                                            }
+                                        }
+                                    }
+                                },
+                                "found": {
+                                    "type": "boolean"
+                                },
+                                "has_answers": {
+                                    "type": "boolean"
+                                },
+                                "merged": {
+                                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.MergedBookResult"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/enrichment-batches": {
             "get": {
                 "security": [
@@ -5963,6 +6152,87 @@
                 }
             }
         },
+        "/libraries/{library_id}/book-by-identifier": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the book in this library whose edition carries the given identifier, such as a UPC or EAN scanned from a comic or paperback.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Find book by identifier",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Identifier scheme, e.g. upc or ean",
+                        "name": "type",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Identifier value",
+                        "name": "value",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/libraries/{library_id}/book-by-isbn/{isbn}": {
             "get": {
                 "security": [
@@ -6131,6 +6401,17 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "properties": {
@@ -7244,6 +7525,17 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "properties": {
@@ -12745,7 +13037,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a single merged result across all providers with per-field source attribution.",
+                "description": "Asks every enabled provider at once and returns one merged result. Each field has a pre-selected value, the reason it was chosen (agreed, only, longest, most_detail, first), every provider that gave it, and the other values. Covers come largest first, and providers says who answered, who had no record and who missed the deadline.",
                 "produces": [
                     "application/json"
                 ],
@@ -12825,6 +13117,65 @@
                             "type": "array",
                             "items": {
                                 "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.SeriesResult"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/lookup/upc/{code}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Queries every enabled provider that can look up a UPC-A or non-ISBN EAN-13 and returns per-provider results. Send 12 or 13 digits, plus the 5-digit add-on when the scanner read one: on comics the add-on picks the issue and the variant. A result that carries an ISBN can be added through the normal ISBN path.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lookup"
+                ],
+                "summary": "Lookup book by UPC or EAN",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UPC-A or EAN-13, 12 or 13 digits, optionally followed by a 5-digit add-on",
+                        "name": "code",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult"
                             }
                         }
                     },
@@ -16057,6 +16408,10 @@
                     "description": "YYYY-MM-DD",
                     "type": "string"
                 },
+                "publish_date_precision": {
+                    "description": "PublishDatePrecision is year, month or day: how much of publish_date is real.",
+                    "type": "string"
+                },
                 "publisher": {
                     "type": "string"
                 },
@@ -17078,11 +17433,17 @@
                 "cover_url": {
                     "type": "string"
                 },
+                "height": {
+                    "type": "integer"
+                },
                 "source": {
                     "type": "string"
                 },
                 "source_display": {
                     "type": "string"
+                },
+                "width": {
+                    "type": "integer"
                 }
             }
         },
@@ -17094,6 +17455,13 @@
                 },
                 "source_display": {
                     "type": "string"
+                },
+                "sources": {
+                    "description": "Sources is every provider that gave this value, first to answer first.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "value": {
                     "type": "string"
@@ -17109,11 +17477,20 @@
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldOption"
                     }
                 },
+                "reason": {
+                    "type": "string"
+                },
                 "source": {
                     "type": "string"
                 },
                 "source_display": {
                     "type": "string"
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "value": {
                     "type": "string"
@@ -17138,8 +17515,11 @@
                         "type": "string"
                     }
                 },
+                "cover_reason": {
+                    "type": "string"
+                },
                 "covers": {
-                    "description": "Covers lists available cover images from each provider, in priority order.",
+                    "description": "Covers lists each distinct cover, pre-selected one first: the largest\nonce sizes are known, else in the order the providers answered.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.CoverOption"
@@ -17160,6 +17540,13 @@
                 "page_count": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"
                 },
+                "providers": {
+                    "description": "Providers says what each asked provider did, when the lookup reported it.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.ProviderStatus"
+                    }
+                },
                 "publish_date": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"
                 },
@@ -17171,6 +17558,24 @@
                 },
                 "title": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_providers.ProviderStatus": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "millis": {
+                    "description": "Millis is how long it took to answer; 0 when it missed the deadline.",
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 }
             }
         },
@@ -17669,10 +18074,16 @@
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.ConfigField"
                     }
                 },
+                "contributed_by": {
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },
                 "display_name": {
+                    "type": "string"
+                },
+                "docs_url": {
                     "type": "string"
                 },
                 "enabled": {
@@ -17687,11 +18098,30 @@
                 "help_url": {
                     "type": "string"
                 },
+                "kind": {
+                    "type": "string"
+                },
+                "languages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "listed": {
+                    "description": "Listed is whether the provider shows on the admin Lookups list rather\nthan only in the catalogue. Kept as the \"listed\" config key, which no\nprovider reads; a provider that's on counts as listed unless removed.",
+                    "type": "boolean"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "region": {
                     "type": "string"
                 },
                 "requires_key": {
                     "type": "boolean"
+                },
+                "sends": {
+                    "type": "string"
                 }
             }
         },

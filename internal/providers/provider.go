@@ -14,6 +14,7 @@ import (
 // Capability names.
 const (
 	CapBookISBN      = "book_isbn"
+	CapBookUPC       = "book_upc"
 	CapBookSearch    = "book_search"
 	CapSeriesName    = "series_name"
 	CapSeriesVolumes = "series_volumes"
@@ -50,7 +51,38 @@ type ProviderInfo struct {
 	// leave this nil and rely on RequiresKey; the settings page falls back
 	// to the existing single-API-key form in that case.
 	ConfigFields []ConfigField
+	// TestISBN overrides the ISBN the admin "Test" button looks up to prove
+	// the provider is reachable. Optional — leave empty to use the default,
+	// globally-available test ISBN. A region-specific provider (e.g. Finna,
+	// which only carries Finnish library holdings) must set this to an ISBN it
+	// actually has, or the test always reports a false negative.
+	TestISBN string
+
+	// Catalogue details, so the admin page can search and filter providers.
+	// All optional.
+
+	// Kind is KindData for metadata or KindBuy for a Where to buy link.
+	// Empty means KindData.
+	Kind string
+	// Region is where its data is strongest, e.g. "Worldwide" or "Finland".
+	Region string
+	// Languages are the book languages it covers best, as ISO 639-1 codes.
+	// Empty means no particular language.
+	Languages []string
+	// Sends says what leaves the server when it's asked.
+	Sends string
+	// ContributedBy is the GitHub handle of a community contributor; empty
+	// for providers built in-house.
+	ContributedBy string
+	// DocsURL links to the provider's own API documentation.
+	DocsURL string
 }
+
+// Provider kinds for the catalogue.
+const (
+	KindData = "data"
+	KindBuy  = "buy"
+)
 
 // BookResult is a normalised book record returned by a BookISBNProvider.
 type BookResult struct {
@@ -111,6 +143,17 @@ type MetadataProvider interface {
 type BookISBNProvider interface {
 	MetadataProvider
 	LookupByISBN(ctx context.Context, isbn string) (*BookResult, error)
+}
+
+// BookUPCProvider can look up a book by the UPC-A or non-ISBN EAN-13 printed on
+// comics, manga and cheaper paperbacks. The code arrives as 12 or 13 digits,
+// followed by the 5-digit add-on when the scanner read one. Keep the add-on
+// where the source stores it: on a comic it picks the issue and the variant,
+// and the bare 12 digits match a whole run. Same timeout rule as
+// BookISBNProvider.
+type BookUPCProvider interface {
+	MetadataProvider
+	LookupByUPC(ctx context.Context, code string) (*BookResult, error)
 }
 
 // BookSearchProvider can search for books by freetext query.

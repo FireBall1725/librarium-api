@@ -36,6 +36,9 @@ func NewHardcoverProvider() *HardcoverProvider {
 func (p *HardcoverProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
 		Name:         "hardcover",
+		Region:       "Worldwide",
+		Sends:        "The ISBN, or your search text",
+		DocsURL:      "https://hardcover.app/account/api",
 		DisplayName:  "Hardcover",
 		Description:  "Book metadata from Hardcover.app. Free account required. 60 requests/minute.",
 		RequiresKey:  true,

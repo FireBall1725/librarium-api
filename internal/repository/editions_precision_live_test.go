@@ -103,6 +103,49 @@ func TestEditionPublishPrecisionRoundTrip(t *testing.T) {
 			assertPrecision(t, "update", got, nil)
 		})
 	}
+
+	// An update that keeps the date without stating a precision, which is what
+	// metadata enrichment sends, keeps the stored one. It used to reset a
+	// year-only date to "day", so 1965 started reading as 1 January 1965.
+	t.Run("same date, unstated precision", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		editionID := uuid.New()
+		year := time.Date(1965, 1, 1, 0, 0, 0, 0, time.UTC)
+		if err := repo.Create(ctx, tx, editionID, bookID,
+			"paperback", "en", "", "", "", &year, models.DatePrecisionYear,
+			"", "", "", nil, nil, false, nil); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		read := func(stage string, want any) {
+			var got *string
+			if err := tx.QueryRow(ctx,
+				`SELECT publish_date_precision FROM book_editions WHERE id = $1`, editionID).Scan(&got); err != nil {
+				t.Fatalf("reading back: %v", err)
+			}
+			assertPrecision(t, stage, got, want)
+		}
+
+		if err := repo.Update(ctx, tx, editionID,
+			"paperback", "en", "", "", "Ace", &year, "",
+			"", "", "", nil, nil, false, nil); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		read("same date", "year")
+
+		// A new date with no precision stated is still a full day.
+		day := time.Date(1965, 8, 1, 0, 0, 0, 0, time.UTC)
+		if err := repo.Update(ctx, tx, editionID,
+			"paperback", "en", "", "", "Ace", &day, "",
+			"", "", "", nil, nil, false, nil); err != nil {
+			t.Fatalf("update with a new date: %v", err)
+		}
+		read("new date", "day")
+	})
 }
 
 func assertPrecision(t *testing.T, stage string, got *string, want any) {

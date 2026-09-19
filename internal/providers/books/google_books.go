@@ -33,6 +33,9 @@ func NewGoogleBooksProvider() *GoogleBooksProvider {
 func (p *GoogleBooksProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
 		Name:         "google_books",
+		Region:       "Worldwide",
+		Sends:        "The ISBN, or your search text",
+		DocsURL:      "https://developers.google.com/books/docs/v1/using",
 		DisplayName:  "Google Books",
 		Description:  "Google's book metadata API. Free tier: 1,000 requests/day with an API key.",
 		RequiresKey:  true,

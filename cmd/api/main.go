@@ -151,6 +151,8 @@ func main() {
 	registry.Register(bookProviders.NewISBNdbProvider())
 	registry.Register(bookProviders.NewHardcoverProvider())
 	registry.Register(bookProviders.NewISFDBProvider())
+	registry.Register(bookProviders.NewFinnaProvider())
+	registry.Register(bookProviders.NewUPCitemdbProvider())
 	registry.Register(mangaProviders.NewMangaDexProvider())
 	providerSvc := service.NewProviderService(registry, settingsRepo)
 	if err := providerSvc.LoadAll(baseCtx); err != nil {
@@ -217,6 +219,7 @@ func main() {
 		providerSvc,
 		workerBookSvc,
 	)
+	metadataWorker.SetAnswers(repository.NewEditionAnswerRepo(pool))
 	aiMetadataRepo := repository.NewAIMetadataRepo(pool)
 	aiMetadataSvc := service.NewAIMetadataService(aiRegistry, aiMetadataRepo)
 	enrichmentBatchWorker := workers.NewEnrichmentBatchWorker(

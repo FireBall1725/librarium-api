@@ -217,24 +217,26 @@ type ContributorItem struct {
 
 // EditionResponse is returned by edition endpoints.
 type EditionResponse struct {
-	ID              uuid.UUID `json:"id"`
-	BookID          uuid.UUID `json:"book_id"`
-	Format          string    `json:"format"`
-	Language        string    `json:"language"`
-	EditionName     string    `json:"edition_name"`
-	Narrator        string    `json:"narrator"`
-	Publisher       string    `json:"publisher"`
-	PublishDate     *string   `json:"publish_date"` // YYYY-MM-DD
-	ISBN10          string    `json:"isbn_10"`
-	ISBN13          string    `json:"isbn_13"`
-	CopyCount       int       `json:"copy_count"`
-	Description     string    `json:"description"`
-	IsPrimary       bool      `json:"is_primary"`
-	PageCount       *int      `json:"page_count"`
-	DurationSeconds *int      `json:"duration_seconds"`
-	AcquiredAt      *string   `json:"acquired_at"` // YYYY-MM-DD
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID          uuid.UUID `json:"id"`
+	BookID      uuid.UUID `json:"book_id"`
+	Format      string    `json:"format"`
+	Language    string    `json:"language"`
+	EditionName string    `json:"edition_name"`
+	Narrator    string    `json:"narrator"`
+	Publisher   string    `json:"publisher"`
+	PublishDate *string   `json:"publish_date"` // YYYY-MM-DD
+	// PublishDatePrecision is year, month or day: how much of publish_date is real.
+	PublishDatePrecision *string   `json:"publish_date_precision"`
+	ISBN10               string    `json:"isbn_10"`
+	ISBN13               string    `json:"isbn_13"`
+	CopyCount            int       `json:"copy_count"`
+	Description          string    `json:"description"`
+	IsPrimary            bool      `json:"is_primary"`
+	PageCount            *int      `json:"page_count"`
+	DurationSeconds      *int      `json:"duration_seconds"`
+	AcquiredAt           *string   `json:"acquired_at"` // YYYY-MM-DD
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // InteractionResponse is returned by book reading-progress endpoints.

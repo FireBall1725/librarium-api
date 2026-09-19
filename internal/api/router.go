@@ -116,6 +116,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	apiTokenRepo := repository.NewAPITokenRepo(db)
 
 	providerHandler := handlers.NewProviderHandler(providerSvc)
+	editionAnswerRepo := repository.NewEditionAnswerRepo(db)
+	bookSvc.SetAnswerStore(editionAnswerRepo, providerSvc.RecentAnswers)
+	sourcesHandler := handlers.NewSourcesHandler(editionRepo, editionAnswerRepo, providerSvc)
 	aiHandler := handlers.NewAIHandler(aiSvc)
 	aiUserHandler := handlers.NewAIUserHandler(aiUserSvc)
 	jobsHandler := handlers.NewJobsHandler(jobSvc)
@@ -266,6 +269,8 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.ListEditionIdentifiers)))
 	mux.Handle("POST /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.AddEditionIdentifier)))
 	mux.Handle("DELETE /api/v1/editions/{edition_id}/identifiers/{scheme}/{value}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveEditionIdentifier)))
+	mux.Handle("GET /api/v1/editions/{edition_id}/sources", requireAuth(http.HandlerFunc(sourcesHandler.GetEditionSources)))
+	mux.Handle("POST /api/v1/editions/{edition_id}/sources/{provider}", requireAuth(http.HandlerFunc(sourcesHandler.AskEditionSource)))
 	mux.Handle("GET /api/v1/books/{book_id}/contents", requireAuth(http.HandlerFunc(catalogueHandler.ListBookContents)))
 	mux.Handle("POST /api/v1/books/{book_id}/contents", requireAuth(http.HandlerFunc(catalogueHandler.AddBookContent)))
 	mux.Handle("DELETE /api/v1/books/{book_id}/contents/{contained_id}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveBookContent)))
@@ -367,6 +372,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	// Lookup (any authenticated user)
 	mux.Handle("GET /api/v1/lookup/isbn/{isbn}", requireAuth(http.HandlerFunc(providerHandler.LookupISBN)))
 	mux.Handle("GET /api/v1/lookup/isbn/{isbn}/merged", requireAuth(http.HandlerFunc(providerHandler.LookupISBNMerged)))
+	mux.Handle("GET /api/v1/lookup/upc/{code}", requireAuth(http.HandlerFunc(providerHandler.LookupUPC)))
 	mux.Handle("GET /api/v1/lookup/books", requireAuth(http.HandlerFunc(providerHandler.SearchBooks)))
 	mux.Handle("GET /api/v1/lookup/series", requireAuth(http.HandlerFunc(providerHandler.SearchSeries)))
 	mux.Handle("GET /api/v1/lookup/contributors", requireAuth(http.HandlerFunc(contributorHandler.SearchExternalContributors)))
@@ -419,6 +425,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 
 	// Books
 	mux.Handle("GET /api/v1/libraries/{library_id}/book-by-isbn/{isbn}", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.FindByISBN)))
+	mux.Handle("GET /api/v1/libraries/{library_id}/book-by-identifier", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.FindByIdentifier)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/books/letters", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.ListBookLetters)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/books/fingerprint", requireLibraryPerm("books:read", http.HandlerFunc(bookHandler.GetBookFingerprint)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/books/bulk/enrich", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.BulkEnrich)))

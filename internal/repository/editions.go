@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/google/uuid"
@@ -32,7 +33,8 @@ const editionColumns = `
 	COALESCE(isbn_10,''), COALESCE(isbn_13,''), COALESCE(description,''),
 	duration_seconds, page_count, is_primary, created_at, updated_at,
 	narrator_contributor_id,
-	(SELECT name FROM contributors WHERE id = narrator_contributor_id)
+	(SELECT name FROM contributors WHERE id = narrator_contributor_id),
+	publish_date_precision
 `
 
 // beEditionColumns is editionColumns with every column prefixed by the "be"
@@ -45,7 +47,8 @@ const beEditionColumns = `
 	COALESCE(be.isbn_10,''), COALESCE(be.isbn_13,''), COALESCE(be.description,''),
 	be.duration_seconds, be.page_count, be.is_primary, be.created_at, be.updated_at,
 	be.narrator_contributor_id,
-	(SELECT name FROM contributors WHERE id = be.narrator_contributor_id)
+	(SELECT name FROM contributors WHERE id = be.narrator_contributor_id),
+	be.publish_date_precision
 `
 
 func (r *EditionRepo) ListByBook(ctx context.Context, bookID uuid.UUID) ([]*models.BookEdition, error) {
@@ -99,7 +102,9 @@ func (r *EditionRepo) Create(ctx context.Context, tx pgx.Tx, id, bookID uuid.UUI
 // Update rewrites an edition. The precision is derived from the date on every
 // write rather than left alone, because clearing a date on a row that had one
 // would otherwise leave a precision behind and violate
-// editions_precision_needs_date.
+// editions_precision_needs_date. A caller that keeps the same date without
+// stating a precision keeps the stored one, so a year-only date doesn't turn
+// into 1 January because someone saved the page count.
 func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, publishPrecision models.DatePrecision, isbn10, isbn13, description string, durationSeconds, pageCount any, isPrimary bool, narratorContributorID any) error {
 	const q = `
 		UPDATE book_editions
@@ -109,7 +114,12 @@ func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, forma
 		    narrator                 = NULLIF($5, ''),
 		    publisher                = NULLIF($6, ''),
 		    publish_date             = $7,
-		    publish_date_precision   = CASE WHEN $7::date IS NULL THEN NULL ELSE $8 END,
+		    publish_date_precision   = CASE
+		                                   WHEN $7::date IS NULL THEN NULL
+		                                   WHEN $8 <> '' THEN $8
+		                                   WHEN publish_date = $7::date THEN COALESCE(publish_date_precision, 'day')
+		                                   ELSE 'day'
+		                               END,
 		    isbn_10                  = NULLIF($9, ''),
 		    isbn_13                  = NULLIF($10, ''),
 		    description              = NULLIF($11, ''),
@@ -118,7 +128,7 @@ func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, forma
 		    is_primary               = $14,
 		    narrator_contributor_id  = $15
 		WHERE id = $1`
-	_, err := tx.Exec(ctx, q, id, format, language, editionName, narrator, publisher, publishDate, precisionOrDay(publishPrecision), isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
+	_, err := tx.Exec(ctx, q, id, format, language, editionName, narrator, publisher, publishDate, string(publishPrecision), isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
 	if err != nil {
 		return fmt.Errorf("updating edition: %w", err)
 	}
@@ -145,6 +155,7 @@ func scanEdition(s scanner) (*models.BookEdition, error) {
 		pgPageCount             pgtype.Int4
 		pgNarratorContributorID pgtype.UUID
 		pgNarratorContribName   pgtype.Text
+		pgPrecision             pgtype.Text
 		e                       models.BookEdition
 	)
 	err := s.Scan(
@@ -153,6 +164,7 @@ func scanEdition(s scanner) (*models.BookEdition, error) {
 		&e.ISBN10, &e.ISBN13, &e.Description,
 		&pgDuration, &pgPageCount, &e.IsPrimary, &e.CreatedAt, &e.UpdatedAt,
 		&pgNarratorContributorID, &pgNarratorContribName,
+		&pgPrecision,
 	)
 	if err != nil {
 		return nil, err
@@ -177,6 +189,9 @@ func scanEdition(s scanner) (*models.BookEdition, error) {
 	}
 	if pgNarratorContribName.Valid {
 		e.NarratorContributorName = pgNarratorContribName.String
+	}
+	if pgPrecision.Valid {
+		e.PublishDatePrecision = models.DatePrecision(pgPrecision.String)
 	}
 	return &e, nil
 }
@@ -250,6 +265,45 @@ func (r *EditionRepo) FindByISBNInLibrary(ctx context.Context, libraryID uuid.UU
 	}
 	if err != nil {
 		return nil, fmt.Errorf("finding edition by isbn in library: %w", err)
+	}
+	return e, nil
+}
+
+// FindByIdentifier is FindByISBN for any identifier scheme: the edition
+// holding it anywhere, regardless of library.
+func (r *EditionRepo) FindByIdentifier(ctx context.Context, scheme, value string) (*models.BookEdition, error) {
+	q := `SELECT ` + beEditionColumns + `
+		FROM book_editions be
+		JOIN edition_identifiers ei ON ei.edition_id = be.id
+		WHERE ei.scheme = $1 AND ei.value = $2`
+	e, err := scanEdition(r.db.QueryRow(ctx, q, normaliseScheme(scheme), strings.TrimSpace(value)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finding edition by identifier: %w", err)
+	}
+	return e, nil
+}
+
+// FindByIdentifierInLibrary is FindByISBNInLibrary for any identifier scheme,
+// read from edition_identifiers. It is how a scanned UPC or EAN finds a book
+// already on the shelf, since neither has a column of its own.
+func (r *EditionRepo) FindByIdentifierInLibrary(ctx context.Context, libraryID uuid.UUID, scheme, value string) (*models.BookEdition, error) {
+	q := `SELECT ` + beEditionColumns + `
+		FROM book_editions be
+		WHERE EXISTS (SELECT 1 FROM edition_identifiers ei
+		               WHERE ei.edition_id = be.id AND ei.scheme = $2 AND ei.value = $3)
+		  AND EXISTS (SELECT 1 FROM copies c
+		               WHERE c.edition_id = be.id AND c.library_id = $1
+		                 AND c.deleted_at IS NULL)
+		LIMIT 1`
+	e, err := scanEdition(r.db.QueryRow(ctx, q, libraryID, normaliseScheme(scheme), strings.TrimSpace(value)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finding edition by identifier in library: %w", err)
 	}
 	return e, nil
 }

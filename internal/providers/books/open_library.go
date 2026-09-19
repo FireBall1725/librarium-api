@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fireball1725/librarium-api/internal/providers"
@@ -22,21 +23,31 @@ import (
 // Two requests are made concurrently per lookup:
 //  1. Books API (jscmd=data) — author names, cover URLs, page count, ISBNs
 //  2. Edition JSON + Works JSON — description, language, publish date
+//
+// The Books API started answering 404 for every ISBN around 2026-09-18 while
+// the edition JSON kept working, so the edition alone is enough to build a
+// result; the Books API only adds to it when it answers.
 type OpenLibraryProvider struct {
 	base
 	client *http.Client
+	// baseURL is a field so tests can point it at an httptest server.
+	baseURL string
 }
 
 func NewOpenLibraryProvider() *OpenLibraryProvider {
 	return &OpenLibraryProvider{
-		base:   base{enabled: true},
-		client: &http.Client{Timeout: 15 * time.Second},
+		base:    base{enabled: true},
+		client:  &http.Client{Timeout: 15 * time.Second},
+		baseURL: "https://openlibrary.org",
 	}
 }
 
 func (p *OpenLibraryProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
 		Name:         "open_library",
+		Region:       "Worldwide",
+		Sends:        "The ISBN, or your search text",
+		DocsURL:      "https://openlibrary.org/developers/api",
 		DisplayName:  "Open Library",
 		Description:  "Free book metadata from the Internet Archive. No API key required.",
 		RequiresKey:  false,
@@ -67,7 +78,7 @@ func (p *OpenLibraryProvider) LookupByISBN(ctx context.Context, isbn string) (*p
 
 	// Request 1: Books API (jscmd=data) — author names, covers, identifiers
 	go func() {
-		url := fmt.Sprintf("https://openlibrary.org/api/books?bibkeys=ISBN:%s&jscmd=data&format=json", isbn)
+		url := fmt.Sprintf("%s/api/books?bibkeys=ISBN:%s&jscmd=data&format=json", p.baseURL, isbn)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			dataCh <- dataOut{nil, err}
@@ -79,6 +90,10 @@ func (p *OpenLibraryProvider) LookupByISBN(ctx context.Context, isbn string) (*p
 			return
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			dataCh <- dataOut{nil, nil}
+			return
+		}
 		if resp.StatusCode != http.StatusOK {
 			dataCh <- dataOut{nil, fmt.Errorf("open library jscmd=data: status %d", resp.StatusCode)}
 			return
@@ -97,7 +112,7 @@ func (p *OpenLibraryProvider) LookupByISBN(ctx context.Context, isbn string) (*p
 
 	// Request 2: Edition JSON — work key, language, publish date (sometimes more complete)
 	go func() {
-		url := fmt.Sprintf("https://openlibrary.org/isbn/%s.json", isbn)
+		url := fmt.Sprintf("%s/isbn/%s.json", p.baseURL, isbn)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			edCh <- edOut{nil, err}
@@ -124,11 +139,13 @@ func (p *OpenLibraryProvider) LookupByISBN(ctx context.Context, isbn string) (*p
 	bookRes := <-dataCh
 	edRes := <-edCh
 
-	if bookRes.err != nil {
-		return nil, bookRes.err
-	}
 	if bookRes.book == nil {
-		return nil, nil
+		// The Books API failed or had nothing; the edition JSON can still
+		// carry the whole lookup.
+		if edRes.ed != nil {
+			return p.resultFromEdition(ctx, isbn, edRes.ed), nil
+		}
+		return nil, bookRes.err
 	}
 
 	book := bookRes.book
@@ -222,7 +239,7 @@ func (p *OpenLibraryProvider) SearchBooks(ctx context.Context, query string) ([]
 	params.Set("limit", "15")
 	params.Set("fields", "title,subtitle,author_name,publisher,first_publish_year,isbn,cover_i,language,subject")
 
-	apiURL := "https://openlibrary.org/search.json?" + params.Encode()
+	apiURL := p.baseURL + "/search.json?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, err
@@ -286,27 +303,140 @@ func (p *OpenLibraryProvider) SearchBooks(ctx context.Context, query string) ([]
 }
 
 func (p *OpenLibraryProvider) fetchWorkDescription(ctx context.Context, workKey string) string {
-	url := "https://openlibrary.org" + workKey + ".json"
+	desc, _ := p.fetchWork(ctx, workKey)
+	return desc
+}
+
+// fetchWork returns a work's description and its author keys. Some editions
+// carry no authors of their own and only the work says who wrote it.
+func (p *OpenLibraryProvider) fetchWork(ctx context.Context, workKey string) (string, []string) {
+	url := p.baseURL + workKey + ".json"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	resp, err := p.client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		return ""
+		return "", nil
 	}
 	defer resp.Body.Close()
 
 	var work struct {
 		Description any `json:"description"`
+		Authors     []struct {
+			Author olKey `json:"author"`
+		} `json:"authors"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&work); err != nil {
+		return "", nil
+	}
+	var keys []string
+	for _, a := range work.Authors {
+		if a.Author.Key != "" {
+			keys = append(keys, a.Author.Key)
+		}
+	}
+	return cleanDescription(olDescription(work.Description)), keys
+}
+
+// resultFromEdition builds a lookup result from the edition JSON alone, for
+// when the Books API doesn't answer. Author names and the description each
+// take one more request.
+func (p *OpenLibraryProvider) resultFromEdition(ctx context.Context, isbn string, ed *olEdition) *providers.BookResult {
+	result := &providers.BookResult{
+		Provider:        "open_library",
+		ProviderDisplay: "Open Library",
+		Title:           ed.Title,
+		Subtitle:        ed.Subtitle,
+		PublishDate:     normalizeDate(ed.PublishDate),
+		Language:        olLanguage(ed.Languages),
+		Categories:      ed.Subjects,
+	}
+	if len(ed.Publishers) > 0 {
+		result.Publisher = ed.Publishers[0]
+	}
+	if len(ed.ISBN10) > 0 {
+		result.ISBN10 = ed.ISBN10[0]
+	}
+	if len(ed.ISBN13) > 0 {
+		result.ISBN13 = ed.ISBN13[0]
+	} else if len(isbn) == 13 {
+		result.ISBN13 = isbn
+	}
+	if ed.NumberOfPages > 0 {
+		n := ed.NumberOfPages
+		result.PageCount = &n
+	}
+	// A cover id of -1 is Open Library's "no cover".
+	if len(ed.Covers) > 0 && ed.Covers[0] > 0 {
+		result.CoverURL = fmt.Sprintf("https://covers.openlibrary.org/b/id/%d-M.jpg", ed.Covers[0])
+	}
+	// The work gives the description, and the authors when the edition has
+	// none. Edition authors and the work are asked for together so the lookup
+	// isn't the sum of them; a merged lookup only waits a few seconds for a
+	// provider after the first one answers.
+	var workAuthors []string
+	var wg sync.WaitGroup
+	if len(ed.Works) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result.Description, workAuthors = p.fetchWork(ctx, ed.Works[0].Key)
+		}()
+	}
+	editionAuthors := make([]string, len(ed.Authors))
+	for i, a := range ed.Authors {
+		wg.Add(1)
+		go func(i int, key string) {
+			defer wg.Done()
+			editionAuthors[i] = p.fetchAuthorName(ctx, key)
+		}(i, a.Key)
+	}
+	wg.Wait()
+
+	names := editionAuthors
+	if len(ed.Authors) == 0 && len(workAuthors) > 0 {
+		names = make([]string, len(workAuthors))
+		for i, key := range workAuthors {
+			wg.Add(1)
+			go func(i int, key string) {
+				defer wg.Done()
+				names[i] = p.fetchAuthorName(ctx, key)
+			}(i, key)
+		}
+		wg.Wait()
+	}
+	for _, n := range names {
+		if n != "" {
+			result.Authors = append(result.Authors, n)
+		}
+	}
+	return result
+}
+
+func (p *OpenLibraryProvider) fetchAuthorName(ctx context.Context, authorKey string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+authorKey+".json", nil)
+	if err != nil {
 		return ""
 	}
-	return cleanDescription(olDescription(work.Description))
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var author struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&author); err != nil {
+		return ""
+	}
+	return author.Name
 }
 
 // ─── Open Library API types ───────────────────────────────────────────────────
@@ -329,6 +459,9 @@ type olBook struct {
 // olEdition is the /isbn/{isbn}.json shape — has work key and sometimes more complete metadata.
 type olEdition struct {
 	Title         string   `json:"title"`
+	Subtitle      string   `json:"subtitle"`
+	Authors       []olKey  `json:"authors"`
+	Covers        []int    `json:"covers"`
 	PublishDate   string   `json:"publish_date"`
 	Publishers    []string `json:"publishers"`
 	Languages     []olKey  `json:"languages"`
@@ -424,16 +557,16 @@ func normalizeDate(s string) string {
 	if s == "" {
 		return ""
 	}
+	// A year or a month is returned as it is, not padded to the 1st: padding
+	// turned every "1987" into 1 January 1987, which nothing downstream could
+	// tell apart from a real date. ParseFlexDate reads all three shapes.
 	for _, layout := range []string{"2006-01-02", "2006-01"} {
 		if _, err := time.Parse(layout, s); err == nil {
-			if layout == "2006-01" {
-				return s + "-01"
-			}
 			return s
 		}
 	}
 	if reYearOnly.MatchString(s) {
-		return s + "-01-01"
+		return s
 	}
 	// "Month D, YYYY" or "Mon D, YYYY" (full or abbreviated month)
 	if m := reFullDate.FindStringSubmatch(s); m != nil {
@@ -451,7 +584,7 @@ func normalizeDate(s string) string {
 	if m := reMonthYear.FindStringSubmatch(s); m != nil {
 		for _, mfmt := range []string{"January 2006", "Jan 2006"} {
 			if t, err := time.Parse(mfmt, m[1]+" "+m[2]); err == nil {
-				return t.Format("2006-01-02")
+				return t.Format("2006-01")
 			}
 		}
 	}

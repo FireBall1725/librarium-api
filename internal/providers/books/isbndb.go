@@ -31,6 +31,9 @@ func NewISBNdbProvider() *ISBNdbProvider {
 func (p *ISBNdbProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
 		Name:         "isbndb",
+		Region:       "Worldwide",
+		Sends:        "The ISBN",
+		DocsURL:      "https://isbndb.com/apidocs/v2",
 		DisplayName:  "ISBNdb",
 		Description:  "Comprehensive ISBN database. Paid subscription required (~$14.99/month).",
 		RequiresKey:  true,
