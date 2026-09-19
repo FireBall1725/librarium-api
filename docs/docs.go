@@ -6708,7 +6708,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Adds a new book to the library.",
+                "description": "Adds a new book to the library. A contributor can be given by name instead of contributor_id; the server uses the person with exactly that name, or creates them. location_id files the copy this adds on a shelf in the same library (400 for a place in another library); it needs an edition.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6738,7 +6738,21 @@ const docTemplate = `{
                                 "contributors": {
                                     "type": "array",
                                     "items": {
-                                        "type": "object"
+                                        "type": "object",
+                                        "properties": {
+                                            "contributor_id": {
+                                                "type": "string"
+                                            },
+                                            "display_order": {
+                                                "type": "integer"
+                                            },
+                                            "name": {
+                                                "type": "string"
+                                            },
+                                            "role": {
+                                                "type": "string"
+                                            }
+                                        }
                                     }
                                 },
                                 "description": {
@@ -6752,6 +6766,9 @@ const docTemplate = `{
                                     "items": {
                                         "type": "string"
                                     }
+                                },
+                                "location_id": {
+                                    "type": "string"
                                 },
                                 "media_type_id": {
                                     "type": "string"

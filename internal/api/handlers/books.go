@@ -361,13 +361,13 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 // CreateBook godoc
 //
 // @Summary     Create a book
-// @Description Adds a new book to the library.
+// @Description Adds a new book to the library. A contributor can be given by name instead of contributor_id; the server uses the person with exactly that name, or creates them. location_id files the copy this adds on a shelf in the same library (400 for a place in another library); it needs an edition.
 // @Tags        books
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
 // @Param       library_id  path      string  true  "Library UUID"
-// @Param       body        body      object{title=string,subtitle=string,media_type_id=string,description=string,contributors=[]object,tag_ids=[]string,genre_ids=[]string,edition=object}  true  "Book details"
+// @Param       body        body      object{title=string,subtitle=string,media_type_id=string,description=string,contributors=[]object{contributor_id=string,name=string,role=string,display_order=integer},tag_ids=[]string,genre_ids=[]string,edition=object,location_id=string}  true  "Book details"
 // @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
@@ -389,6 +389,10 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 
 	book, err := h.svc.CreateBook(r.Context(), libraryID, claims.UserID, *req)
 	if respondIdentifierError(w, err) {
+		return
+	}
+	if errors.Is(err, service.ErrLocationElsewhere) {
+		respond.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err != nil {
@@ -689,12 +693,16 @@ type bookRequestBody struct {
 	Description  string `json:"description"`
 	Contributors []struct {
 		ContributorID string `json:"contributor_id"`
-		Role          string `json:"role"`
-		DisplayOrder  int    `json:"display_order"`
+		// Name, instead of contributor_id, finds or creates the person.
+		Name         string `json:"name"`
+		Role         string `json:"role"`
+		DisplayOrder int    `json:"display_order"`
 	} `json:"contributors"`
 	TagIDs   []string            `json:"tag_ids"`
 	GenreIDs []string            `json:"genre_ids"`
 	Edition  *editionRequestBody `json:"edition"`
+	// LocationID files the copy this adds on a shelf. Create only.
+	LocationID string `json:"location_id"`
 }
 
 func decodeBookRequest(r *http.Request) (*service.BookRequest, error) {
@@ -711,7 +719,12 @@ func decodeBookRequest(r *http.Request) (*service.BookRequest, error) {
 	}
 
 	contributors := make([]repository.ContributorInput, 0, len(body.Contributors))
+	var named []service.NamedContributor
 	for _, c := range body.Contributors {
+		if c.ContributorID == "" && strings.TrimSpace(c.Name) != "" {
+			named = append(named, service.NamedContributor{Name: c.Name, Role: c.Role, DisplayOrder: c.DisplayOrder})
+			continue
+		}
 		cid, err := uuid.Parse(c.ContributorID)
 		if err != nil {
 			return nil, errors.New("invalid contributor_id")
@@ -749,15 +762,26 @@ func decodeBookRequest(r *http.Request) (*service.BookRequest, error) {
 		}
 	}
 
+	var locationID *uuid.UUID
+	if body.LocationID != "" {
+		id, err := uuid.Parse(body.LocationID)
+		if err != nil {
+			return nil, errors.New("invalid location_id")
+		}
+		locationID = &id
+	}
+
 	return &service.BookRequest{
-		Title:        body.Title,
-		Subtitle:     body.Subtitle,
-		MediaTypeID:  mediaTypeID,
-		Description:  body.Description,
-		Contributors: contributors,
-		TagIDs:       tagIDs,
-		GenreIDs:     genreIDs,
-		Edition:      edReq,
+		Title:             body.Title,
+		Subtitle:          body.Subtitle,
+		MediaTypeID:       mediaTypeID,
+		Description:       body.Description,
+		Contributors:      contributors,
+		NamedContributors: named,
+		TagIDs:            tagIDs,
+		GenreIDs:          genreIDs,
+		Edition:           edReq,
+		LocationID:        locationID,
 	}, nil
 }
 
