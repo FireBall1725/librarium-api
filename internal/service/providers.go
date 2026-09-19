@@ -69,6 +69,16 @@ func (s *ProviderService) GetAllProviderStatus(ctx context.Context) ([]ProviderS
 			HelpURL:      info.HelpURL,
 			ConfigFields: info.ConfigFields,
 			Enabled:      p.Enabled(),
+
+			Kind:          info.Kind,
+			Region:        info.Region,
+			Languages:     info.Languages,
+			Sends:         info.Sends,
+			ContributedBy: info.ContributedBy,
+			DocsURL:       info.DocsURL,
+		}
+		if status.Kind == "" {
+			status.Kind = providers.KindData
 		}
 		status.Config, status.HasAPIKey = maskProviderConfig(info, cfg)
 
@@ -483,4 +493,11 @@ type ProviderStatus struct {
 	HasAPIKey    bool                    `json:"has_api_key"`
 	Config       map[string]string       `json:"config,omitempty"`
 	ConfigFields []providers.ConfigField `json:"config_fields,omitempty"`
+
+	Kind          string   `json:"kind"`
+	Region        string   `json:"region,omitempty"`
+	Languages     []string `json:"languages,omitempty"`
+	Sends         string   `json:"sends,omitempty"`
+	ContributedBy string   `json:"contributed_by,omitempty"`
+	DocsURL       string   `json:"docs_url,omitempty"`
 }

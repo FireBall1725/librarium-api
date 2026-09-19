@@ -91,13 +91,18 @@ func finnaVersion() string {
 
 func (p *FinnaProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
-		Name:         "finna",
-		DisplayName:  "Finna",
-		Description:  "Finnish libraries' shared catalogue (finna.fi), run by the National Library of Finland. Best source for Finnish-language books, which other providers cover poorly. Free, no API key.",
-		RequiresKey:  false,
-		Capabilities: []string{providers.CapBookISBN},
-		HelpText:     "Off by default — enable it here (no API key needed). Finna aggregates Finnish library holdings and is the strongest source for books published in Finland.",
-		HelpURL:      "https://www.finna.fi",
+		Name:          "finna",
+		Region:        "Finland",
+		Languages:     []string{"fi", "sv"},
+		Sends:         "The ISBN",
+		ContributedBy: "tonipuh",
+		DocsURL:       "https://www.finna.fi",
+		DisplayName:   "Finna",
+		Description:   "Finnish libraries' shared catalogue (finna.fi), run by the National Library of Finland. Best source for Finnish-language books, which other providers cover poorly. Free, no API key.",
+		RequiresKey:   false,
+		Capabilities:  []string{providers.CapBookISBN},
+		HelpText:      "Off by default — enable it here (no API key needed). Finna aggregates Finnish library holdings and is the strongest source for books published in Finland.",
+		HelpURL:       "https://www.finna.fi",
 		// The default probe ISBN is a UK edition Finna doesn't carry; test
 		// against a Finnish book (Alderton, *Kaikki mitä tiedän rakkaudesta*).
 		TestISBN: "9789510450741",

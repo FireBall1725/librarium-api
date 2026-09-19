@@ -40,10 +40,14 @@ func NewISFDBProvider() *ISFDBProvider {
 
 func (p *ISFDBProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
-		Name:        "isfdb",
-		DisplayName: "ISFDB",
-		Description: "Internet Speculative Fiction Database. Deep bibliographic data for SFF — especially older, small-press, and non-US editions other providers miss. Requires a self-hosted mirror (ISFDB has no public API).",
-		RequiresKey: false,
+		Name:          "isfdb",
+		Region:        "Worldwide",
+		Sends:         "Only to your own ISFDB mirror",
+		ContributedBy: "ennui2342",
+		DocsURL:       "https://github.com/ennui2342/isfdb-adapter",
+		DisplayName:   "ISFDB",
+		Description:   "Internet Speculative Fiction Database. Deep bibliographic data for SFF — especially older, small-press, and non-US editions other providers miss. Requires a self-hosted mirror (ISFDB has no public API).",
+		RequiresKey:   false,
 		Capabilities: []string{
 			providers.CapBookISBN,
 			providers.CapBookSearch,

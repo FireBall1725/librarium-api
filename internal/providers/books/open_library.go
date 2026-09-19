@@ -37,6 +37,9 @@ func NewOpenLibraryProvider() *OpenLibraryProvider {
 func (p *OpenLibraryProvider) Info() providers.ProviderInfo {
 	return providers.ProviderInfo{
 		Name:         "open_library",
+		Region:       "Worldwide",
+		Sends:        "The ISBN, or your search text",
+		DocsURL:      "https://openlibrary.org/developers/api",
 		DisplayName:  "Open Library",
 		Description:  "Free book metadata from the Internet Archive. No API key required.",
 		RequiresKey:  false,

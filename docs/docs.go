@@ -17887,10 +17887,16 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.ConfigField"
                     }
                 },
+                "contributed_by": {
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },
                 "display_name": {
+                    "type": "string"
+                },
+                "docs_url": {
                     "type": "string"
                 },
                 "enabled": {
@@ -17905,11 +17911,26 @@ const docTemplate = `{
                 "help_url": {
                     "type": "string"
                 },
+                "kind": {
+                    "type": "string"
+                },
+                "languages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "name": {
+                    "type": "string"
+                },
+                "region": {
                     "type": "string"
                 },
                 "requires_key": {
                     "type": "boolean"
+                },
+                "sends": {
+                    "type": "string"
                 }
             }
         },
