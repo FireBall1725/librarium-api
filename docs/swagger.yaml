@@ -753,6 +753,39 @@ definitions:
       use_ai_cleanup:
         type: boolean
     type: object
+  github_com_fireball1725_librarium-api_internal_models.Kiosk:
+    properties:
+      allow_anonymous:
+        type: boolean
+      allow_signup:
+        type: boolean
+      clock_24h:
+        description: null follows the iPad's region
+        type: boolean
+      created_at:
+        type: string
+      id:
+        type: string
+      idle_seconds:
+        type: integer
+      last_seen_at:
+        type: string
+      library_id:
+        type: string
+      name:
+        type: string
+      show_borrower:
+        type: boolean
+    type: object
+  github_com_fireball1725_librarium-api_internal_models.KioskMember:
+    properties:
+      display_name:
+        type: string
+      has_pin:
+        type: boolean
+      user_id:
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_models.SuggestionSteering:
     properties:
       author_ids:
@@ -1258,6 +1291,25 @@ definitions:
       user_run_rate_limit_per_day:
         type: integer
     type: object
+  github_com_fireball1725_librarium-api_internal_service.CodePreview:
+    properties:
+      expires_at:
+        type: string
+      kiosk_name:
+        type: string
+      library_id:
+        type: string
+      library_name:
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_service.CodeStatus:
+    properties:
+      session:
+        $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.KioskSession'
+      status:
+        description: pending, approved, expired, used
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_service.ConfigFieldView:
     properties:
       help_text:
@@ -1299,6 +1351,17 @@ definitions:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.JobID'
       kind:
         description: '"scheduled" for now'
+        type: string
+    type: object
+  github_com_fireball1725_librarium-api_internal_service.KioskSession:
+    properties:
+      display_name:
+        type: string
+      expires_at:
+        type: string
+      token:
+        type: string
+      user_id:
         type: string
     type: object
   github_com_fireball1725_librarium-api_internal_service.ProviderStatus:
@@ -5416,6 +5479,256 @@ paths:
       summary: Cancel an import job
       tags:
       - imports
+  /kiosk/me:
+    get:
+      description: For the iPad, with its kiosk token.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.Kiosk'
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: The calling kiosk's settings
+      tags:
+      - kiosks
+  /kiosk/members:
+    get:
+      description: The library's members for the kiosk's "who are you" picker. has_pin
+        is false for members who can only sign in with their phone.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.KioskMember'
+                type: array
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Who can sign in on this kiosk
+      tags:
+      - kiosks
+  /kiosk/session:
+    delete:
+      description: Called with the member's kiosk session on sign-out and on idle
+        reset. The session token stops working at once.
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Sign the member out of the kiosk
+      tags:
+      - kiosks
+  /kiosk/signin-codes:
+    post:
+      description: For the kiosk. The code lives 60 seconds; ask for a new one when
+        it runs out. A member's phone approves it, and the kiosk polls GET /kiosk/signin-codes/{code}
+        for the member's session.
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              code:
+                type: string
+              expires_at:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a sign-in code to show as a QR code
+      tags:
+      - kiosks
+  /kiosk/signin-codes/{code}:
+    get:
+      description: For the kiosk that made the code. status is pending, approved,
+        expired or used. The first poll after approval hands over the member's session,
+        a token that ends after 15 minutes, on sign-out, or on idle reset; after that
+        the code is used.
+      parameters:
+      - description: Sign-in code
+        in: path
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.CodeStatus'
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Has the code been approved?
+      tags:
+      - kiosks
+  /kiosk/signin-codes/{code}/approve:
+    post:
+      description: For the member's phone, with their signed-in session (not an API
+        token). The kiosk picks the session up on its next poll.
+      parameters:
+      - description: Sign-in code from the QR code
+        in: path
+        name: code
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "410":
+          description: Gone
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Sign in on the kiosk showing this code
+      tags:
+      - kiosks
+  /kiosk/signin-codes/{code}/preview:
+    get:
+      description: 'For the member''s phone, before approving: the kiosk and library
+        the code signs them in on. 410 when the code expired or was used, 403 when
+        they''re not a member of that library.'
+      parameters:
+      - description: Sign-in code from the QR code
+        in: path
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.CodePreview'
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "410":
+          description: Gone
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Which kiosk a code is for
+      tags:
+      - kiosks
+  /kiosk/signin/pin:
+    post:
+      consumes:
+      - application/json
+      description: For the kiosk. Returns the same member session as the phone sign-in.
+        Five wrong PINs in five minutes lock that member out on this kiosk (429) until
+        they age out.
+      parameters:
+      - description: Member and PIN
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            pin:
+              type: string
+            user_id:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_service.KioskSession'
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "429":
+          description: Too Many Requests
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Sign a member in on the kiosk with their PIN
+      tags:
+      - kiosks
   /libraries:
     get:
       description: Returns all libraries the authenticated user has access to.
@@ -7564,6 +7877,198 @@ paths:
       summary: Get an import job
       tags:
       - imports
+  /libraries/{library_id}/kiosks:
+    get:
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.Kiosk'
+                type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List a library's kiosks
+      tags:
+      - kiosks
+    post:
+      consumes:
+      - application/json
+      description: Adds an iPad kiosk to the library and mints its API token, scoped
+        to looking things up and lending and returning books. The token is in this
+        response and never again. Needs a signed-in session, not an API token. Anonymous
+        borrowing and sign-up start off.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Settings; name is required
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            allow_anonymous:
+              type: boolean
+            allow_signup:
+              type: boolean
+            clock_24h:
+              type: boolean
+            idle_seconds:
+              type: integer
+            name:
+              type: string
+            show_borrower:
+              type: boolean
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              kiosk:
+                $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.Kiosk'
+              token:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Register a kiosk
+      tags:
+      - kiosks
+  /libraries/{library_id}/kiosks/{kiosk_id}:
+    delete:
+      description: Revokes the kiosk's token and signs out anyone signed in on it.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Kiosk UUID
+        in: path
+        name: kiosk_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a kiosk
+      tags:
+      - kiosks
+    patch:
+      consumes:
+      - application/json
+      description: Only the fields sent change. clock_24h null goes back to following
+        the iPad's region.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Kiosk UUID
+        in: path
+        name: kiosk_id
+        required: true
+        type: string
+      - description: Settings to change
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            allow_anonymous:
+              type: boolean
+            allow_signup:
+              type: boolean
+            clock_24h:
+              type: boolean
+            idle_seconds:
+              type: integer
+            name:
+              type: string
+            show_borrower:
+              type: boolean
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_models.Kiosk'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change a kiosk's settings
+      tags:
+      - kiosks
   /libraries/{library_id}/loans:
     get:
       description: Returns current (and optionally returned) loans for a library.
@@ -11149,6 +11654,81 @@ paths:
       security:
       - BearerAuth: []
       summary: Loans across every library the caller can read
+      tags:
+      - me
+  /me/pin:
+    delete:
+      description: Needs a signed-in session, not an API token.
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove my PIN
+      tags:
+      - me
+    get:
+      description: A PIN is a short number that identifies you for a quick sign-in
+        where typing your password isn't practical, such as a library kiosk.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              set:
+                type: boolean
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Whether I have a PIN
+      tags:
+      - me
+    put:
+      consumes:
+      - application/json
+      description: 4 to 8 digits, stored hashed like a password. Used for a quick
+        sign-in where typing a password isn't practical, such as a library kiosk.
+        Needs a signed-in session, not an API token, so a kiosk session can't change
+        it.
+      parameters:
+      - description: The PIN
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            pin:
+              type: string
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set my PIN
       tags:
       - me
   /me/series:

@@ -5821,6 +5821,391 @@ const docTemplate = `{
                 }
             }
         },
+        "/kiosk/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the iPad, with its kiosk token.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "The calling kiosk's settings",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_models.Kiosk"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/kiosk/members": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The library's members for the kiosk's \"who are you\" picker. has_pin is false for members who can only sign in with their phone.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Who can sign in on this kiosk",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_models.KioskMember"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/kiosk/session": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Called with the member's kiosk session on sign-out and on idle reset. The session token stops working at once.",
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Sign the member out of the kiosk",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/kiosk/signin-codes": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the kiosk. The code lives 60 seconds; ask for a new one when it runs out. A member's phone approves it, and the kiosk polls GET /kiosk/signin-codes/{code} for the member's session.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Get a sign-in code to show as a QR code",
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "code": {
+                                    "type": "string"
+                                },
+                                "expires_at": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/kiosk/signin-codes/{code}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the kiosk that made the code. status is pending, approved, expired or used. The first poll after approval hands over the member's session, a token that ends after 15 minutes, on sign-out, or on idle reset; after that the code is used.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Has the code been approved?",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sign-in code",
+                        "name": "code",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.CodeStatus"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/kiosk/signin-codes/{code}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the member's phone, with their signed-in session (not an API token). The kiosk picks the session up on its next poll.",
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Sign in on the kiosk showing this code",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sign-in code from the QR code",
+                        "name": "code",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "410": {
+                        "description": "Gone",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/kiosk/signin-codes/{code}/preview": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the member's phone, before approving: the kiosk and library the code signs them in on. 410 when the code expired or was used, 403 when they're not a member of that library.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Which kiosk a code is for",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Sign-in code from the QR code",
+                        "name": "code",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.CodePreview"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "410": {
+                        "description": "Gone",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/kiosk/signin/pin": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For the kiosk. Returns the same member session as the phone sign-in. Five wrong PINs in five minutes lock that member out on this kiosk (429) until they age out.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Sign a member in on the kiosk with their PIN",
+                "parameters": [
+                    {
+                        "description": "Member and PIN",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "pin": {
+                                    "type": "string"
+                                },
+                                "user_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.KioskSession"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/libraries": {
             "get": {
                 "security": [
@@ -9110,6 +9495,302 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/libraries/{library_id}/kiosks": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "List a library's kiosks",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_models.Kiosk"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds an iPad kiosk to the library and mints its API token, scoped to looking things up and lending and returning books. The token is in this response and never again. Needs a signed-in session, not an API token. Anonymous borrowing and sign-up start off.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Register a kiosk",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Settings; name is required",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "allow_anonymous": {
+                                    "type": "boolean"
+                                },
+                                "allow_signup": {
+                                    "type": "boolean"
+                                },
+                                "clock_24h": {
+                                    "type": "boolean"
+                                },
+                                "idle_seconds": {
+                                    "type": "integer"
+                                },
+                                "name": {
+                                    "type": "string"
+                                },
+                                "show_borrower": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "kiosk": {
+                                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_models.Kiosk"
+                                },
+                                "token": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/libraries/{library_id}/kiosks/{kiosk_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revokes the kiosk's token and signs out anyone signed in on it.",
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Remove a kiosk",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Kiosk UUID",
+                        "name": "kiosk_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Only the fields sent change. clock_24h null goes back to following the iPad's region.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "kiosks"
+                ],
+                "summary": "Change a kiosk's settings",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Kiosk UUID",
+                        "name": "kiosk_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Settings to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "allow_anonymous": {
+                                    "type": "boolean"
+                                },
+                                "allow_signup": {
+                                    "type": "boolean"
+                                },
+                                "clock_24h": {
+                                    "type": "boolean"
+                                },
+                                "idle_seconds": {
+                                    "type": "integer"
+                                },
+                                "name": {
+                                    "type": "string"
+                                },
+                                "show_borrower": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_models.Kiosk"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "type": "object",
                             "properties": {
@@ -14627,6 +15308,122 @@ const docTemplate = `{
                 }
             }
         },
+        "/me/pin": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "A PIN is a short number that identifies you for a quick sign-in where typing your password isn't practical, such as a library kiosk.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Whether I have a PIN",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "set": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "4 to 8 digits, stored hashed like a password. Used for a quick sign-in where typing a password isn't practical, such as a library kiosk. Needs a signed-in session, not an API token, so a kiosk session can't change it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "me"
+                ],
+                "summary": "Set my PIN",
+                "parameters": [
+                    {
+                        "description": "The PIN",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "pin": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Needs a signed-in session, not an API token.",
+                "tags": [
+                    "me"
+                ],
+                "summary": "Remove my PIN",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/me/series": {
             "get": {
                 "security": [
@@ -17479,6 +18276,56 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_fireball1725_librarium-api_internal_models.Kiosk": {
+            "type": "object",
+            "properties": {
+                "allow_anonymous": {
+                    "type": "boolean"
+                },
+                "allow_signup": {
+                    "type": "boolean"
+                },
+                "clock_24h": {
+                    "description": "null follows the iPad's region",
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "idle_seconds": {
+                    "type": "integer"
+                },
+                "last_seen_at": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "show_borrower": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_models.KioskMember": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "has_pin": {
+                    "type": "boolean"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_fireball1725_librarium-api_internal_models.SuggestionSteering": {
             "type": "object",
             "properties": {
@@ -18190,6 +19037,35 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_fireball1725_librarium-api_internal_service.CodePreview": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "kiosk_name": {
+                    "type": "string"
+                },
+                "library_id": {
+                    "type": "string"
+                },
+                "library_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_service.CodeStatus": {
+            "type": "object",
+            "properties": {
+                "session": {
+                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_service.KioskSession"
+                },
+                "status": {
+                    "description": "pending, approved, expired, used",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_fireball1725_librarium-api_internal_service.ConfigFieldView": {
             "type": "object",
             "properties": {
@@ -18247,6 +19123,23 @@ const docTemplate = `{
                 },
                 "kind": {
                     "description": "\"scheduled\" for now",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_service.KioskSession": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "user_id": {
                     "type": "string"
                 }
             }
