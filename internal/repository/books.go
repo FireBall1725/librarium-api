@@ -1424,8 +1424,11 @@ type RecentlyAddedBook struct {
 	Title       string
 	HasCover    bool
 	CreatedAt   pgtype.Timestamptz
-	Authors     string
-	ReadStatus  string
+	// UpdatedAt is the book's, which moves when its cover is replaced: the
+	// cover URL's version, so the browser drops a cached old cover.
+	UpdatedAt  pgtype.Timestamptz
+	Authors    string
+	ReadStatus string
 }
 
 // RecentlyAdded returns the most recently added books across all libraries the user
@@ -1441,7 +1444,7 @@ func (r *BookRepo) RecentlyAdded(ctx context.Context, userID uuid.UUID, limit in
 		)
 		SELECT
 			b.id, ub.library_id, l.name,
-			b.title, ub.added_at,
+			b.title, ub.added_at, b.updated_at,
 			EXISTS(
 				SELECT 1 FROM cover_images ci
 				WHERE ci.entity_type = 'book' AND ci.entity_id = b.id AND ci.is_primary = true
@@ -1474,7 +1477,7 @@ func (r *BookRepo) RecentlyAdded(ctx context.Context, userID uuid.UUID, limit in
 		var pgBookID, pgLibID pgtype.UUID
 		if err := rows.Scan(
 			&pgBookID, &pgLibID, &b.LibraryName,
-			&b.Title, &b.CreatedAt,
+			&b.Title, &b.CreatedAt, &b.UpdatedAt,
 			&b.HasCover, &b.Authors, &b.ReadStatus,
 		); err != nil {
 			return nil, err
@@ -1502,7 +1505,7 @@ func (r *BookRepo) PicksOfTheDay(ctx context.Context, userID uuid.UUID, mediaTyp
 		)
 		SELECT
 			b.id, ub.library_id, l.name,
-			b.title, ub.added_at,
+			b.title, ub.added_at, b.updated_at,
 			EXISTS(
 				SELECT 1 FROM cover_images ci
 				WHERE ci.entity_type = 'book' AND ci.entity_id = b.id AND ci.is_primary = true
@@ -1541,7 +1544,7 @@ func (r *BookRepo) PicksOfTheDay(ctx context.Context, userID uuid.UUID, mediaTyp
 		var pgBookID, pgLibID pgtype.UUID
 		if err := rows.Scan(
 			&pgBookID, &pgLibID, &b.LibraryName,
-			&b.Title, &b.CreatedAt,
+			&b.Title, &b.CreatedAt, &b.UpdatedAt,
 			&b.HasCover, &b.Authors, &b.ReadStatus,
 		); err != nil {
 			return nil, err
@@ -1775,6 +1778,7 @@ type FinishedBook struct {
 	Authors     string
 	HasCover    bool
 	FinishedAt  pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz // the book's; see RecentlyAddedBook
 	Rating      pgtype.Int2
 	IsFavorite  bool
 }
@@ -1794,6 +1798,7 @@ func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit
 		finished AS (
 			SELECT DISTINCT ON (b.id)
 				b.id AS book_id,
+				b.updated_at,
 				ub.library_id,
 				b.title,
 				rs.finished_at,
@@ -1807,7 +1812,7 @@ func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit
 			ORDER BY b.id, rs.finished_at DESC
 		)
 		SELECT
-			f.book_id, f.library_id, l.name, f.title, f.finished_at, f.rating, f.is_favorite,
+			f.book_id, f.library_id, l.name, f.title, f.finished_at, f.updated_at, f.rating, f.is_favorite,
 			EXISTS(
 				SELECT 1 FROM cover_images ci
 				WHERE ci.entity_type = 'book' AND ci.entity_id = f.book_id AND ci.is_primary = true
@@ -1834,7 +1839,7 @@ func (r *BookRepo) RecentlyFinished(ctx context.Context, userID uuid.UUID, limit
 		var b FinishedBook
 		var pgBookID, pgLibID pgtype.UUID
 		if err := rows.Scan(
-			&pgBookID, &pgLibID, &b.LibraryName, &b.Title, &b.FinishedAt,
+			&pgBookID, &pgLibID, &b.LibraryName, &b.Title, &b.FinishedAt, &b.UpdatedAt,
 			&b.Rating, &b.IsFavorite, &b.HasCover, &b.Authors,
 		); err != nil {
 			return nil, err

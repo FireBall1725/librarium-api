@@ -103,7 +103,7 @@ func (h *DashboardHandler) GetRecentlyAdded(w http.ResponseWriter, r *http.Reque
 		}
 		if b.HasCover {
 			u := fmt.Sprintf("/api/v1/libraries/%s/books/%s/cover?v=%d",
-				b.LibraryID, b.BookID, b.CreatedAt.Time.Unix())
+				b.LibraryID, b.BookID, b.UpdatedAt.Time.Unix())
 			it.CoverURL = &u
 		}
 		out = append(out, it)
@@ -153,7 +153,7 @@ func (h *DashboardHandler) GetPicksOfTheDay(w http.ResponseWriter, r *http.Reque
 		}
 		if b.HasCover {
 			u := fmt.Sprintf("/api/v1/libraries/%s/books/%s/cover?v=%d",
-				b.LibraryID, b.BookID, b.CreatedAt.Time.Unix())
+				b.LibraryID, b.BookID, b.UpdatedAt.Time.Unix())
 			it.CoverURL = &u
 		}
 		out = append(out, it)
@@ -203,7 +203,7 @@ func (h *DashboardHandler) GetRecentlyFinished(w http.ResponseWriter, r *http.Re
 		}
 		if b.HasCover {
 			u := fmt.Sprintf("/api/v1/libraries/%s/books/%s/cover?v=%d",
-				b.LibraryID, b.BookID, b.FinishedAt.Time.Unix())
+				b.LibraryID, b.BookID, b.UpdatedAt.Time.Unix())
 			it.CoverURL = &u
 		}
 		out = append(out, it)
