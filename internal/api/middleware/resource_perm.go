@@ -29,11 +29,13 @@ type Scope struct {
 var (
 	ScopeCopy     = Scope{"copy_id", `SELECT library_id FROM copies WHERE id = $2`}
 	ScopeLocation = Scope{"location_id", `SELECT library_id FROM copy_locations WHERE id = $2`}
-	// A book belongs to every library that holds it.
-	ScopeBook    = Scope{"book_id", `SELECT library_id FROM library_books WHERE book_id = $2`}
+	// A book belongs to every library that holds a copy of it. held_books,
+	// not library_books: that table stopped being written at the tiers
+	// migration, so a book added since isn't in it.
+	ScopeBook    = Scope{"book_id", `SELECT library_id FROM held_books WHERE book_id = $2`}
 	ScopeEdition = Scope{"edition_id", `
-		SELECT lb.library_id FROM library_books lb
-		  JOIN book_editions e ON e.book_id = lb.book_id WHERE e.id = $2`}
+		SELECT hb.library_id FROM held_books hb
+		  JOIN book_editions e ON e.book_id = hb.book_id WHERE e.id = $2`}
 	// Contributors are shared by every library: holding the permission in
 	// any of them is enough.
 	ScopeAnyLibrary = Scope{}

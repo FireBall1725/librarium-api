@@ -75,6 +75,32 @@ func TestRequireOn(t *testing.T) {
 		t.Fatalf("creating place: %v", err)
 	}
 
+	// A book held through a copy only, as every book added since the tiers
+	// migration is: no library_books row.
+	var mediaType uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM media_types ORDER BY name LIMIT 1`).Scan(&mediaType); err != nil {
+		t.Skipf("no media types: %v", err)
+	}
+	book, edition := uuid.New(), uuid.New()
+	title := "authz fixture book " + book.String()
+	if _, err := pool.Exec(ctx, `INSERT INTO books (id, title, media_type_id, sort_title, title_key) VALUES ($1, $2, $3, $4, $5)`,
+		book, title, mediaType, title, title); err != nil {
+		t.Fatalf("creating book: %v", err)
+	}
+	t.Cleanup(func() {
+		for _, q := range []string{`DELETE FROM copies WHERE book_id = $1`, `DELETE FROM books WHERE id = $1`} {
+			if _, err := pool.Exec(ctx, q, book); err != nil {
+				t.Logf("cleanup: %v", err)
+			}
+		}
+	})
+	if _, err := pool.Exec(ctx, `INSERT INTO book_editions (id, book_id, format, is_primary) VALUES ($1, $2, 'paperback', true)`, edition, book); err != nil {
+		t.Fatalf("creating edition: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO copies (library_id, book_id, edition_id) VALUES ($1, $2, $3)`, lib, book, edition); err != nil {
+		t.Fatalf("creating copy: %v", err)
+	}
+
 	call := func(claims *UserClaims, perm string, scope Scope, param string) int {
 		h := RequireOn(pool, perm, scope)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 		req := httptest.NewRequest("PATCH", "/x", nil)
@@ -108,6 +134,22 @@ func TestRequireOn(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := call(c.claims, c.perm, c.scope, place.String()); got != c.want {
+			t.Errorf("%s: %d, want %d", c.name, got, c.want)
+		}
+	}
+	for _, c := range []struct {
+		name  string
+		who   uuid.UUID
+		scope Scope
+		param uuid.UUID
+		want  int
+	}{
+		{"editor edits a book held by copy", editor, ScopeBook, book, 200},
+		{"editor edits its edition", editor, ScopeEdition, edition, 200},
+		{"viewer can't", viewer, ScopeBook, book, 403},
+		{"outsider can't", outsider, ScopeEdition, edition, 403},
+	} {
+		if got := call(user(c.who), "books:update", c.scope, c.param.String()); got != c.want {
 			t.Errorf("%s: %d, want %d", c.name, got, c.want)
 		}
 	}
