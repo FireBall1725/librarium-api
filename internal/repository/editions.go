@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/google/uuid"
@@ -250,6 +251,45 @@ func (r *EditionRepo) FindByISBNInLibrary(ctx context.Context, libraryID uuid.UU
 	}
 	if err != nil {
 		return nil, fmt.Errorf("finding edition by isbn in library: %w", err)
+	}
+	return e, nil
+}
+
+// FindByIdentifier is FindByISBN for any identifier scheme: the edition
+// holding it anywhere, regardless of library.
+func (r *EditionRepo) FindByIdentifier(ctx context.Context, scheme, value string) (*models.BookEdition, error) {
+	q := `SELECT ` + beEditionColumns + `
+		FROM book_editions be
+		JOIN edition_identifiers ei ON ei.edition_id = be.id
+		WHERE ei.scheme = $1 AND ei.value = $2`
+	e, err := scanEdition(r.db.QueryRow(ctx, q, normaliseScheme(scheme), strings.TrimSpace(value)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finding edition by identifier: %w", err)
+	}
+	return e, nil
+}
+
+// FindByIdentifierInLibrary is FindByISBNInLibrary for any identifier scheme,
+// read from edition_identifiers. It is how a scanned UPC or EAN finds a book
+// already on the shelf, since neither has a column of its own.
+func (r *EditionRepo) FindByIdentifierInLibrary(ctx context.Context, libraryID uuid.UUID, scheme, value string) (*models.BookEdition, error) {
+	q := `SELECT ` + beEditionColumns + `
+		FROM book_editions be
+		WHERE EXISTS (SELECT 1 FROM edition_identifiers ei
+		               WHERE ei.edition_id = be.id AND ei.scheme = $2 AND ei.value = $3)
+		  AND EXISTS (SELECT 1 FROM copies c
+		               WHERE c.edition_id = be.id AND c.library_id = $1
+		                 AND c.deleted_at IS NULL)
+		LIMIT 1`
+	e, err := scanEdition(r.db.QueryRow(ctx, q, libraryID, normaliseScheme(scheme), strings.TrimSpace(value)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finding edition by identifier in library: %w", err)
 	}
 	return e, nil
 }

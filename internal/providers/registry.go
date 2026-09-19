@@ -65,6 +65,22 @@ func (r *Registry) BookISBNProviders() []BookISBNProvider {
 	return out
 }
 
+// BookUPCProviders returns all enabled providers with the book_upc capability.
+func (r *Registry) BookUPCProviders() []BookUPCProvider {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []BookUPCProvider
+	for _, p := range r.providers {
+		if !p.Enabled() {
+			continue
+		}
+		if up, ok := p.(BookUPCProvider); ok {
+			out = append(out, up)
+		}
+	}
+	return out
+}
+
 // SeriesSearchProviders returns all enabled providers with the series_name capability.
 func (r *Registry) SeriesSearchProviders() []SeriesSearchProvider {
 	r.mu.RLock()
@@ -84,8 +100,31 @@ func (r *Registry) SeriesSearchProviders() []SeriesSearchProvider {
 // LookupISBN queries all enabled BookISBNProviders concurrently and returns
 // all non-nil results. Errors from individual providers are silently skipped.
 func (r *Registry) LookupISBN(ctx context.Context, isbn string) []*BookResult {
-	providers := r.BookISBNProviders()
-	if len(providers) == 0 {
+	var lookups []barcodeLookup
+	for _, p := range r.BookISBNProviders() {
+		lookups = append(lookups, barcodeLookup{name: p.Info().Name, fn: p.LookupByISBN})
+	}
+	return lookupBarcode(ctx, "isbn", isbn, lookups)
+}
+
+// LookupUPC queries all enabled BookUPCProviders the same way LookupISBN does.
+func (r *Registry) LookupUPC(ctx context.Context, code string) []*BookResult {
+	var lookups []barcodeLookup
+	for _, p := range r.BookUPCProviders() {
+		lookups = append(lookups, barcodeLookup{name: p.Info().Name, fn: p.LookupByUPC})
+	}
+	return lookupBarcode(ctx, "upc", code, lookups)
+}
+
+type barcodeLookup struct {
+	name string
+	fn   func(context.Context, string) (*BookResult, error)
+}
+
+// lookupBarcode asks every provider for one barcode at once and returns what
+// came back. kind only labels the log lines.
+func lookupBarcode(ctx context.Context, kind, code string, lookups []barcodeLookup) []*BookResult {
+	if len(lookups) == 0 {
 		return nil
 	}
 
@@ -94,18 +133,17 @@ func (r *Registry) LookupISBN(ctx context.Context, isbn string) []*BookResult {
 		book *BookResult
 	}
 
-	ch := make(chan result, len(providers))
-	for _, p := range providers {
-		go func(bp BookISBNProvider) {
-			name := bp.Info().Name
-			book, err := bp.LookupByISBN(ctx, isbn)
+	ch := make(chan result, len(lookups))
+	for _, l := range lookups {
+		go func(l barcodeLookup) {
+			book, err := l.fn(ctx, code)
 			if err != nil {
-				slog.WarnContext(ctx, "isbn lookup provider error", "provider", name, "isbn", isbn, "error", err)
-				ch <- result{name: name}
+				slog.WarnContext(ctx, kind+" lookup provider error", "provider", l.name, kind, code, "error", err)
+				ch <- result{name: l.name}
 				return
 			}
-			ch <- result{name: name, book: book}
-		}(p)
+			ch <- result{name: l.name, book: book}
+		}(l)
 	}
 
 	// Same shape as SearchBooks: once one provider has answered, the rest get
@@ -120,7 +158,7 @@ func (r *Registry) LookupISBN(ctx context.Context, isbn string) []*BookResult {
 	var deadlineC <-chan time.Time
 
 	var out []*BookResult
-	remaining := len(providers)
+	remaining := len(lookups)
 	for remaining > 0 {
 		select {
 		case res := <-ch:
@@ -134,8 +172,8 @@ func (r *Registry) LookupISBN(ctx context.Context, isbn string) []*BookResult {
 				deadlineC = deadline.C
 			}
 		case <-deadlineC:
-			slog.InfoContext(ctx, "isbn lookup deadline reached, returning partial results",
-				"isbn", isbn, "waiting_on", remaining, "results_so_far", len(out))
+			slog.InfoContext(ctx, kind+" lookup deadline reached, returning partial results",
+				kind, code, "waiting_on", remaining, "results_so_far", len(out))
 			return out
 		case <-ctx.Done():
 			return out

@@ -5408,6 +5408,59 @@ paths:
       summary: Update a library
       tags:
       - libraries
+  /libraries/{library_id}/book-by-identifier:
+    get:
+      description: Returns the book in this library whose edition carries the given
+        identifier, such as a UPC or EAN scanned from a comic or paperback.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: Identifier scheme, e.g. upc or ean
+        in: query
+        name: type
+        required: true
+        type: string
+      - description: Identifier value
+        in: query
+        name: value
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_api_responses.BookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Find book by identifier
+      tags:
+      - books
   /libraries/{library_id}/book-by-isbn/{isbn}:
     get:
       description: Searches the library for a book with the given ISBN.
@@ -5513,6 +5566,13 @@ paths:
             type: object
         "401":
           description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
           schema:
             properties:
               error:
@@ -6004,6 +6064,13 @@ paths:
             type: object
         "401":
           description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "409":
+          description: Conflict
           schema:
             properties:
               error:
@@ -9865,6 +9932,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Search series across providers
+      tags:
+      - lookup
+  /lookup/upc/{code}:
+    get:
+      description: Queries every enabled provider that can look up a UPC-A or non-ISBN
+        EAN-13 and returns per-provider results. Send 12 or 13 digits with any 5-digit
+        add-on removed. A result that carries an ISBN can be added through the normal
+        ISBN path.
+      parameters:
+      - description: UPC-A (12 digits) or EAN-13 (13 digits)
+        in: path
+        name: code
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Lookup book by UPC or EAN
       tags:
       - lookup
   /me/ai-prefs:

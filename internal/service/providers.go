@@ -186,6 +186,11 @@ func (s *ProviderService) LookupISBN(ctx context.Context, isbn string) []*provid
 	return s.registry.LookupISBN(ctx, isbn)
 }
 
+// LookupUPC queries all enabled BookUPC providers.
+func (s *ProviderService) LookupUPC(ctx context.Context, code string) []*providers.BookResult {
+	return s.registry.LookupUPC(ctx, code)
+}
+
 // LookupISBNMerged queries all providers then merges results using the saved
 // priority order. Returns the merged result ready for the UI or enrichment job.
 func (s *ProviderService) LookupISBNMerged(ctx context.Context, isbn string) (*providers.MergedBookResult, error) {

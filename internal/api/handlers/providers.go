@@ -137,6 +137,46 @@ func (h *ProviderHandler) LookupISBN(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, results)
 }
 
+// LookupUPC godoc
+//
+// @Summary     Lookup book by UPC or EAN
+// @Description Queries every enabled provider that can look up a UPC-A or non-ISBN EAN-13 and returns per-provider results. Send 12 or 13 digits with any 5-digit add-on removed. A result that carries an ISBN can be added through the normal ISBN path.
+// @Tags        lookup
+// @Produce     json
+// @Security    BearerAuth
+// @Param       code  path      string  true  "UPC-A (12 digits) or EAN-13 (13 digits)"
+// @Success     200   {array}   providers.BookResult
+// @Failure     400   {object}  object{error=string}
+// @Failure     401   {object}  object{error=string}
+// @Router      /lookup/upc/{code} [get]
+func (h *ProviderHandler) LookupUPC(w http.ResponseWriter, r *http.Request) {
+	code := r.PathValue("code")
+	if !isUPCOrEAN(code) {
+		respond.Error(w, http.StatusBadRequest, "code must be 12 or 13 digits")
+		return
+	}
+
+	results := h.svc.LookupUPC(r.Context(), code)
+	if results == nil {
+		results = []*providers.BookResult{}
+	}
+	respond.JSON(w, http.StatusOK, results)
+}
+
+// isUPCOrEAN checks the shape only. The check digit is the client's job, and a
+// provider that doesn't know the code just returns nothing.
+func isUPCOrEAN(code string) bool {
+	if len(code) != 12 && len(code) != 13 {
+		return false
+	}
+	for _, c := range code {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // LookupISBNMerged godoc
 //
 // @Summary     Lookup ISBN merged
