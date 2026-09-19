@@ -12969,7 +12969,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Queries every enabled provider that can look up a UPC-A or non-ISBN EAN-13 and returns per-provider results. Send 12 or 13 digits with any 5-digit add-on removed. A result that carries an ISBN can be added through the normal ISBN path.",
+                "description": "Queries every enabled provider that can look up a UPC-A or non-ISBN EAN-13 and returns per-provider results. Send 12 or 13 digits, plus the 5-digit add-on when the scanner read one: on comics the add-on picks the issue and the variant. A result that carries an ISBN can be added through the normal ISBN path.",
                 "produces": [
                     "application/json"
                 ],
@@ -12980,7 +12980,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "UPC-A (12 digits) or EAN-13 (13 digits)",
+                        "description": "UPC-A or EAN-13, 12 or 13 digits, optionally followed by a 5-digit add-on",
                         "name": "code",
                         "in": "path",
                         "required": true
