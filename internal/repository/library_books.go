@@ -208,6 +208,27 @@ func (r *LibraryBookRepo) SetEditionCopyCount(ctx context.Context, tx pgx.Tx, li
 		return fmt.Errorf("retiring surplus copies: %w", err)
 	}
 
+	// Before adding any, give this edition to copies of the same book in the
+	// library that have no edition yet. AddBookToLibrary records a library
+	// holding a book with one such copy, and without this the edition's copy
+	// came on top of it: every book added showed two copies (librarium-ios #81).
+	if err := exec(`
+		UPDATE copies SET edition_id = $2,
+		                  acquired_at = COALESCE(acquired_at, $4::date),
+		                  updated_at  = NOW()
+		 WHERE id IN (
+		     SELECT c.id FROM copies c
+		       JOIN book_editions e ON e.id = $2
+		      WHERE c.library_id = $1 AND c.book_id = e.book_id
+		        AND c.edition_id IS NULL AND c.deleted_at IS NULL
+		      ORDER BY c.created_at
+		      LIMIT GREATEST($3 - (
+		          SELECT count(*) FROM copies
+		           WHERE library_id = $1 AND edition_id = $2 AND deleted_at IS NULL), 0))`,
+		libraryID, editionID, copyCount, acq); err != nil {
+		return fmt.Errorf("adopting editionless copies: %w", err)
+	}
+
 	// Then top up to the requested number. generate_series makes the shortfall
 	// one statement rather than a loop.
 	if err := exec(`
