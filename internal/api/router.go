@@ -272,6 +272,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/books/{book_id}/copies", requireAuth(http.HandlerFunc(copyHandler.ListCopiesForBook)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/copies", requireLibraryPerm("books:read", http.HandlerFunc(copyHandler.ListCopiesForLibrary)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/copies", requireLibraryPerm("books:create", http.HandlerFunc(copyHandler.CreateCopy)))
+	mux.Handle("GET /api/v1/libraries/{library_id}/inventory", requireLibraryPerm("books:read", http.HandlerFunc(copyHandler.ListInventory)))
 	mux.Handle("PATCH /api/v1/copies/{copy_id}", requireOn("books:update", middleware.ScopeCopy, http.HandlerFunc(copyHandler.UpdateCopy)))
 	mux.Handle("DELETE /api/v1/copies/{copy_id}", requireOn("books:delete", middleware.ScopeCopy, http.HandlerFunc(copyHandler.DeleteCopy)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/locations", requireLibraryPerm("books:read", http.HandlerFunc(copyHandler.ListLocations)))
