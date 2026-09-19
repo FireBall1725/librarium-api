@@ -1391,7 +1391,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the ordered list of provider names used when merging results.",
+                "description": "Returns the saved provider order. Kept for older clients; lookups no longer use it, each field is pre-selected from the answers.",
                 "produces": [
                     "application/json"
                 ],
@@ -1445,7 +1445,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sets the ordered list of provider names used when merging results.",
+                "description": "Saves a provider order. Kept for older clients; lookups no longer use it, each field is pre-selected from the answers.",
                 "consumes": [
                     "application/json"
                 ],
@@ -12854,7 +12854,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a single merged result across all providers with per-field source attribution.",
+                "description": "Asks every enabled provider at once and returns one merged result. Each field has a pre-selected value, the reason it was chosen (agreed, only, longest, most_detail, first), every provider that gave it, and the other values. Covers come largest first, and providers says who answered, who had no record and who missed the deadline.",
                 "produces": [
                     "application/json"
                 ],
@@ -17246,11 +17246,17 @@ const docTemplate = `{
                 "cover_url": {
                     "type": "string"
                 },
+                "height": {
+                    "type": "integer"
+                },
                 "source": {
                     "type": "string"
                 },
                 "source_display": {
                     "type": "string"
+                },
+                "width": {
+                    "type": "integer"
                 }
             }
         },
@@ -17262,6 +17268,13 @@ const docTemplate = `{
                 },
                 "source_display": {
                     "type": "string"
+                },
+                "sources": {
+                    "description": "Sources is every provider that gave this value, first to answer first.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "value": {
                     "type": "string"
@@ -17277,11 +17290,20 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldOption"
                     }
                 },
+                "reason": {
+                    "type": "string"
+                },
                 "source": {
                     "type": "string"
                 },
                 "source_display": {
                     "type": "string"
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "value": {
                     "type": "string"
@@ -17306,8 +17328,11 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "cover_reason": {
+                    "type": "string"
+                },
                 "covers": {
-                    "description": "Covers lists available cover images from each provider, in priority order.",
+                    "description": "Covers lists each distinct cover, pre-selected one first: the largest\nonce sizes are known, else in the order the providers answered.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.CoverOption"
@@ -17328,6 +17353,13 @@ const docTemplate = `{
                 "page_count": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"
                 },
+                "providers": {
+                    "description": "Providers says what each asked provider did, when the lookup reported it.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.ProviderStatus"
+                    }
+                },
                 "publish_date": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"
                 },
@@ -17339,6 +17371,24 @@ const docTemplate = `{
                 },
                 "title": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"
+                }
+            }
+        },
+        "github_com_fireball1725_librarium-api_internal_providers.ProviderStatus": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "millis": {
+                    "description": "Millis is how long it took to answer; 0 when it missed the deadline.",
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
                 }
             }
         },

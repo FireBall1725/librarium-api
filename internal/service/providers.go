@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/fireball1725/librarium-api/internal/providers"
 	"github.com/fireball1725/librarium-api/internal/repository"
@@ -21,6 +23,10 @@ const (
 )
 
 // ProviderService manages provider configuration stored in instance_settings.
+// coverProbeClient reads cover headers during a lookup. Its own timeout
+// backs up the probe deadline.
+var coverProbeClient = &http.Client{Timeout: 5 * time.Second}
+
 type ProviderService struct {
 	registry *providers.Registry
 	settings *repository.SettingsRepo
@@ -191,15 +197,17 @@ func (s *ProviderService) LookupUPC(ctx context.Context, code string) []*provide
 	return s.registry.LookupUPC(ctx, code)
 }
 
-// LookupISBNMerged queries all providers then merges results using the saved
-// priority order. Returns the merged result ready for the UI or enrichment job.
+// LookupISBNMerged asks every enabled provider at once and merges what came
+// back. Each field is pre-selected from the answers themselves; the saved
+// provider order is kept for older clients but no longer used here. Covers are
+// probed for size so the largest is offered first.
 func (s *ProviderService) LookupISBNMerged(ctx context.Context, isbn string) (*providers.MergedBookResult, error) {
-	order, err := s.GetProviderOrder(ctx)
-	if err != nil {
-		return nil, err
-	}
-	results := s.registry.LookupISBN(ctx, isbn)
-	return providers.MergeBookResults(results, order), nil
+	results, statuses := s.registry.LookupISBNReport(ctx, isbn)
+	merged := providers.MergeBookResults(results)
+	merged.Providers = statuses
+	providers.ProbeCoverSizes(ctx, coverProbeClient, merged.Covers)
+	merged.SortCoversBySize()
+	return merged, nil
 }
 
 // GetProviderOrder returns the saved provider priority order. Defaults to
