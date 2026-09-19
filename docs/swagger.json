@@ -13157,6 +13157,94 @@
                 }
             }
         },
+        "/lookup/upc/learn": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Send a back-cover UPC scanned with its 5-digit add-on and the ISBN-13 of the same book. When the add-on is digits 5 to 9 of the ISBN-10, the instance remembers which ISBN prefix goes with that UPC company, and later scans of that publisher's paperbacks are looked up by ISBN. 422 when the two don't pair up.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lookup"
+                ],
+                "summary": "Learn a paperback publisher's UPC from a real book",
+                "parameters": [
+                    {
+                        "description": "Back-cover code with add-on, and the book's ISBN-13",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "isbn": {
+                                    "type": "string"
+                                },
+                                "upc": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "added": {
+                                    "type": "boolean"
+                                },
+                                "isbn_prefix": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/lookup/upc/{code}": {
             "get": {
                 "security": [
@@ -17579,6 +17667,17 @@
                 }
             }
         },
+        "github_com_fireball1725_librarium-api_internal_providers.ISBNCandidate": {
+            "type": "object",
+            "properties": {
+                "isbn": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_fireball1725_librarium-api_internal_providers.MergedBookResult": {
             "type": "object",
             "properties": {
@@ -17622,6 +17721,13 @@
                 },
                 "language": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"
+                },
+                "other_isbns": {
+                    "description": "OtherISBNs are the other books the same add-on could be, when the\npublisher has more than one ISBN prefix and more than one resolved.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.ISBNCandidate"
+                    }
                 },
                 "page_count": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"

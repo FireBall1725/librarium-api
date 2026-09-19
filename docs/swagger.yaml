@@ -888,6 +888,13 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_fireball1725_librarium-api_internal_providers.ISBNCandidate:
+    properties:
+      isbn:
+        type: string
+      title:
+        type: string
+    type: object
   github_com_fireball1725_librarium-api_internal_providers.MergedBookResult:
     properties:
       authors:
@@ -923,6 +930,13 @@ definitions:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
       language:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      other_isbns:
+        description: |-
+          OtherISBNs are the other books the same add-on could be, when the
+          publisher has more than one ISBN prefix and more than one resolved.
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.ISBNCandidate'
+        type: array
       page_count:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
       providers:
@@ -10231,6 +10245,65 @@ paths:
       security:
       - BearerAuth: []
       summary: Lookup UPC merged
+      tags:
+      - lookup
+  /lookup/upc/learn:
+    post:
+      consumes:
+      - application/json
+      description: Send a back-cover UPC scanned with its 5-digit add-on and the ISBN-13
+        of the same book. When the add-on is digits 5 to 9 of the ISBN-10, the instance
+        remembers which ISBN prefix goes with that UPC company, and later scans of
+        that publisher's paperbacks are looked up by ISBN. 422 when the two don't
+        pair up.
+      parameters:
+      - description: Back-cover code with add-on, and the book's ISBN-13
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            isbn:
+              type: string
+            upc:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              added:
+                type: boolean
+              isbn_prefix:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Learn a paperback publisher's UPC from a real book
       tags:
       - lookup
   /me/ai-prefs:

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/fireball1725/librarium-api/internal/providers"
 	"github.com/fireball1725/librarium-api/internal/repository"
+	"github.com/google/uuid"
 )
 
 const (
@@ -31,6 +33,9 @@ var coverProbeClient = &http.Client{Timeout: 5 * time.Second}
 type ProviderService struct {
 	registry *providers.Registry
 	settings *repository.SettingsRepo
+	// upcPrefixes is what this instance learned about paperback UPCs; nil
+	// leaves only the pairings checked into the code.
+	upcPrefixes UPCPrefixStore
 
 	// recent holds each lookup's raw answers for a while, so adding the book
 	// can store them without asking every provider a second time.
@@ -54,6 +59,49 @@ const recentAnswersMax = 500
 
 func NewProviderService(registry *providers.Registry, settings *repository.SettingsRepo) *ProviderService {
 	return &ProviderService{registry: registry, settings: settings, recent: map[string]recentAnswers{}}
+}
+
+// UPCPrefixStore keeps learned UPC to ISBN prefix pairings;
+// repository.UPCPrefixRepo in the server.
+type UPCPrefixStore interface {
+	ISBNPrefixes(ctx context.Context, upcPrefix string) ([]string, error)
+	Learn(ctx context.Context, upcPrefix, isbnPrefix, isbn string, userID *uuid.UUID) (bool, error)
+}
+
+// SetUPCPrefixRepo turns on learned UPC to ISBN prefix pairings.
+func (s *ProviderService) SetUPCPrefixRepo(r UPCPrefixStore) { s.upcPrefixes = r }
+
+// ErrNotLearnable says a back-cover scan and an ISBN don't pair up by the
+// add-on rule, so there's nothing to remember.
+var ErrNotLearnable = errors.New("that barcode and ISBN aren't the same book by its add-on")
+
+// LearnUPCPrefix remembers which ISBN prefix goes with a paperback's UPC
+// company, from a back cover scanned with its add-on and the ISBN of the same
+// book. added is false when the pairing was already known.
+func (s *ProviderService) LearnUPCPrefix(ctx context.Context, code, isbn13 string, userID *uuid.UUID) (isbnPrefix string, added bool, err error) {
+	company, isbnPrefix, ok := providers.LearnableUPCPrefix(code, isbn13)
+	if !ok {
+		return "", false, ErrNotLearnable
+	}
+	if s.upcPrefixes == nil {
+		return isbnPrefix, false, nil
+	}
+	added, err = s.upcPrefixes.Learn(ctx, company, isbnPrefix, isbn13, userID)
+	return isbnPrefix, added, err
+}
+
+func (s *ProviderService) learnedISBNPrefixes(ctx context.Context, code string) []string {
+	company, _, ok := providers.SplitUPCAddon(code)
+	if !ok || s.upcPrefixes == nil {
+		return nil
+	}
+	learned, err := s.upcPrefixes.ISBNPrefixes(ctx, company)
+	if err != nil {
+		// The checked pairings still work, so a lookup goes on without these.
+		slog.Warn("reading learned upc prefixes", "error", err)
+		return nil
+	}
+	return learned
 }
 
 func (s *ProviderService) rememberAnswers(code string, results []*providers.BookResult) {
@@ -332,15 +380,33 @@ func (s *ProviderService) LookupISBNMerged(ctx context.Context, isbn string) (*p
 func (s *ProviderService) LookupUPCMerged(ctx context.Context, code string) (*providers.MergedBookResult, error) {
 	// A paperback's add-on gives its ISBN, which names the book where the UPC
 	// only names the publisher and price. Try that first.
-	for _, isbn := range providers.ISBNsFromUPCAddon(code) {
+	// A publisher can have more than one ISBN prefix, and the same add-on
+	// under each can be a real book. Ask about every one; if several are,
+	// answer with the first and name the rest rather than guess silently.
+	var found *providers.MergedBookResult
+	var others []providers.ISBNCandidate
+	for _, isbn := range providers.ISBNsFromUPCAddon(code, s.learnedISBNPrefixes(ctx, code)...) {
 		merged, err := s.LookupISBNMerged(ctx, isbn)
 		if err != nil {
 			return nil, err
 		}
-		if merged.HasAnyField() {
-			merged.FromISBN = isbn
-			return merged, nil
+		if !merged.HasAnyField() {
+			continue
 		}
+		if found == nil {
+			merged.FromISBN = isbn
+			found = merged
+			continue
+		}
+		title := ""
+		if merged.Title != nil {
+			title = merged.Title.Value
+		}
+		others = append(others, providers.ISBNCandidate{ISBN: isbn, Title: title})
+	}
+	if found != nil {
+		found.OtherISBNs = others
+		return found, nil
 	}
 
 	results, statuses := s.registry.LookupUPCReport(ctx, code)

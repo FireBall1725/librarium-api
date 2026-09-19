@@ -60,6 +60,12 @@ type CoverOption struct {
 	Height        int    `json:"height,omitempty"`
 }
 
+// ISBNCandidate is another book a paperback's add-on could stand for.
+type ISBNCandidate struct {
+	ISBN  string `json:"isbn"`
+	Title string `json:"title"`
+}
+
 // MergedBookResult is the result of merging every provider's answer.
 // Cover URLs are separated into the Covers slice and excluded from field-level
 // comparison because they are binary (pick one, not compare text).
@@ -87,6 +93,9 @@ type MergedBookResult struct {
 	// FromISBN is the ISBN a UPC lookup was answered by, when the server
 	// worked it out from the barcode's add-on rather than trusting the UPC.
 	FromISBN string `json:"from_isbn,omitempty"`
+	// OtherISBNs are the other books the same add-on could be, when the
+	// publisher has more than one ISBN prefix and more than one resolved.
+	OtherISBNs []ISBNCandidate `json:"other_isbns,omitempty"`
 }
 
 // MergeBookResults combines every provider's answer. There's no priority

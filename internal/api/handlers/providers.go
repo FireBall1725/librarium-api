@@ -6,13 +6,16 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/fireball1725/librarium-api/internal/api/middleware"
 	"github.com/fireball1725/librarium-api/internal/api/respond"
 	"github.com/fireball1725/librarium-api/internal/providers"
 	"github.com/fireball1725/librarium-api/internal/service"
+	"github.com/google/uuid"
 )
 
 type ProviderHandler struct {
@@ -230,6 +233,47 @@ func (h *ProviderHandler) LookupUPCMerged(w http.ResponseWriter, r *http.Request
 		return
 	}
 	respond.JSON(w, http.StatusOK, merged)
+}
+
+type learnUPCRequest struct {
+	UPC  string `json:"upc"`
+	ISBN string `json:"isbn"`
+}
+
+// LearnUPCPrefix godoc
+//
+// @Summary     Learn a paperback publisher's UPC from a real book
+// @Description Send a back-cover UPC scanned with its 5-digit add-on and the ISBN-13 of the same book. When the add-on is digits 5 to 9 of the ISBN-10, the instance remembers which ISBN prefix goes with that UPC company, and later scans of that publisher's paperbacks are looked up by ISBN. 422 when the two don't pair up.
+// @Tags        lookup
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{upc=string,isbn=string}  true  "Back-cover code with add-on, and the book's ISBN-13"
+// @Success     200   {object}  object{isbn_prefix=string,added=boolean}
+// @Failure     400   {object}  object{error=string}
+// @Failure     401   {object}  object{error=string}
+// @Failure     422   {object}  object{error=string}
+// @Router      /lookup/upc/learn [post]
+func (h *ProviderHandler) LearnUPCPrefix(w http.ResponseWriter, r *http.Request) {
+	var req learnUPCRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var userID *uuid.UUID
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		userID = &claims.UserID
+	}
+	prefix, added, err := h.svc.LearnUPCPrefix(r.Context(), req.UPC, req.ISBN, userID)
+	if errors.Is(err, service.ErrNotLearnable) {
+		respond.Error(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"isbn_prefix": prefix, "added": added})
 }
 
 // GetProviderOrder godoc
