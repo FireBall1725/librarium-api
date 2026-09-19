@@ -117,13 +117,18 @@ func (r *Registry) LookupISBNReport(ctx context.Context, isbn string) ([]*BookRe
 
 // LookupUPC queries all enabled BookUPCProviders the same way LookupISBN does.
 func (r *Registry) LookupUPC(ctx context.Context, code string) []*BookResult {
+	results, _ := r.LookupUPCReport(ctx, code)
+	return results
+}
+
+// LookupUPCReport is LookupUPC plus what happened to each provider.
+func (r *Registry) LookupUPCReport(ctx context.Context, code string) ([]*BookResult, []ProviderStatus) {
 	var lookups []barcodeLookup
 	for _, p := range r.BookUPCProviders() {
 		info := p.Info()
 		lookups = append(lookups, barcodeLookup{name: info.Name, display: info.DisplayName, fn: p.LookupByUPC})
 	}
-	results, _ := lookupBarcode(ctx, "upc", code, lookups)
-	return results
+	return lookupBarcode(ctx, "upc", code, lookups)
 }
 
 // LookupOne asks a single enabled provider about an ISBN, for when a

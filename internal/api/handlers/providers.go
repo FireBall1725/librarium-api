@@ -206,6 +206,32 @@ func (h *ProviderHandler) LookupISBNMerged(w http.ResponseWriter, r *http.Reques
 	respond.JSON(w, http.StatusOK, merged)
 }
 
+// LookupUPCMerged godoc
+//
+// @Summary     Lookup UPC merged
+// @Description The merged ISBN lookup for a UPC or EAN, in the same shape. When a paperback's UPC comes with its 5-digit add-on and the publisher is known, the ISBN is worked out from the add-on and looked up instead, and from_isbn says so; a bare paperback UPC is shared by every book at the same price.
+// @Tags        lookup
+// @Produce     json
+// @Security    BearerAuth
+// @Param       code  path      string  true  "UPC-A or EAN-13, optionally with a 5-digit add-on"
+// @Success     200   {object}  providers.MergedBookResult
+// @Failure     400   {object}  object{error=string}
+// @Failure     401   {object}  object{error=string}
+// @Router      /lookup/upc/{code}/merged [get]
+func (h *ProviderHandler) LookupUPCMerged(w http.ResponseWriter, r *http.Request) {
+	code := r.PathValue("code")
+	if !isUPCOrEAN(code) {
+		respond.Error(w, http.StatusBadRequest, "code must be 12 or 13 digits, optionally followed by a 5-digit add-on")
+		return
+	}
+	merged, err := h.svc.LookupUPCMerged(r.Context(), code)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, merged)
+}
+
 // GetProviderOrder godoc
 //
 // @Summary     Get provider priority order (admin)
