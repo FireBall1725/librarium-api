@@ -9529,6 +9529,142 @@
                 }
             }
         },
+        "/libraries/{library_id}/inventory": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Each copy with its book's title, authors and cover, plus counts for the whole library. location narrows to one place, or to copies with no place when it is \"none\". A place's copies come by title; the rest newest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "copies"
+                ],
+                "summary": "List a library's copies with their books, for Inventory",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Library UUID",
+                        "name": "library_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "A place UUID, or none",
+                        "name": "location",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size, default 100, at most 500",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "book_authors": {
+                                                "type": "string"
+                                            },
+                                            "book_id": {
+                                                "type": "string"
+                                            },
+                                            "book_title": {
+                                                "type": "string"
+                                            },
+                                            "cover_url": {
+                                                "type": "string"
+                                            },
+                                            "id": {
+                                                "type": "string"
+                                            },
+                                            "location_id": {
+                                                "type": "string"
+                                            },
+                                            "on_loan_to": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                },
+                                "summary": {
+                                    "type": "object",
+                                    "properties": {
+                                        "copies": {
+                                            "type": "integer"
+                                        },
+                                        "on_loan": {
+                                            "type": "integer"
+                                        },
+                                        "shelved": {
+                                            "type": "integer"
+                                        },
+                                        "unshelved": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                },
+                                "total": {
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/libraries/{library_id}/kiosks": {
             "get": {
                 "security": [

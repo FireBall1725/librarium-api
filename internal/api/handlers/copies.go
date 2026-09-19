@@ -559,3 +559,80 @@ func nonEmpty(s string) *string {
 	}
 	return &s
 }
+
+// ListInventory godoc
+//
+// @Summary     List a library's copies with their books, for Inventory
+// @Description Each copy with its book's title, authors and cover, plus counts for the whole library. location narrows to one place, or to copies with no place when it is "none". A place's copies come by title; the rest newest first.
+// @Tags        copies
+// @Produce     json
+// @Security    BearerAuth
+// @Param       library_id  path   string  true   "Library UUID"
+// @Param       location    query  string  false  "A place UUID, or none"
+// @Param       limit       query  int     false  "Page size, default 100, at most 500"
+// @Param       offset      query  int     false  "Offset"
+// @Success     200  {object}  object{items=[]object{id=string,book_id=string,location_id=string,book_title=string,book_authors=string,cover_url=string,on_loan_to=string},total=int,summary=object{copies=int,shelved=int,unshelved=int,on_loan=int}}
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     403  {object}  object{error=string}
+// @Router      /libraries/{library_id}/inventory [get]
+func (h *CopyHandler) ListInventory(w http.ResponseWriter, r *http.Request) {
+	libraryID, ok := libraryIDOf(r)
+	if !ok {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+	var f repository.InventoryFilter
+	switch loc := r.URL.Query().Get("location"); loc {
+	case "":
+	case "none":
+		f.Unshelved = true
+	default:
+		id, err := uuid.Parse(loc)
+		if err != nil {
+			respond.Error(w, http.StatusBadRequest, "invalid location")
+			return
+		}
+		f.LocationID = &id
+	}
+	limit := 100
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 500 {
+		limit = v
+	}
+	offset := 0
+	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v > 0 {
+		offset = v
+	}
+
+	copies, total, err := h.copies.ListForInventory(r.Context(), libraryID, f, limit, offset)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	summary, err := h.copies.SummaryForInventory(r.Context(), libraryID)
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	items := make([]map[string]any, 0, len(copies))
+	for _, c := range copies {
+		var cover any
+		if c.HasCover {
+			cover = fmt.Sprintf("/api/v1/books/%s/cover?v=%d", c.BookID, c.BookUpdatedAt.Unix())
+		}
+		items = append(items, map[string]any{
+			"id":            c.ID,
+			"library_id":    c.LibraryID,
+			"book_id":       c.BookID,
+			"edition_id":    c.EditionID,
+			"location_id":   c.LocationID,
+			"location_name": c.LocationName,
+			"on_loan_to":    c.OnLoanTo,
+			"created_at":    c.CreatedAt,
+			"book_title":    c.BookTitle,
+			"book_authors":  c.BookAuthors,
+			"cover_url":     cover,
+		})
+	}
+	respond.JSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "summary": summary})
+}
