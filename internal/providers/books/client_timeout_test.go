@@ -30,6 +30,7 @@ func TestProviderClientsAreBounded(t *testing.T) {
 		{"hardcover", NewHardcoverProvider().client},
 		{"isbndb", NewISBNdbProvider().client},
 		{"open_library", NewOpenLibraryProvider().client},
+		{"upcitemdb", NewUPCitemdbProvider().client},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
