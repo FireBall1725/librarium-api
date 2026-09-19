@@ -7906,6 +7906,10 @@ paths:
         in: query
         name: location
         type: string
+      - description: With a place, count what's on the places inside it too
+        in: query
+        name: inside
+        type: boolean
       - description: Page size, default 100, at most 500
         in: query
         name: limit

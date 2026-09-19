@@ -9565,6 +9565,12 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "type": "boolean",
+                        "description": "With a place, count what's on the places inside it too",
+                        "name": "inside",
+                        "in": "query"
+                    },
+                    {
                         "type": "integer",
                         "description": "Page size, default 100, at most 500",
                         "name": "limit",

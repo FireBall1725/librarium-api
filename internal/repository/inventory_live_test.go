@@ -69,7 +69,12 @@ func TestInventory(t *testing.T) {
 	for i, b := range books {
 		exec(`INSERT INTO books (id, title, media_type_id) VALUES ($1, $2, $3)`, b, titles[i], mediaType)
 	}
-	place, err := NewCopyLocationRepo(pool).Create(ctx, lib, "Shelf 1", nil)
+	locations := NewCopyLocationRepo(pool)
+	room, err := locations.Create(ctx, lib, "A room", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	place, err := locations.Create(ctx, lib, "Shelf 1", &room.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +101,16 @@ func TestInventory(t *testing.T) {
 	}
 	if onShelf[0].OnLoanTo != "a friend" {
 		t.Errorf("the loan didn't come through: %q", onShelf[0].OnLoanTo)
+	}
+
+	// The room holds nothing itself; its shelf's copies only count with Inside.
+	_, total, err = repo.ListForInventory(ctx, lib, InventoryFilter{LocationID: &room.ID}, 50, 0)
+	if err != nil || total != 0 {
+		t.Fatalf("room alone: total %d, err %v", total, err)
+	}
+	_, total, err = repo.ListForInventory(ctx, lib, InventoryFilter{LocationID: &room.ID, Inside: true}, 50, 0)
+	if err != nil || total != 2 {
+		t.Fatalf("room and inside: total %d, err %v", total, err)
 	}
 
 	unshelved, total, err := repo.ListForInventory(ctx, lib, InventoryFilter{Unshelved: true}, 50, 0)

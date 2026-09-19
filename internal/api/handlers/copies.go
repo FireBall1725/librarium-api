@@ -569,6 +569,7 @@ func nonEmpty(s string) *string {
 // @Security    BearerAuth
 // @Param       library_id  path   string  true   "Library UUID"
 // @Param       location    query  string  false  "A place UUID, or none"
+// @Param       inside      query  bool    false  "With a place, count what's on the places inside it too"
 // @Param       limit       query  int     false  "Page size, default 100, at most 500"
 // @Param       offset      query  int     false  "Offset"
 // @Success     200  {object}  object{items=[]object{id=string,book_id=string,location_id=string,book_title=string,book_authors=string,cover_url=string,on_loan_to=string},total=int,summary=object{copies=int,shelved=int,unshelved=int,on_loan=int}}
@@ -594,6 +595,7 @@ func (h *CopyHandler) ListInventory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.LocationID = &id
+		f.Inside = r.URL.Query().Get("inside") == "true"
 	}
 	limit := 100
 	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 500 {
