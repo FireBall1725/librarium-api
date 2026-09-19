@@ -16,6 +16,13 @@ type EditionIdentifier struct {
 	Value     string    `json:"value"`
 }
 
+// EditionIdentifierInput is an identifier sent with a new edition, before the
+// edition has an id.
+type EditionIdentifierInput struct {
+	Scheme string `json:"scheme"`
+	Value  string `json:"value"`
+}
+
 // IdentifierScheme is a vocabulary row. Adding a scheme is an INSERT rather
 // than a migration, which is the whole reason this is a table.
 type IdentifierScheme struct {

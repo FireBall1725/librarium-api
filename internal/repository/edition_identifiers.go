@@ -154,6 +154,35 @@ func (r *EditionIdentifierRepo) Remove(ctx context.Context, editionID uuid.UUID,
 	return nil
 }
 
+// AddIdentifiersInTx attaches identifiers to a new edition inside the
+// caller's transaction, so a book added from a UPC scan is saved with its UPC
+// or not at all. Errors map the same way as Add.
+func AddIdentifiersInTx(ctx context.Context, tx pgx.Tx, editionID uuid.UUID, ids []models.EditionIdentifierInput) error {
+	const q = `INSERT INTO edition_identifiers (edition_id, scheme, value) VALUES ($1, $2, $3)`
+	seen := map[[2]string]bool{}
+	for _, id := range ids {
+		key := [2]string{normaliseScheme(id.Scheme), strings.TrimSpace(id.Value)}
+		if key[1] == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		_, err := tx.Exec(ctx, q, editionID, key[0], key[1])
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			switch {
+			case pgErr.Code == "23505":
+				return ErrIdentifierTaken
+			case pgErr.Code == "23503" && strings.Contains(pgErr.ConstraintName, "scheme"):
+				return ErrUnknownScheme
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("adding identifier: %w", err)
+		}
+	}
+	return nil
+}
+
 // normaliseScheme lowercases and trims so callers can send "ISBN13" and match a
 // row stored as "isbn13". Values are trimmed but never case-folded: an ISBN-10
 // check digit is a capital X and folding it breaks the identifier.

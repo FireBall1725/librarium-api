@@ -371,6 +371,7 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 // @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
+// @Failure     409  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books [post]
 func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 	libraryID, err := uuid.Parse(r.PathValue("library_id"))
@@ -387,6 +388,9 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	book, err := h.svc.CreateBook(r.Context(), libraryID, claims.UserID, *req)
+	if respondIdentifierError(w, err) {
+		return
+	}
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -520,6 +524,45 @@ func (h *BookHandler) FindByISBN(w http.ResponseWriter, r *http.Request) {
 	}
 	isbn := r.PathValue("isbn")
 	book, err := h.svc.FindBookByISBN(r.Context(), libraryID, isbn)
+	if errors.Is(err, repository.ErrNotFound) {
+		respond.Error(w, http.StatusNotFound, "book not found")
+		return
+	}
+	if err != nil {
+		respond.ServerError(w, r, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, bookBody(book))
+}
+
+// FindByIdentifier godoc
+//
+// @Summary     Find book by identifier
+// @Description Returns the book in this library whose edition carries the given identifier, such as a UPC or EAN scanned from a comic or paperback.
+// @Tags        books
+// @Produce     json
+// @Security    BearerAuth
+// @Param       library_id  path      string  true  "Library UUID"
+// @Param       type        query     string  true  "Identifier scheme, e.g. upc or ean"
+// @Param       value       query     string  true  "Identifier value"
+// @Success     200  {object}  github_com_fireball1725_librarium-api_internal_api_responses.BookResponse
+// @Failure     400  {object}  object{error=string}
+// @Failure     401  {object}  object{error=string}
+// @Failure     404  {object}  object{error=string}
+// @Router      /libraries/{library_id}/book-by-identifier [get]
+func (h *BookHandler) FindByIdentifier(w http.ResponseWriter, r *http.Request) {
+	libraryID, err := uuid.Parse(r.PathValue("library_id"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, "invalid library id")
+		return
+	}
+	scheme := strings.TrimSpace(r.URL.Query().Get("type"))
+	value := strings.TrimSpace(r.URL.Query().Get("value"))
+	if scheme == "" || value == "" {
+		respond.Error(w, http.StatusBadRequest, "type and value are required")
+		return
+	}
+	book, err := h.svc.FindBookByIdentifier(r.Context(), libraryID, scheme, value)
 	if errors.Is(err, repository.ErrNotFound) {
 		respond.Error(w, http.StatusNotFound, "book not found")
 		return

@@ -152,3 +152,44 @@ func TestLookupISBN_DeadlineStartsAfterFirstResult(t *testing.T) {
 		t.Fatalf("want the slow provider's result once it arrives, got %d results", len(out))
 	}
 }
+
+// fakeUPCProvider answers UPC lookups and records the code it was asked for.
+type fakeUPCProvider struct {
+	name  string
+	asked string
+}
+
+func (p *fakeUPCProvider) Info() ProviderInfo {
+	return ProviderInfo{Name: p.name, DisplayName: p.name, Capabilities: []string{CapBookUPC}}
+}
+func (p *fakeUPCProvider) Configure(map[string]string) {}
+func (p *fakeUPCProvider) Enabled() bool               { return true }
+func (p *fakeUPCProvider) LookupByUPC(_ context.Context, code string) (*BookResult, error) {
+	p.asked = code
+	return &BookResult{Provider: p.name, Title: p.name}, nil
+}
+
+// A UPC goes only to providers that claim book_upc; an ISBN-only provider
+// would take the code for a malformed ISBN and waste a request.
+func TestLookupUPC_AsksOnlyUPCProviders(t *testing.T) {
+	r := NewRegistry()
+	upc := &fakeUPCProvider{name: "upc"}
+	r.Register(upc)
+	r.Register(&fakeISBNProvider{name: "isbn-only"})
+
+	out := r.LookupUPC(context.Background(), "036000291452")
+	if len(out) != 1 || out[0].Provider != "upc" {
+		t.Fatalf("want only the UPC provider's result, got %+v", out)
+	}
+	if upc.asked != "036000291452" {
+		t.Fatalf("UPC provider was asked for %q", upc.asked)
+	}
+}
+
+func TestLookupUPC_NoProvidersReturnsNil(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&fakeISBNProvider{name: "isbn-only"})
+	if out := r.LookupUPC(context.Background(), "036000291452"); out != nil {
+		t.Fatalf("want nil with no UPC providers, got %+v", out)
+	}
+}

@@ -14,6 +14,7 @@ import (
 // Capability names.
 const (
 	CapBookISBN      = "book_isbn"
+	CapBookUPC       = "book_upc"
 	CapBookSearch    = "book_search"
 	CapSeriesName    = "series_name"
 	CapSeriesVolumes = "series_volumes"
@@ -117,6 +118,17 @@ type MetadataProvider interface {
 type BookISBNProvider interface {
 	MetadataProvider
 	LookupByISBN(ctx context.Context, isbn string) (*BookResult, error)
+}
+
+// BookUPCProvider can look up a book by the UPC-A or non-ISBN EAN-13 printed on
+// comics, manga and cheaper paperbacks. The code arrives as 12 or 13 digits,
+// followed by the 5-digit add-on when the scanner read one. Keep the add-on
+// where the source stores it: on a comic it picks the issue and the variant,
+// and the bare 12 digits match a whole run. Same timeout rule as
+// BookISBNProvider.
+type BookUPCProvider interface {
+	MetadataProvider
+	LookupByUPC(ctx context.Context, code string) (*BookResult, error)
 }
 
 // BookSearchProvider can search for books by freetext query.

@@ -332,3 +332,17 @@ func (h *CatalogueHandler) RemoveBookContent(w http.ResponseWriter, r *http.Requ
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// respondIdentifierError writes the status for an identifier error sent with a
+// new book or edition, and reports whether it did.
+func respondIdentifierError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, repository.ErrIdentifierTaken):
+		respond.Error(w, http.StatusConflict, "another edition already claims that identifier")
+	case errors.Is(err, repository.ErrUnknownScheme):
+		respond.Error(w, http.StatusBadRequest, "that identifier scheme is not one this server knows")
+	default:
+		return false
+	}
+	return true
+}

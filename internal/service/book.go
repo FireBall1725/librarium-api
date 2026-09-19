@@ -84,8 +84,8 @@ type BookRequest struct {
 }
 
 func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.UUID, req BookRequest) (*models.Book, error) {
-	// If an ISBN is provided and already exists globally (in any library or
-	// floating), we reuse the existing book + edition and bump the copy count
+	// If an ISBN or other identifier is provided and already exists globally
+	// (in any library or floating), we reuse the existing book + edition and bump the copy count
 	// for *this* library via the junction. If this library didn't already
 	// hold the book, a copy gets recorded too.
 	if req.Edition != nil {
@@ -93,24 +93,23 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 		if isbn == "" {
 			isbn = req.Edition.ISBN10
 		}
-		if isbn != "" {
-			if existing, err := s.editions.FindByISBN(ctx, isbn); err == nil && existing != nil {
-				tx, txErr := s.pool.Begin(ctx)
-				if txErr != nil {
-					return nil, fmt.Errorf("beginning transaction: %w", txErr)
-				}
-				defer tx.Rollback(ctx)
-				if err := s.libraryBooks.AddBookToLibrary(ctx, tx, libraryID, existing.BookID, &callerID); err != nil {
-					return nil, err
-				}
-				if err := tx.Commit(ctx); err != nil {
-					return nil, fmt.Errorf("committing transaction: %w", err)
-				}
-				if incrErr := s.editions.IncrementCopyCount(ctx, libraryID, existing.ID); incrErr != nil {
-					return nil, fmt.Errorf("incrementing copy count: %w", incrErr)
-				}
-				return s.books.FindByID(ctx, existing.BookID, callerID, libraryID)
+		existing := s.findExistingEdition(ctx, isbn, req.Edition.Identifiers)
+		if existing != nil {
+			tx, txErr := s.pool.Begin(ctx)
+			if txErr != nil {
+				return nil, fmt.Errorf("beginning transaction: %w", txErr)
 			}
+			defer tx.Rollback(ctx)
+			if err := s.libraryBooks.AddBookToLibrary(ctx, tx, libraryID, existing.BookID, &callerID); err != nil {
+				return nil, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, fmt.Errorf("committing transaction: %w", err)
+			}
+			if incrErr := s.editions.IncrementCopyCount(ctx, libraryID, existing.ID); incrErr != nil {
+				return nil, fmt.Errorf("incrementing copy count: %w", incrErr)
+			}
+			return s.books.FindByID(ctx, existing.BookID, callerID, libraryID)
 		}
 	}
 
@@ -158,6 +157,9 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 		); err != nil {
 			return nil, err
 		}
+		if err := repository.AddIdentifiersInTx(ctx, tx, editionID, e.Identifiers); err != nil {
+			return nil, err
+		}
 		// Record that this library holds 1 copy of this new edition.
 		var acq *any
 		if e.AcquiredAt != nil {
@@ -174,6 +176,23 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 	}
 
 	return s.books.FindByID(ctx, bookID, callerID, libraryID)
+}
+
+// findExistingEdition returns the edition a new book should reuse: the one
+// with this ISBN, else the one already holding any of the given identifiers,
+// so a comic scanned into a second library by its UPC isn't added twice.
+func (s *BookService) findExistingEdition(ctx context.Context, isbn string, ids []models.EditionIdentifierInput) *models.BookEdition {
+	if isbn != "" {
+		if e, err := s.editions.FindByISBN(ctx, isbn); err == nil {
+			return e
+		}
+	}
+	for _, id := range ids {
+		if e, err := s.editions.FindByIdentifier(ctx, id.Scheme, id.Value); err == nil {
+			return e
+		}
+	}
+	return nil
 }
 
 // GetBook returns one book with caller-scoped fields hydrated. callerID
@@ -209,6 +228,14 @@ func (s *BookService) hydrateLibraries(ctx context.Context, books []*models.Book
 
 func (s *BookService) FindBookByISBN(ctx context.Context, libraryID uuid.UUID, isbn string) (*models.Book, error) {
 	edition, err := s.editions.FindByISBNInLibrary(ctx, libraryID, isbn)
+	if err != nil {
+		return nil, err
+	}
+	return s.books.FindByID(ctx, edition.BookID, uuid.Nil, libraryID)
+}
+
+func (s *BookService) FindBookByIdentifier(ctx context.Context, libraryID uuid.UUID, scheme, value string) (*models.Book, error) {
+	edition, err := s.editions.FindByIdentifierInLibrary(ctx, libraryID, scheme, value)
 	if err != nil {
 		return nil, err
 	}
@@ -320,6 +347,9 @@ type EditionRequest struct {
 	IsPrimary             bool
 	AcquiredAt            *time.Time
 	NarratorContributorID *uuid.UUID
+	// Identifiers are extra ones such as a scanned UPC, saved with a new
+	// edition. Updates ignore them; use the edition identifiers endpoints.
+	Identifiers []models.EditionIdentifierInput
 }
 
 func (s *BookService) ListEditions(ctx context.Context, bookID uuid.UUID) ([]*models.BookEdition, error) {
@@ -345,6 +375,9 @@ func (s *BookService) CreateEdition(ctx context.Context, bookID uuid.UUID, req E
 		req.DurationSeconds, req.PageCount, req.IsPrimary,
 		req.NarratorContributorID,
 	); err != nil {
+		return nil, err
+	}
+	if err := repository.AddIdentifiersInTx(ctx, tx, editionID, req.Identifiers); err != nil {
 		return nil, err
 	}
 

@@ -84,6 +84,7 @@ func (h *BookHandler) ListEditions(w http.ResponseWriter, r *http.Request) {
 // @Success     201  {object}  github_com_fireball1725_librarium-api_internal_api_responses.EditionResponse
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
+// @Failure     409  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books/{book_id}/editions [post]
 func (h *BookHandler) CreateEdition(w http.ResponseWriter, r *http.Request) {
 	bookID, err := uuid.Parse(r.PathValue("book_id"))
@@ -97,6 +98,9 @@ func (h *BookHandler) CreateEdition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	edition, err := h.svc.CreateEdition(r.Context(), bookID, *req)
+	if respondIdentifierError(w, err) {
+		return
+	}
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
@@ -296,6 +300,9 @@ type editionRequestBody struct {
 	IsPrimary             bool    `json:"is_primary"`
 	AcquiredAt            string  `json:"acquired_at"` // YYYY-MM-DD or ""
 	NarratorContributorID *string `json:"narrator_contributor_id"`
+	// Identifiers are saved with a new edition only, e.g. the UPC a comic was
+	// scanned by, so the next scan finds it. Ignored on update.
+	Identifiers []models.EditionIdentifierInput `json:"identifiers,omitempty"`
 }
 
 func decodeEditionRequest(r *http.Request) (*service.EditionRequest, error) {
@@ -359,6 +366,7 @@ func parseEditionRequestBody(body *editionRequestBody) (*service.EditionRequest,
 		IsPrimary:             body.IsPrimary,
 		AcquiredAt:            acquiredAt,
 		NarratorContributorID: narratorContributorID,
+		Identifiers:           body.Identifiers,
 	}, nil
 }
 
