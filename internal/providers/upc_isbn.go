@@ -21,6 +21,10 @@ var upcISBNPrefixes = map[string][]string{
 // stand for, most likely first. Empty when there's no add-on or the
 // publisher isn't in the table.
 func ISBNsFromUPCAddon(code string) []string {
+	// A camera reports a UPC-A as an EAN-13 with a leading zero.
+	if len(code) == 18 && code[0] == '0' {
+		code = code[1:]
+	}
 	if len(code) != 17 || !allDigits(code) {
 		return nil
 	}

@@ -14,6 +14,10 @@ func TestISBNsFromUPCAddon(t *testing.T) {
 	if got := ISBNsFromUPCAddon("03714500799134500"); !reflect.DeepEqual(got, []string{"9780765345004"}) {
 		t.Errorf("Hominids: got %v", got)
 	}
+	// The same scan as a camera reports it: the UPC as a 13-digit EAN.
+	if got := ISBNsFromUPCAddon("003714500799134500"); !reflect.DeepEqual(got, []string{"9780765345004"}) {
+		t.Errorf("Hominids from a camera: got %v", got)
+	}
 	for _, code := range []string{
 		"037145007991",      // no add-on: nothing to build from
 		"03600029145200399", // a publisher not in the table
