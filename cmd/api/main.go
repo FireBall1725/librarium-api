@@ -155,6 +155,7 @@ func main() {
 	registry.Register(bookProviders.NewUPCitemdbProvider())
 	registry.Register(mangaProviders.NewMangaDexProvider())
 	providerSvc := service.NewProviderService(registry, settingsRepo)
+	providerSvc.SetUPCPrefixRepo(repository.NewUPCPrefixRepo(pool))
 	if err := providerSvc.LoadAll(baseCtx); err != nil {
 		slog.Warn("failed to load provider settings", "error", err)
 	}
