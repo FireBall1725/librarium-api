@@ -36,6 +36,14 @@ type MetadataWorker struct {
 	genres       *repository.GenreRepo
 	providerSvc  *service.ProviderService
 	bookSvc      *service.BookService
+	// answers stores each provider's answer with the edition on a refresh.
+	// Optional; SetAnswers wires it.
+	answers *repository.EditionAnswerRepo
+}
+
+// SetAnswers makes a refresh keep every provider's answer with the edition.
+func (w *MetadataWorker) SetAnswers(answers *repository.EditionAnswerRepo) {
+	w.answers = answers
 }
 
 func NewMetadataWorker(
@@ -82,13 +90,14 @@ func (w *MetadataWorker) ProcessBook(ctx context.Context, bookID, callerID uuid.
 	}
 
 	var isbn string
+	var isbnEdition uuid.UUID
 	for _, e := range editions {
 		if e.ISBN13 != "" {
-			isbn = e.ISBN13
+			isbn, isbnEdition = e.ISBN13, e.ID
 			break
 		}
 		if e.ISBN10 != "" {
-			isbn = e.ISBN10
+			isbn, isbnEdition = e.ISBN10, e.ID
 		}
 	}
 
@@ -104,6 +113,15 @@ func (w *MetadataWorker) ProcessBook(ctx context.Context, bookID, callerID uuid.
 	// Writing anyway is how a forced refresh used to blank the whole record.
 	if mergedIsEmpty(merged) {
 		return ErrNoUpdate
+	}
+	// Keep what each provider said with the edition that was looked up, so a
+	// field can be switched later without asking again.
+	if w.answers != nil {
+		if results := w.providerSvc.RecentAnswers(isbn); len(results) > 0 {
+			if err := w.answers.Save(ctx, isbnEdition, providers.BarcodeKey(isbn), results); err != nil {
+				slog.WarnContext(ctx, "saving refresh answers", "book_id", bookID, "error", err)
+			}
+		}
 	}
 
 	// When cover_only=true, skip all text-field updates and only refresh the cover.

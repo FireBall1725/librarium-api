@@ -126,6 +126,19 @@ func (r *Registry) LookupUPC(ctx context.Context, code string) []*BookResult {
 	return results
 }
 
+// LookupOne asks a single enabled provider about an ISBN, for when a
+// provider is turned on after a book was added. ok is false when there's no
+// enabled ISBN provider by that name.
+func (r *Registry) LookupOne(ctx context.Context, name, isbn string) (book *BookResult, ok bool, err error) {
+	for _, p := range r.BookISBNProviders() {
+		if p.Info().Name == name {
+			book, err = p.LookupByISBN(ctx, isbn)
+			return book, true, err
+		}
+	}
+	return nil, false, nil
+}
+
 // Provider outcomes in a lookup report.
 const (
 	StatusAnswered = "answered"

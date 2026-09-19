@@ -4741,6 +4741,131 @@ paths:
       summary: Take an identifier off a printing
       tags:
       - catalogue
+  /editions/{edition_id}/sources:
+    get:
+      description: Every stored provider answer for the edition, and the same merged
+        view a lookup returns, built from those answers without asking any provider.
+        Switching a field to another answer is a normal edition update.
+      parameters:
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              answers:
+                items:
+                  properties:
+                    fetched_at:
+                      type: string
+                    lookup_key:
+                      type: string
+                    provider:
+                      type: string
+                    result:
+                      $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult'
+                  type: object
+                type: array
+              has_answers:
+                type: boolean
+              merged:
+                $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.MergedBookResult'
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: What each provider said about a printing
+      tags:
+      - catalogue
+  /editions/{edition_id}/sources/{provider}:
+    post:
+      description: Looks the edition's ISBN up with one provider and stores its answer
+        next to the others, replacing that provider's earlier one. For a provider
+        turned on after the book was added. found is false when the provider has no
+        record.
+      parameters:
+      - description: Edition UUID
+        in: path
+        name: edition_id
+        required: true
+        type: string
+      - description: Provider name, e.g. open_library
+        in: path
+        name: provider
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              answers:
+                items:
+                  properties:
+                    fetched_at:
+                      type: string
+                    lookup_key:
+                      type: string
+                    provider:
+                      type: string
+                    result:
+                      $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult'
+                  type: object
+                type: array
+              found:
+                type: boolean
+              has_answers:
+                type: boolean
+              merged:
+                $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.MergedBookResult'
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Ask one provider about a printing now
+      tags:
+      - catalogue
   /enrichment-batches:
     delete:
       description: Bulk-deletes all done/failed/cancelled enrichment batches for the

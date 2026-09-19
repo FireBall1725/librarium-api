@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fireball1725/librarium-api/internal/providers"
@@ -30,10 +31,71 @@ var coverProbeClient = &http.Client{Timeout: 5 * time.Second}
 type ProviderService struct {
 	registry *providers.Registry
 	settings *repository.SettingsRepo
+
+	// recent holds each lookup's raw answers for a while, so adding the book
+	// can store them without asking every provider a second time.
+	recentMu sync.Mutex
+	recent   map[string]recentAnswers
 }
 
+type recentAnswers struct {
+	results []*providers.BookResult
+	at      time.Time
+}
+
+// recentAnswersTTL is how long a lookup's answers wait for the book to be
+// added. Long enough to read the result and pick fields; short enough that a
+// stale answer isn't saved hours later.
+const recentAnswersTTL = 30 * time.Minute
+
+// recentAnswersMax caps the cache; a scan session is tens of books, not
+// thousands.
+const recentAnswersMax = 500
+
 func NewProviderService(registry *providers.Registry, settings *repository.SettingsRepo) *ProviderService {
-	return &ProviderService{registry: registry, settings: settings}
+	return &ProviderService{registry: registry, settings: settings, recent: map[string]recentAnswers{}}
+}
+
+func (s *ProviderService) rememberAnswers(code string, results []*providers.BookResult) {
+	if len(results) == 0 {
+		return
+	}
+	key := providers.BarcodeKey(code)
+	s.recentMu.Lock()
+	defer s.recentMu.Unlock()
+	if len(s.recent) >= recentAnswersMax {
+		for k, v := range s.recent {
+			if time.Since(v.at) > recentAnswersTTL {
+				delete(s.recent, k)
+			}
+		}
+		for k := range s.recent {
+			if len(s.recent) < recentAnswersMax {
+				break
+			}
+			delete(s.recent, k)
+		}
+	}
+	s.recent[key] = recentAnswers{results: results, at: time.Now()}
+}
+
+// RecentAnswers returns the raw answers from a recent lookup of this ISBN or
+// UPC, or nil if there wasn't one in the last half hour.
+func (s *ProviderService) RecentAnswers(code string) []*providers.BookResult {
+	key := providers.BarcodeKey(code)
+	s.recentMu.Lock()
+	defer s.recentMu.Unlock()
+	r, ok := s.recent[key]
+	if !ok || time.Since(r.at) > recentAnswersTTL {
+		return nil
+	}
+	return r.results
+}
+
+// LookupOne asks one provider about an ISBN. ok is false when no enabled
+// ISBN provider has that name.
+func (s *ProviderService) LookupOne(ctx context.Context, name, isbn string) (*providers.BookResult, bool, error) {
+	return s.registry.LookupOne(ctx, name, isbn)
 }
 
 // LoadAll reads provider configs from the DB and applies them to the registry.
@@ -199,12 +261,16 @@ func (s *ProviderService) TestProvider(ctx context.Context, name string) (string
 
 // LookupISBN queries all enabled BookISBN providers.
 func (s *ProviderService) LookupISBN(ctx context.Context, isbn string) []*providers.BookResult {
-	return s.registry.LookupISBN(ctx, isbn)
+	results := s.registry.LookupISBN(ctx, isbn)
+	s.rememberAnswers(isbn, results)
+	return results
 }
 
 // LookupUPC queries all enabled BookUPC providers.
 func (s *ProviderService) LookupUPC(ctx context.Context, code string) []*providers.BookResult {
-	return s.registry.LookupUPC(ctx, code)
+	results := s.registry.LookupUPC(ctx, code)
+	s.rememberAnswers(code, results)
+	return results
 }
 
 // LookupISBNMerged asks every enabled provider at once and merges what came
@@ -213,6 +279,7 @@ func (s *ProviderService) LookupUPC(ctx context.Context, code string) []*provide
 // probed for size so the largest is offered first.
 func (s *ProviderService) LookupISBNMerged(ctx context.Context, isbn string) (*providers.MergedBookResult, error) {
 	results, statuses := s.registry.LookupISBNReport(ctx, isbn)
+	s.rememberAnswers(isbn, results)
 	merged := providers.MergeBookResults(results)
 	merged.Providers = statuses
 	providers.ProbeCoverSizes(ctx, coverProbeClient, merged.Covers)

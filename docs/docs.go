@@ -4821,6 +4821,195 @@ const docTemplate = `{
                 }
             }
         },
+        "/editions/{edition_id}/sources": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Every stored provider answer for the edition, and the same merged view a lookup returns, built from those answers without asking any provider. Switching a field to another answer is a normal edition update.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalogue"
+                ],
+                "summary": "What each provider said about a printing",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Edition UUID",
+                        "name": "edition_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "answers": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "fetched_at": {
+                                                "type": "string"
+                                            },
+                                            "lookup_key": {
+                                                "type": "string"
+                                            },
+                                            "provider": {
+                                                "type": "string"
+                                            },
+                                            "result": {
+                                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult"
+                                            }
+                                        }
+                                    }
+                                },
+                                "has_answers": {
+                                    "type": "boolean"
+                                },
+                                "merged": {
+                                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.MergedBookResult"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/editions/{edition_id}/sources/{provider}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Looks the edition's ISBN up with one provider and stores its answer next to the others, replacing that provider's earlier one. For a provider turned on after the book was added. found is false when the provider has no record.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalogue"
+                ],
+                "summary": "Ask one provider about a printing now",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Edition UUID",
+                        "name": "edition_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider name, e.g. open_library",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "answers": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "fetched_at": {
+                                                "type": "string"
+                                            },
+                                            "lookup_key": {
+                                                "type": "string"
+                                            },
+                                            "provider": {
+                                                "type": "string"
+                                            },
+                                            "result": {
+                                                "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.BookResult"
+                                            }
+                                        }
+                                    }
+                                },
+                                "found": {
+                                    "type": "boolean"
+                                },
+                                "has_answers": {
+                                    "type": "boolean"
+                                },
+                                "merged": {
+                                    "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.MergedBookResult"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/enrichment-batches": {
             "get": {
                 "security": [
