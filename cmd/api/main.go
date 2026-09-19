@@ -44,8 +44,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/jobs"
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/providers"
-	bookProviders "github.com/fireball1725/librarium-api/internal/providers/books"
-	mangaProviders "github.com/fireball1725/librarium-api/internal/providers/manga"
+	"github.com/fireball1725/librarium-api/internal/providers/bundled"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
 	"github.com/fireball1725/librarium-api/internal/tui"
@@ -145,15 +144,9 @@ func main() {
 	// Build a standalone provider service for the worker (same config, separate instance).
 	settingsRepo := repository.NewSettingsRepo(pool)
 	registry := providers.NewRegistry()
-	registry.Register(bookProviders.NewTestProvider())
-	registry.Register(bookProviders.NewOpenLibraryProvider())
-	registry.Register(bookProviders.NewGoogleBooksProvider())
-	registry.Register(bookProviders.NewISBNdbProvider())
-	registry.Register(bookProviders.NewHardcoverProvider())
-	registry.Register(bookProviders.NewISFDBProvider())
-	registry.Register(bookProviders.NewFinnaProvider())
-	registry.Register(bookProviders.NewUPCitemdbProvider())
-	registry.Register(mangaProviders.NewMangaDexProvider())
+	for _, p := range bundled.All() {
+		registry.Register(p)
+	}
 	providerSvc := service.NewProviderService(registry, settingsRepo)
 	providerSvc.SetUPCPrefixRepo(repository.NewUPCPrefixRepo(pool))
 	if err := providerSvc.LoadAll(baseCtx); err != nil {
