@@ -43,6 +43,10 @@ type UserClaims struct {
 	// actions that should only ever come from an interactive session —
 	// e.g. minting new API tokens.
 	FromToken bool
+	// Kiosk is "device" for a kiosk's own token, "member" for a member
+	// signed in on a kiosk, and empty otherwise. KioskGuard uses it to keep
+	// those tokens to the routes a kiosk needs.
+	Kiosk string
 }
 
 // ScopeAllows reports whether the caller's token scope permits the given
@@ -161,6 +165,10 @@ func authWithPAT(ctx context.Context, raw string, apiTokens *repository.APIToken
 	if tok.ExpiresAt != nil {
 		expires = *tok.ExpiresAt
 	}
+	kiosk, err := apiTokens.KioskKind(ctx, tok.ID)
+	if err != nil {
+		return nil, false
+	}
 	return &UserClaims{
 		JTI:             tok.ID,
 		UserID:          tok.UserID,
@@ -168,6 +176,7 @@ func authWithPAT(ctx context.Context, raw string, apiTokens *repository.APIToken
 		ExpiresAt:       expires,
 		TokenScopes:     scopes,
 		FromToken:       true,
+		Kiosk:           kiosk,
 	}, true
 }
 

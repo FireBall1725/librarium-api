@@ -16,6 +16,7 @@ import (
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -83,10 +84,37 @@ func HashToken(raw string) string {
 // Create inserts a newly-minted token. The caller is responsible for also
 // returning the raw value to the client — the repo never re-reads it.
 func (r *APITokenRepo) Create(ctx context.Context, t *models.APIToken) error {
+	return insertAPIToken(ctx, r.db, t)
+}
+
+// KioskKind says whether a token is a kiosk's own ("device"), a member's
+// kiosk session ("member"), or neither ("").
+func (r *APITokenRepo) KioskKind(ctx context.Context, id uuid.UUID) (string, error) {
+	var kind string
+	err := r.db.QueryRow(ctx, `
+		SELECT CASE
+		         WHEN EXISTS (SELECT 1 FROM kiosks WHERE api_token_id = $1) THEN 'device'
+		         WHEN EXISTS (SELECT 1 FROM kiosk_sessions WHERE api_token_id = $1) THEN 'member'
+		         ELSE '' END`, id).Scan(&kind)
+	if err != nil {
+		return "", fmt.Errorf("checking kiosk token: %w", err)
+	}
+	return kind, nil
+}
+
+// CreateTx inserts a token inside a transaction, for callers that record
+// something about it in the same step.
+func (r *APITokenRepo) CreateTx(ctx context.Context, tx pgx.Tx, t *models.APIToken) error {
+	return insertAPIToken(ctx, tx, t)
+}
+
+func insertAPIToken(ctx context.Context, db interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, t *models.APIToken) error {
 	const q = `
 		INSERT INTO api_tokens (id, user_id, name, token_hash, token_suffix, scopes, expires_at, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-	_, err := r.db.Exec(ctx, q,
+	_, err := db.Exec(ctx, q,
 		t.ID, t.UserID, t.Name, t.TokenHash, t.TokenSuffix, t.Scopes, t.ExpiresAt, t.CreatedAt,
 	)
 	if err != nil {

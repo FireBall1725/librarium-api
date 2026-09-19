@@ -116,6 +116,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	apiTokenRepo := repository.NewAPITokenRepo(db)
 
 	providerHandler := handlers.NewProviderHandler(providerSvc)
+	kioskHandler := handlers.NewKioskHandler(service.NewKioskService(db, repository.NewKioskRepo(db), apiTokenRepo))
 	editionAnswerRepo := repository.NewEditionAnswerRepo(db)
 	bookSvc.SetAnswerStore(editionAnswerRepo, providerSvc.RecentAnswers)
 	sourcesHandler := handlers.NewSourcesHandler(editionRepo, editionAnswerRepo, providerSvc)
@@ -160,16 +161,27 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 
 	clientGate := middleware.RequireClientVersion(version.MinClients)
 	authOnly := middleware.RequireAuth(jwtSvc, denylistRepo, apiTokenRepo)
+	// Plain login. KioskGuard keeps a kiosk's tokens to reading here: these
+	// routes don't all check token scopes.
 	requireAuth := func(h http.Handler) http.Handler {
+		return authOnly(clientGate(middleware.KioskGuard(h)))
+	}
+	// Routes that decide for themselves what a kiosk may do: the /kiosk ones.
+	requireAuthKiosk := func(h http.Handler) http.Handler {
 		return authOnly(clientGate(h))
+	}
+	// Personal routes a member signed in on a kiosk may write to.
+	requireAuthKioskMember := func(h http.Handler) http.Handler {
+		return authOnly(clientGate(middleware.KioskMemberWrites(h)))
 	}
 	// requireAdmin chains auth validation then instance-admin check
 	requireAdmin := func(h http.Handler) http.Handler {
 		return requireAuth(middleware.RequireInstanceAdmin(h))
 	}
 	// requireLibraryPerm chains auth then library permission check
+	// These check token scopes, so a kiosk's scoped token is held to them.
 	requireLibraryPerm := func(perm string, h http.Handler) http.Handler {
-		return requireAuth(middleware.RequireLibraryPermission(db, perm)(h))
+		return authOnly(clientGate(middleware.RequireLibraryPermission(db, perm)(h)))
 	}
 
 	mux := http.NewServeMux()
@@ -241,13 +253,13 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("PUT /api/v1/me/lists/order", requireAuth(http.HandlerFunc(listHandler.SetListOrder)))
 	mux.Handle("PATCH /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.UpdateList)))
 	mux.Handle("DELETE /api/v1/me/lists/{list_id}", requireAuth(http.HandlerFunc(listHandler.DeleteList)))
-	mux.Handle("POST /api/v1/me/lists/{list_id}/books/{book_id}", requireAuth(http.HandlerFunc(listHandler.AddBookToList)))
-	mux.Handle("DELETE /api/v1/me/lists/{list_id}/books/{book_id}", requireAuth(http.HandlerFunc(listHandler.RemoveBookFromList)))
+	mux.Handle("POST /api/v1/me/lists/{list_id}/books/{book_id}", requireAuthKioskMember(http.HandlerFunc(listHandler.AddBookToList)))
+	mux.Handle("DELETE /api/v1/me/lists/{list_id}/books/{book_id}", requireAuthKioskMember(http.HandlerFunc(listHandler.RemoveBookFromList)))
 
 	// Wishlist had no routes at all before; wants lived only as a facet value.
 	mux.Handle("GET /api/v1/me/wishlist", requireAuth(http.HandlerFunc(listHandler.ListMyWishlist)))
-	mux.Handle("POST /api/v1/me/wishlist", requireAuth(http.HandlerFunc(listHandler.AddToWishlist)))
-	mux.Handle("DELETE /api/v1/me/wishlist/{entry_id}", requireAuth(http.HandlerFunc(listHandler.RemoveFromWishlist)))
+	mux.Handle("POST /api/v1/me/wishlist", requireAuthKioskMember(http.HandlerFunc(listHandler.AddToWishlist)))
+	mux.Handle("DELETE /api/v1/me/wishlist/{entry_id}", requireAuthKioskMember(http.HandlerFunc(listHandler.RemoveFromWishlist)))
 
 	// Copies and where they live. The library-scoped routes carry a permission;
 	// the id-scoped ones resolve the library through the copy.
@@ -375,6 +387,25 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/lookup/upc/{code}", requireAuth(http.HandlerFunc(providerHandler.LookupUPC)))
 	mux.Handle("GET /api/v1/lookup/upc/{code}/merged", requireAuth(http.HandlerFunc(providerHandler.LookupUPCMerged)))
 	mux.Handle("POST /api/v1/lookup/upc/learn", requireAuth(http.HandlerFunc(providerHandler.LearnUPCPrefix)))
+
+	// Kiosks: iPads on a library's wall, and signing members in on them. See
+	// plans/ipad-kiosk.md. The /kiosk routes check for themselves whether the
+	// caller is a kiosk, a member, or a kiosk session.
+	mux.Handle("GET /api/v1/libraries/{library_id}/kiosks", requireLibraryPerm("library:update", http.HandlerFunc(kioskHandler.ListKiosks)))
+	mux.Handle("POST /api/v1/libraries/{library_id}/kiosks", requireLibraryPerm("library:update", http.HandlerFunc(kioskHandler.RegisterKiosk)))
+	mux.Handle("PATCH /api/v1/libraries/{library_id}/kiosks/{kiosk_id}", requireLibraryPerm("library:update", http.HandlerFunc(kioskHandler.UpdateKiosk)))
+	mux.Handle("DELETE /api/v1/libraries/{library_id}/kiosks/{kiosk_id}", requireLibraryPerm("library:update", http.HandlerFunc(kioskHandler.DeleteKiosk)))
+	mux.Handle("GET /api/v1/kiosk/me", requireAuthKiosk(http.HandlerFunc(kioskHandler.KioskMe)))
+	mux.Handle("GET /api/v1/kiosk/members", requireAuthKiosk(http.HandlerFunc(kioskHandler.KioskMembers)))
+	mux.Handle("POST /api/v1/kiosk/signin-codes", requireAuthKiosk(http.HandlerFunc(kioskHandler.NewSigninCode)))
+	mux.Handle("GET /api/v1/kiosk/signin-codes/{code}", requireAuthKiosk(http.HandlerFunc(kioskHandler.PollSigninCode)))
+	mux.Handle("GET /api/v1/kiosk/signin-codes/{code}/preview", requireAuthKiosk(http.HandlerFunc(kioskHandler.PreviewSigninCode)))
+	mux.Handle("POST /api/v1/kiosk/signin-codes/{code}/approve", requireAuthKiosk(http.HandlerFunc(kioskHandler.ApproveSigninCode)))
+	mux.Handle("POST /api/v1/kiosk/signin/pin", requireAuthKiosk(http.HandlerFunc(kioskHandler.PINSignin)))
+	mux.Handle("DELETE /api/v1/kiosk/session", requireAuthKiosk(http.HandlerFunc(kioskHandler.EndKioskSession)))
+	mux.Handle("GET /api/v1/me/kiosk-pin", requireAuth(http.HandlerFunc(kioskHandler.GetKioskPIN)))
+	mux.Handle("PUT /api/v1/me/kiosk-pin", requireAuth(http.HandlerFunc(kioskHandler.SetKioskPIN)))
+	mux.Handle("DELETE /api/v1/me/kiosk-pin", requireAuth(http.HandlerFunc(kioskHandler.ClearKioskPIN)))
 	mux.Handle("GET /api/v1/lookup/books", requireAuth(http.HandlerFunc(providerHandler.SearchBooks)))
 	mux.Handle("GET /api/v1/lookup/series", requireAuth(http.HandlerFunc(providerHandler.SearchSeries)))
 	mux.Handle("GET /api/v1/lookup/contributors", requireAuth(http.HandlerFunc(contributorHandler.SearchExternalContributors)))
