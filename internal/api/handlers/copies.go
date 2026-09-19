@@ -6,10 +6,13 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/fireball1725/librarium-api/internal/api/respond"
+	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/google/uuid"
 )
@@ -301,9 +304,68 @@ func (h *CopyHandler) ListLocations(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]any{"items": locations})
 }
 
-type locationBody struct {
-	Name     string  `json:"name"`
-	ParentID *string `json:"parent_id"`
+// locationRequest is a place's body with each key's presence kept, because a
+// PATCH has three answers per field: absent leaves it, null clears it, and a
+// value sets it. A plain struct can't tell absent from null, which is how
+// sending parent_id: null to move a place to the top level used to do nothing.
+type locationRequest struct {
+	Name      string
+	SetParent bool
+	Parent    *uuid.UUID
+	Bookcase  repository.BookcaseChange
+}
+
+var errBadLocationBody = errors.New("invalid request body")
+
+func parseLocationRequest(r io.Reader) (locationRequest, error) {
+	var out locationRequest
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r).Decode(&raw); err != nil {
+		return out, errBadLocationBody
+	}
+	isNull := func(m json.RawMessage) bool { return string(m) == "null" }
+
+	if v, ok := raw["name"]; ok && !isNull(v) {
+		if err := json.Unmarshal(v, &out.Name); err != nil {
+			return out, fmt.Errorf("invalid name")
+		}
+	}
+	if v, ok := raw["parent_id"]; ok {
+		out.SetParent = true
+		if !isNull(v) {
+			var s string
+			if err := json.Unmarshal(v, &s); err != nil {
+				return out, fmt.Errorf("invalid parent id")
+			}
+			// An empty string also means the top level, as it always has.
+			id, err := optionalUUID(&s)
+			if err != nil {
+				return out, fmt.Errorf("invalid parent id")
+			}
+			out.Parent = id
+		}
+	}
+	if v, ok := raw["shelf_count"]; ok {
+		out.Bookcase.SetCount = true
+		if !isNull(v) {
+			var n int
+			if err := json.Unmarshal(v, &n); err != nil {
+				return out, fmt.Errorf("invalid shelf count")
+			}
+			out.Bookcase.Count = &n
+		}
+	}
+	if v, ok := raw["shelf_numbering"]; ok {
+		out.Bookcase.SetNumbering = true
+		if !isNull(v) {
+			var d string
+			if err := json.Unmarshal(v, &d); err != nil {
+				return out, fmt.Errorf("invalid shelf numbering")
+			}
+			out.Bookcase.Numbering = &d
+		}
+	}
+	return out, nil
 }
 
 // CreateLocation godoc
@@ -314,7 +376,7 @@ type locationBody struct {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       library_id  path  string  true  "Library UUID"
-// @Param       body  body  object{name=string,parent_id=string}  true  "The location"
+// @Param       body  body  object{name=string,parent_id=string,shelf_count=integer,shelf_numbering=string}  true  "The location. shelf_count (1 to 50) makes it a bookcase; shelf_numbering is top_down or bottom_up."
 // @Success     201  {object}  object{id=string,name=string,parent_id=string}
 // @Failure     400  {object}  object{error=string}
 // @Router      /libraries/{library_id}/locations [post]
@@ -325,18 +387,22 @@ func (h *CopyHandler) CreateLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body locationBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respond.Error(w, http.StatusBadRequest, "invalid request body")
+	body, err := parseLocationRequest(r.Body)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	parent, err := optionalUUID(body.ParentID)
-	if err != nil {
-		respond.Error(w, http.StatusBadRequest, "invalid parent id")
+	if err := validBookcase(body.Bookcase); err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	location, err := h.locations.Create(r.Context(), libraryID, body.Name, parent)
+	location, err := h.locations.Create(r.Context(), libraryID, body.Name, body.Parent)
+	if err == nil && (body.Bookcase.SetCount || body.Bookcase.SetNumbering) {
+		if err = h.locations.SetBookcase(r.Context(), location.ID, body.Bookcase); err == nil {
+			location, err = h.locations.FindByID(r.Context(), location.ID)
+		}
+	}
 	switch {
 	case errors.Is(err, repository.ErrLocationNotInLibrary):
 		respond.Error(w, http.StatusBadRequest, "that parent belongs to a different library")
@@ -360,7 +426,7 @@ func (h *CopyHandler) CreateLocation(w http.ResponseWriter, r *http.Request) {
 // @Produce     json
 // @Security    BearerAuth
 // @Param       location_id  path  string  true  "Location UUID"
-// @Param       body  body  object{name=string,parent_id=string}  true  "The new name, and optionally where to move it"
+// @Param       body  body  object{name=string,parent_id=string,shelf_count=integer,shelf_numbering=string}  true  "Only the keys sent change. parent_id null or empty moves it to the top level; shelf_count or shelf_numbering null clears it."
 // @Success     200  {object}  object{id=string,name=string,parent_id=string}
 // @Failure     400  {object}  object{error=string}
 // @Failure     404  {object}  object{error=string}
@@ -373,23 +439,24 @@ func (h *CopyHandler) RenameLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body locationBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respond.Error(w, http.StatusBadRequest, "invalid request body")
+	body, err := parseLocationRequest(r.Body)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	parent, err := optionalUUID(body.ParentID)
-	if err != nil {
-		respond.Error(w, http.StatusBadRequest, "invalid parent id")
+	if err := validBookcase(body.Bookcase); err != nil {
+		respond.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// A body carrying parent_id at all means "move it", including to the top
-	// where the value is empty. Absent means leave it where it is, which is why
-	// the repository takes the flag rather than inferring it from a nil parent.
-	reparent := body.ParentID != nil
-
-	location, err := h.locations.Rename(r.Context(), id, body.Name, parent, reparent)
+	// with null or an empty string. Absent means leave it where it is.
+	location, err := h.locations.Rename(r.Context(), id, body.Name, body.Parent, body.SetParent)
+	if err == nil && (body.Bookcase.SetCount || body.Bookcase.SetNumbering) {
+		if err = h.locations.SetBookcase(r.Context(), id, body.Bookcase); err == nil {
+			location, err = h.locations.FindByID(r.Context(), id)
+		}
+	}
 	switch {
 	case errors.Is(err, repository.ErrLocationCycle):
 		respond.Error(w, http.StatusConflict,
@@ -463,6 +530,18 @@ func respondCopyErr(w http.ResponseWriter, err error) bool {
 
 // optionalUUID parses a pointer-to-string field, treating absent and empty as
 // "not set" rather than as an error.
+// validBookcase checks the bookcase fields before anything is written, so a bad
+// shelf count can't leave a place created or renamed with the rest refused.
+func validBookcase(c repository.BookcaseChange) error {
+	if c.Count != nil && (*c.Count < 1 || *c.Count > 50) {
+		return repository.ErrBadBookcase
+	}
+	if c.Numbering != nil && *c.Numbering != models.ShelfNumberingTopDown && *c.Numbering != models.ShelfNumberingBottomUp {
+		return repository.ErrBadBookcase
+	}
+	return nil
+}
+
 func optionalUUID(s *string) (*uuid.UUID, error) {
 	if s == nil || *s == "" {
 		return nil, nil

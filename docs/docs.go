@@ -9550,7 +9550,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "The location",
+                        "description": "The location. shelf_count (1 to 50) makes it a bookcase; shelf_numbering is top_down or bottom_up.",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -9561,6 +9561,12 @@ const docTemplate = `{
                                     "type": "string"
                                 },
                                 "parent_id": {
+                                    "type": "string"
+                                },
+                                "shelf_count": {
+                                    "type": "integer"
+                                },
+                                "shelf_numbering": {
                                     "type": "string"
                                 }
                             }
@@ -12810,7 +12816,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "The new name, and optionally where to move it",
+                        "description": "Only the keys sent change. parent_id null or empty moves it to the top level; shelf_count or shelf_numbering null clears it.",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -12821,6 +12827,12 @@ const docTemplate = `{
                                     "type": "string"
                                 },
                                 "parent_id": {
+                                    "type": "string"
+                                },
+                                "shelf_count": {
+                                    "type": "integer"
+                                },
+                                "shelf_numbering": {
                                     "type": "string"
                                 }
                             }

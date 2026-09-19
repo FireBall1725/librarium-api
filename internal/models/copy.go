@@ -67,4 +67,16 @@ type CopyLocation struct {
 	CreatedAt time.Time  `json:"created_at"`
 	// CopyCount is filled by listing reads.
 	CopyCount int `json:"copy_count"`
+	// ShelfCount set makes the place a bookcase with that many shelves; the
+	// places inside it are its shelves. Nil for anything else.
+	ShelfCount *int `json:"shelf_count,omitempty"`
+	// ShelfNumbering is top_down or bottom_up: which end is shelf 1. Nil
+	// means top down.
+	ShelfNumbering *string `json:"shelf_numbering,omitempty"`
 }
+
+// Shelf numbering directions for a bookcase.
+const (
+	ShelfNumberingTopDown  = "top_down"
+	ShelfNumberingBottomUp = "bottom_up"
+)
