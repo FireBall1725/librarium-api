@@ -310,14 +310,29 @@ func (r *EditionRepo) FindByIdentifierInLibrary(ctx context.Context, libraryID u
 
 // IncrementCopyCount records one more copy of an edition in a library.
 //
-// Now literally what the name says: it adds a row rather than raising a number.
+// It adds a row rather than raising a number, unless the library already has
+// an editionless copy of the book, which then takes this edition.
 // The new copy carries no condition, price or location, which is right for the
 // path that calls this (a scan that found a duplicate), and whoever wants to
 // say the second one is signed can do that against the copy afterwards.
 func (r *EditionRepo) IncrementCopyCount(ctx context.Context, libraryID, editionID uuid.UUID) error {
+	// A copy of this book with no edition yet is the one just recorded by
+	// AddBookToLibrary, so it takes the edition instead of a second copy
+	// being added beside it. Only when there is none is a new copy inserted.
 	const q = `
+		WITH adopted AS (
+		    UPDATE copies SET edition_id = $2, updated_at = NOW()
+		     WHERE id = (
+		         SELECT c.id FROM copies c
+		           JOIN book_editions e ON e.id = $2
+		          WHERE c.library_id = $1 AND c.book_id = e.book_id
+		            AND c.edition_id IS NULL AND c.deleted_at IS NULL
+		          ORDER BY c.created_at
+		          LIMIT 1)
+		    RETURNING id)
 		INSERT INTO copies (library_id, book_id, edition_id)
-		SELECT $1, e.book_id, e.id FROM book_editions e WHERE e.id = $2`
+		SELECT $1, e.book_id, e.id FROM book_editions e
+		 WHERE e.id = $2 AND NOT EXISTS (SELECT 1 FROM adopted)`
 	_, err := r.db.Exec(ctx, q, libraryID, editionID)
 	if err != nil {
 		return fmt.Errorf("incrementing copy count: %w", err)

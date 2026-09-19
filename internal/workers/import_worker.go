@@ -313,6 +313,11 @@ func (w *ImportWorker) processItem(
 				if addErr := w.libraryBooks.AddBookToLibrary(ctx, nil, job.LibraryID, bookID, &job.CreatedBy); addErr != nil {
 					return models.ImportItemFailed, fmt.Sprintf("adding book to library: %v", addErr), nil, false
 				}
+				// The copy AddBookToLibrary made has no edition; this gives it
+				// the imported ISBN's edition rather than adding a second copy.
+				if incrErr := w.editions.IncrementCopyCount(ctx, job.LibraryID, existing.ID); incrErr != nil {
+					return models.ImportItemFailed, fmt.Sprintf("recording the copy's edition: %v", incrErr), nil, false
+				}
 				w.applyInteraction(ctx, existing.ID, interactionUserID, row)
 				// addedToLibrary=true: the book is new to *this* library
 				// even though the edition row pre-existed globally. Queue
