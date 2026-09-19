@@ -533,11 +533,7 @@ func (s *SuggestionsService) enrichBuy(ctx context.Context, runID, userID uuid.U
 					itemMeta.Subtitle = merged.Subtitle.Value
 				}
 				if merged.Authors != nil && merged.Authors.Value != "" {
-					for _, a := range strings.Split(merged.Authors.Value, ",") {
-						if trimmed := strings.TrimSpace(a); trimmed != "" {
-							itemMeta.Authors = append(itemMeta.Authors, trimmed)
-						}
-					}
+					itemMeta.Authors = merged.Authors.AuthorNames()
 				}
 			}
 		} else {

@@ -20,6 +20,8 @@ type FieldOption struct {
 	SourceDisplay string `json:"source_display"`
 	// Sources is every provider that gave this value, first to answer first.
 	Sources []string `json:"sources,omitempty"`
+	// Values is the list behind a joined value; set for authors only.
+	Values []string `json:"values,omitempty"`
 }
 
 // Why a field's value was pre-selected. The client shows this next to it.
@@ -36,12 +38,16 @@ const (
 // it was chosen, and the other distinct values. Alternatives is empty when
 // every provider that had the field agrees.
 type FieldResult struct {
-	Value         string        `json:"value"`
-	Source        string        `json:"source"`
-	SourceDisplay string        `json:"source_display"`
-	Reason        string        `json:"reason,omitempty"`
-	Sources       []string      `json:"sources,omitempty"`
-	Alternatives  []FieldOption `json:"alternatives"`
+	Value         string   `json:"value"`
+	Source        string   `json:"source"`
+	SourceDisplay string   `json:"source_display"`
+	Reason        string   `json:"reason,omitempty"`
+	Sources       []string `json:"sources,omitempty"`
+	// Values is the list behind a joined value; set for authors only.
+	// Splitting Value on commas breaks a name like "King, Jr.", so a client
+	// should read this when it's present.
+	Values       []string      `json:"values,omitempty"`
+	Alternatives []FieldOption `json:"alternatives"`
 }
 
 // CoverOption is a cover URL from a single provider. Width and Height are
@@ -118,7 +124,8 @@ func MergeBookResults(results []*BookResult) *MergedBookResult {
 
 	merged.Title = mergeField(results, func(r *BookResult) string { return r.Title }, byFirst)
 	merged.Subtitle = mergeField(results, func(r *BookResult) string { return r.Subtitle }, byFirst)
-	merged.Authors = mergeField(results, func(r *BookResult) string { return strings.Join(r.Authors, ", ") }, byFirst)
+	merged.Authors = mergeField(results, func(r *BookResult) string { return strings.Join(JoinNameSuffixes(r.Authors), ", ") }, byFirst)
+	attachAuthorLists(merged.Authors, results)
 	merged.Description = mergeField(results, func(r *BookResult) string { return r.Description }, byLongest)
 	merged.Publisher = mergeField(results, func(r *BookResult) string { return r.Publisher }, byFirst)
 	merged.PublishDate = mergeField(results, func(r *BookResult) string { return r.PublishDate }, byMostDetail)
@@ -133,6 +140,26 @@ func MergeBookResults(results []*BookResult) *MergedBookResult {
 	}, byFirst)
 
 	return merged
+}
+
+// attachAuthorLists gives the merged authors value, and each alternative, the
+// list it was joined from, taken from the provider that gave it.
+func attachAuthorLists(f *FieldResult, results []*BookResult) {
+	if f == nil {
+		return
+	}
+	list := func(provider string) []string {
+		for _, r := range results {
+			if r.Provider == provider {
+				return JoinNameSuffixes(r.Authors)
+			}
+		}
+		return nil
+	}
+	f.Values = list(f.Source)
+	for i := range f.Alternatives {
+		f.Alternatives[i].Values = list(f.Alternatives[i].Source)
+	}
 }
 
 // SortCoversBySize puts the largest known cover first and marks the reason.

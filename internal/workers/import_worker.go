@@ -13,6 +13,7 @@ import (
 
 	"github.com/fireball1725/librarium-api/internal/imports"
 	"github.com/fireball1725/librarium-api/internal/models"
+	"github.com/fireball1725/librarium-api/internal/providers"
 	"github.com/fireball1725/librarium-api/internal/repository"
 	"github.com/fireball1725/librarium-api/internal/service"
 	"github.com/google/uuid"
@@ -422,7 +423,7 @@ func (w *ImportWorker) processItem(
 	// ── Contributors ──────────────────────────────────────────────────────────
 	var contribs []repository.ContributorInput
 	if authorStr := strings.TrimSpace(row["author"]); authorStr != "" {
-		for i, rawName := range splitAuthors(authorStr) {
+		for i, rawName := range providers.SplitAuthorNames(authorStr) {
 			name, role := parseContributorNameRole(rawName)
 			c, err := w.findOrCreateContributor(ctx, name)
 			if err != nil {
@@ -896,16 +897,6 @@ func parseContributorNameRole(raw string) (name, role string) {
 		}
 	}
 	return raw, "author"
-}
-
-func splitAuthors(s string) []string {
-	var names []string
-	for _, part := range strings.Split(s, ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			names = append(names, p)
-		}
-	}
-	return names
 }
 
 func findMediaTypeID(types []*models.MediaType, name string) uuid.UUID {

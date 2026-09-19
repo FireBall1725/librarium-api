@@ -211,7 +211,7 @@ func (w *MetadataWorker) applyMerged(
 	}
 	if (force || len(contribs) == 0) && merged.Authors != nil && merged.Authors.Value != "" {
 		contribs = nil
-		for i, name := range splitAuthors(merged.Authors.Value) {
+		for i, name := range merged.Authors.AuthorNames() {
 			c, err := w.findOrCreateContributor(ctx, name)
 			if err != nil {
 				slog.Warn("contributor resolution failed", "name", name, "error", err)
