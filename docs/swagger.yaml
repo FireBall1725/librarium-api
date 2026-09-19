@@ -855,6 +855,11 @@ definitions:
         type: array
       value:
         type: string
+      values:
+        description: Values is the list behind a joined value; set for authors only.
+        items:
+          type: string
+        type: array
     type: object
   github_com_fireball1725_librarium-api_internal_providers.FieldResult:
     properties:
@@ -874,6 +879,14 @@ definitions:
         type: array
       value:
         type: string
+      values:
+        description: |-
+          Values is the list behind a joined value; set for authors only.
+          Splitting Value on commas breaks a name like "King, Jr.", so a client
+          should read this when it's present.
+        items:
+          type: string
+        type: array
     type: object
   github_com_fireball1725_librarium-api_internal_providers.MergedBookResult:
     properties:

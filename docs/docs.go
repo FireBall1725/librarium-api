@@ -17483,6 +17483,13 @@ const docTemplate = `{
                 },
                 "value": {
                     "type": "string"
+                },
+                "values": {
+                    "description": "Values is the list behind a joined value; set for authors only.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -17512,6 +17519,13 @@ const docTemplate = `{
                 },
                 "value": {
                     "type": "string"
+                },
+                "values": {
+                    "description": "Values is the list behind a joined value; set for authors only.\nSplitting Value on commas breaks a name like \"King, Jr.\", so a client\nshould read this when it's present.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
