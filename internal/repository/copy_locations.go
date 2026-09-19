@@ -194,6 +194,30 @@ func (r *CopyLocationRepo) Rename(ctx context.Context, id uuid.UUID, name string
 // Delete removes an empty location. Children are reparented to nothing by the
 // schema's ON DELETE SET NULL, which flattens rather than cascading, because
 // deleting a shelf should not delete the shelves inside it.
+// PlaceNewestCopy files the most recently added copy of an edition in a library
+// at a place. An import calls it right after recording that copy, so the newest
+// one is the copy it just made, not one a person already filed elsewhere. tx
+// may be nil to run outside a transaction.
+func (r *CopyLocationRepo) PlaceNewestCopy(ctx context.Context, tx pgx.Tx, libraryID, editionID, locationID uuid.UUID) error {
+	const q = `
+		UPDATE copies SET location_id = $3, updated_at = NOW()
+		 WHERE id = (
+		     SELECT id FROM copies
+		      WHERE library_id = $1 AND edition_id = $2 AND deleted_at IS NULL
+		      ORDER BY created_at DESC, id DESC
+		      LIMIT 1)`
+	var err error
+	if tx != nil {
+		_, err = tx.Exec(ctx, q, libraryID, editionID, locationID)
+	} else {
+		_, err = r.db.Exec(ctx, q, libraryID, editionID, locationID)
+	}
+	if err != nil {
+		return fmt.Errorf("placing copy: %w", err)
+	}
+	return nil
+}
+
 func (r *CopyLocationRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	var inUse int
 	if err := r.db.QueryRow(ctx,

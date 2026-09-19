@@ -39,6 +39,8 @@ type ImportWorker struct {
 	editions     *repository.EditionRepo
 	tags         *repository.TagRepo
 	genres       *repository.GenreRepo
+	lists        *repository.ShelfRepo
+	locations    *repository.CopyLocationRepo
 	batches      *repository.EnrichmentBatchRepo
 	riverClient  *river.Client[pgx.Tx]
 }
@@ -52,6 +54,8 @@ func NewImportWorker(
 	editions *repository.EditionRepo,
 	tags *repository.TagRepo,
 	genres *repository.GenreRepo,
+	lists *repository.ShelfRepo,
+	locations *repository.CopyLocationRepo,
 	batches *repository.EnrichmentBatchRepo,
 	riverClient *river.Client[pgx.Tx],
 ) *ImportWorker {
@@ -64,6 +68,8 @@ func NewImportWorker(
 		editions:     editions,
 		tags:         tags,
 		genres:       genres,
+		lists:        lists,
+		locations:    locations,
 		batches:      batches,
 		riverClient:  riverClient,
 	}
@@ -98,7 +104,9 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[models.ImportJob
 		return fmt.Errorf("loading pending items: %w", err)
 	}
 
-	tagCache := make(map[string]uuid.UUID) // lowercase name → id
+	tagCache := make(map[string]uuid.UUID)   // lowercase name → id
+	listCache := make(map[string]uuid.UUID)  // lowercase name → id
+	placeCache := make(map[string]uuid.UUID) // lowercase "a > b" path → id
 
 	allGenres, err := w.genres.List(ctx)
 	if err != nil {
@@ -114,7 +122,7 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[models.ImportJob
 			return nil
 		}
 
-		status, msg, bookID, addedToLibrary := w.processItem(ctx, importJob, &item, tagCache, allGenres)
+		status, msg, bookID, addedToLibrary := w.processItem(ctx, importJob, &item, tagCache, listCache, placeCache, allGenres)
 		_ = w.importJobs.UpdateItemStatus(ctx, item.ID, status, msg, bookID)
 
 		switch status {
@@ -268,6 +276,8 @@ func (w *ImportWorker) processItem(
 	job *models.ImportJob,
 	item *models.ImportJobItem,
 	tagCache map[string]uuid.UUID,
+	listCache map[string]uuid.UUID,
+	placeCache map[string]uuid.UUID,
 	allGenres []*models.Genre,
 ) (models.ImportItemStatus, string, *uuid.UUID, bool) {
 	opts := job.Options
@@ -298,6 +308,21 @@ func (w *ImportWorker) processItem(
 	// exists globally but isn't yet in this library is not a duplicate
 	// from the user's perspective — we always link it and let the
 	// update-from-CSV option carry the row's user-interaction data.
+	// ── Shelf: where the copy sits ─────────────────────────────────────────────
+	// A place on the Shelves page, not a list. Places nest, so the column can
+	// say "Office > Bookcase 2 > Top shelf"; each level is found or created.
+	// Read before the duplicate check, because a linked or duplicate copy gets
+	// the place too.
+	var placeID *uuid.UUID
+	if path := firstNonEmpty(row["shelf"], row["location"]); path != "" {
+		id, err := w.resolvePlace(ctx, job.LibraryID, path, placeCache)
+		if err != nil {
+			slog.Warn("resolving shelf", "path", path, "error", err)
+		} else {
+			placeID = &id
+		}
+	}
+
 	if isbn != "" {
 		existing, err := w.editions.FindByISBN(ctx, isbn)
 		if err == nil && existing != nil {
@@ -318,6 +343,11 @@ func (w *ImportWorker) processItem(
 				if incrErr := w.editions.IncrementCopyCount(ctx, job.LibraryID, existing.ID); incrErr != nil {
 					return models.ImportItemFailed, fmt.Sprintf("recording the copy's edition: %v", incrErr), nil, false
 				}
+				if placeID != nil {
+					if err := w.locations.PlaceNewestCopy(ctx, nil, job.LibraryID, existing.ID, *placeID); err != nil {
+						return models.ImportItemFailed, fmt.Sprintf("putting the copy on its shelf: %v", err), nil, false
+					}
+				}
 				w.applyInteraction(ctx, existing.ID, interactionUserID, row)
 				// addedToLibrary=true: the book is new to *this* library
 				// even though the edition row pre-existed globally. Queue
@@ -335,6 +365,11 @@ func (w *ImportWorker) processItem(
 			if opts.DuplicateIncrementCopyCount {
 				if incrErr := w.editions.IncrementCopyCount(ctx, job.LibraryID, existing.ID); incrErr != nil {
 					return models.ImportItemFailed, fmt.Sprintf("increment copy count: %v", incrErr), nil, false
+				}
+				if placeID != nil {
+					if err := w.locations.PlaceNewestCopy(ctx, nil, job.LibraryID, existing.ID, *placeID); err != nil {
+						return models.ImportItemFailed, fmt.Sprintf("putting the copy on its shelf: %v", err), nil, false
+					}
 				}
 				actions = append(actions, "copy count incremented")
 			}
@@ -419,6 +454,23 @@ func (w *ImportWorker) processItem(
 		}
 	}
 
+	// ── Lists ───────────────────────────────────────────────────────────────
+	// Same shape as tags: a comma-separated list, and a name that does not match
+	// an existing list creates one.
+	var listIDs []uuid.UUID
+	for _, rawName := range strings.Split(firstNonEmpty(row["list"], row["lists"]), ",") {
+		name := strings.TrimSpace(rawName)
+		if name == "" {
+			continue
+		}
+		id, err := w.resolveList(ctx, job.LibraryID, job.CreatedBy, name, listCache)
+		if err != nil {
+			slog.Warn("resolving list", "name", name, "error", err)
+			continue
+		}
+		listIDs = append(listIDs, id)
+	}
+
 	// ── Genres (from CSV tags only; provider enrichment adds more if enabled) ─
 	var genreIDs []uuid.UUID
 	if tagStr := row["tags"]; tagStr != "" {
@@ -479,6 +531,12 @@ func (w *ImportWorker) processItem(
 		}
 	}
 
+	for _, lid := range listIDs {
+		if err := w.lists.AddBookTx(ctx, tx, lid, bookID); err != nil {
+			return models.ImportItemFailed, fmt.Sprintf("adding to list: %v", err), nil, false
+		}
+	}
+
 	format := models.NormalizeEditionFormat(opts.DefaultFormat)
 	editionLang := finalLanguage
 	if editionLang == "" {
@@ -508,6 +566,11 @@ func (w *ImportWorker) processItem(
 	}
 	if err := w.libraryBooks.SetEditionCopyCount(ctx, tx, job.LibraryID, editionID, 1, acq); err != nil {
 		return models.ImportItemFailed, fmt.Sprintf("setting library copy count: %v", err), nil, false
+	}
+	if placeID != nil {
+		if err := w.locations.PlaceNewestCopy(ctx, tx, job.LibraryID, editionID, *placeID); err != nil {
+			return models.ImportItemFailed, fmt.Sprintf("putting the copy on its shelf: %v", err), nil, false
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -643,7 +706,111 @@ func (w *ImportWorker) resolveTag(ctx context.Context, libraryID, createdBy uuid
 	return tag.ID, nil
 }
 
-// ─── Genre normalization ──────────────────────────────────────────────────────
+// resolveList finds a list by name in the library, creating it when nothing
+// matches. A created list is shared with the library, owned by the importing
+// user, with no colour or icon.
+//
+// It looks before it creates, which is the opposite of resolveTag. Tag names
+// are unique per library, so resolveTag can insert and treat the conflict as
+// "already there". Shelves are rows in `lists` with no unique constraint on
+// name, so an insert always succeeds and a second row named "To Read" would
+// quietly become a second shelf. The cache means the lookup runs once per
+// distinct name in an import, not once per row.
+func (w *ImportWorker) resolveList(ctx context.Context, libraryID, createdBy uuid.UUID, name string, cache map[string]uuid.UUID) (uuid.UUID, error) {
+	key := strings.ToLower(name)
+	if id, ok := cache[key]; ok {
+		return id, nil
+	}
+
+	existing, err := w.lists.List(ctx, libraryID, "", "")
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("listing lists: %w", err)
+	}
+	for _, list := range existing {
+		if strings.EqualFold(list.Name, name) {
+			cache[key] = list.ID
+			return list.ID, nil
+		}
+	}
+
+	list, err := w.lists.Create(ctx, uuid.New(), libraryID, name, "", "", "", 0, createdBy)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("creating list %q: %w", name, err)
+	}
+	cache[key] = list.ID
+	return list.ID, nil
+}
+
+// resolvePlace turns a shelf path like "Office > Bookcase 2 > Top shelf" into
+// a place on the Shelves page, finding each level under its parent or
+// creating it. Names aren't unique, so like resolveList it looks before it
+// creates, and matching ignores case. The cache holds every prefix, so a
+// thousand rows on the same shelf list the places once.
+func (w *ImportWorker) resolvePlace(ctx context.Context, libraryID uuid.UUID, path string, cache map[string]uuid.UUID) (uuid.UUID, error) {
+	var parts []string
+	for _, p := range strings.Split(path, ">") {
+		if name := strings.TrimSpace(p); name != "" {
+			parts = append(parts, name)
+		}
+	}
+	if len(parts) == 0 {
+		return uuid.Nil, fmt.Errorf("no place named in %q", path)
+	}
+	full := strings.ToLower(strings.Join(parts, " > "))
+	if id, ok := cache[full]; ok {
+		return id, nil
+	}
+
+	existing, err := w.locations.List(ctx, libraryID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("listing places: %w", err)
+	}
+	var parent *uuid.UUID
+	for i, name := range parts {
+		prefix := strings.ToLower(strings.Join(parts[:i+1], " > "))
+		if id, ok := cache[prefix]; ok {
+			parent = &id
+			continue
+		}
+		var found *uuid.UUID
+		for _, loc := range existing {
+			if strings.EqualFold(loc.Name, name) && sameParent(loc.ParentID, parent) {
+				id := loc.ID
+				found = &id
+				break
+			}
+		}
+		if found == nil {
+			loc, err := w.locations.Create(ctx, libraryID, name, parent)
+			if err != nil {
+				return uuid.Nil, fmt.Errorf("creating place %q: %w", name, err)
+			}
+			existing = append(existing, loc)
+			found = &loc.ID
+		}
+		cache[prefix] = *found
+		parent = found
+	}
+	return *parent, nil
+}
+
+func sameParent(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ─── Genre normalization ────────────────────────────────────────────────────
 
 // normalizeCategories maps provider category strings against the known genres.
 // Splits on "/" and ",", skips strings with ">" or ":", caps at 4.
