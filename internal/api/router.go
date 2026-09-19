@@ -167,6 +167,11 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	requireAdmin := func(h http.Handler) http.Handler {
 		return requireAuth(middleware.RequireInstanceAdmin(h))
 	}
+	// requireOn guards a route addressed by a thing's own id: the caller needs
+	// the permission in a library the thing belongs to.
+	requireOn := func(perm string, scope middleware.Scope, h http.Handler) http.Handler {
+		return requireAuth(middleware.RequireOn(db, perm, scope)(h))
+	}
 	// requireLibraryPerm chains auth then library permission check
 	requireLibraryPerm := func(perm string, h http.Handler) http.Handler {
 		return requireAuth(middleware.RequireLibraryPermission(db, perm)(h))
@@ -254,12 +259,12 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/books/{book_id}/copies", requireAuth(http.HandlerFunc(copyHandler.ListCopiesForBook)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/copies", requireLibraryPerm("books:read", http.HandlerFunc(copyHandler.ListCopiesForLibrary)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/copies", requireLibraryPerm("books:create", http.HandlerFunc(copyHandler.CreateCopy)))
-	mux.Handle("PATCH /api/v1/copies/{copy_id}", requireAuth(http.HandlerFunc(copyHandler.UpdateCopy)))
-	mux.Handle("DELETE /api/v1/copies/{copy_id}", requireAuth(http.HandlerFunc(copyHandler.DeleteCopy)))
+	mux.Handle("PATCH /api/v1/copies/{copy_id}", requireOn("books:update", middleware.ScopeCopy, http.HandlerFunc(copyHandler.UpdateCopy)))
+	mux.Handle("DELETE /api/v1/copies/{copy_id}", requireOn("books:delete", middleware.ScopeCopy, http.HandlerFunc(copyHandler.DeleteCopy)))
 	mux.Handle("GET /api/v1/libraries/{library_id}/locations", requireLibraryPerm("books:read", http.HandlerFunc(copyHandler.ListLocations)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/locations", requireLibraryPerm("books:update", http.HandlerFunc(copyHandler.CreateLocation)))
-	mux.Handle("PATCH /api/v1/locations/{location_id}", requireAuth(http.HandlerFunc(copyHandler.RenameLocation)))
-	mux.Handle("DELETE /api/v1/locations/{location_id}", requireAuth(http.HandlerFunc(copyHandler.DeleteLocation)))
+	mux.Handle("PATCH /api/v1/locations/{location_id}", requireOn("books:update", middleware.ScopeLocation, http.HandlerFunc(copyHandler.RenameLocation)))
+	mux.Handle("DELETE /api/v1/locations/{location_id}", requireOn("books:update", middleware.ScopeLocation, http.HandlerFunc(copyHandler.DeleteLocation)))
 
 	// Identifiers and containment: world tier, so no library in the path.
 	mux.Handle("GET /api/v1/identifier-schemes", requireAuth(http.HandlerFunc(catalogueHandler.ListIdentifierSchemes)))
@@ -267,13 +272,13 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/copy-conditions", requireAuth(http.HandlerFunc(catalogueHandler.ListCopyConditions)))
 	mux.Handle("GET /api/v1/contributor-roles", requireAuth(http.HandlerFunc(catalogueHandler.ListContributorRoles)))
 	mux.Handle("GET /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.ListEditionIdentifiers)))
-	mux.Handle("POST /api/v1/editions/{edition_id}/identifiers", requireAuth(http.HandlerFunc(catalogueHandler.AddEditionIdentifier)))
-	mux.Handle("DELETE /api/v1/editions/{edition_id}/identifiers/{scheme}/{value}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveEditionIdentifier)))
+	mux.Handle("POST /api/v1/editions/{edition_id}/identifiers", requireOn("books:update", middleware.ScopeEdition, http.HandlerFunc(catalogueHandler.AddEditionIdentifier)))
+	mux.Handle("DELETE /api/v1/editions/{edition_id}/identifiers/{scheme}/{value}", requireOn("books:update", middleware.ScopeEdition, http.HandlerFunc(catalogueHandler.RemoveEditionIdentifier)))
 	mux.Handle("GET /api/v1/editions/{edition_id}/sources", requireAuth(http.HandlerFunc(sourcesHandler.GetEditionSources)))
-	mux.Handle("POST /api/v1/editions/{edition_id}/sources/{provider}", requireAuth(http.HandlerFunc(sourcesHandler.AskEditionSource)))
+	mux.Handle("POST /api/v1/editions/{edition_id}/sources/{provider}", requireOn("books:update", middleware.ScopeEdition, http.HandlerFunc(sourcesHandler.AskEditionSource)))
 	mux.Handle("GET /api/v1/books/{book_id}/contents", requireAuth(http.HandlerFunc(catalogueHandler.ListBookContents)))
-	mux.Handle("POST /api/v1/books/{book_id}/contents", requireAuth(http.HandlerFunc(catalogueHandler.AddBookContent)))
-	mux.Handle("DELETE /api/v1/books/{book_id}/contents/{contained_id}", requireAuth(http.HandlerFunc(catalogueHandler.RemoveBookContent)))
+	mux.Handle("POST /api/v1/books/{book_id}/contents", requireOn("books:update", middleware.ScopeBook, http.HandlerFunc(catalogueHandler.AddBookContent)))
+	mux.Handle("DELETE /api/v1/books/{book_id}/contents/{contained_id}", requireOn("books:update", middleware.ScopeBook, http.HandlerFunc(catalogueHandler.RemoveBookContent)))
 	mux.Handle("GET /api/v1/books/{book_id}/containers", requireAuth(http.HandlerFunc(catalogueHandler.ListBookContainers)))
 	mux.Handle("GET /api/v1/me/loans", requireAuth(http.HandlerFunc(meBrowseHandler.MyLoans)))
 	mux.Handle("GET /api/v1/me/shelves", requireAuth(http.HandlerFunc(meBrowseHandler.MyShelves)))
@@ -397,11 +402,11 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 
 	// Contributors (any authenticated user) — search/create
 	mux.Handle("GET /api/v1/contributors", requireAuth(http.HandlerFunc(bookHandler.SearchContributors)))
-	mux.Handle("POST /api/v1/contributors", requireAuth(http.HandlerFunc(bookHandler.CreateContributor)))
+	mux.Handle("POST /api/v1/contributors", requireOn("contributors:create", middleware.ScopeAnyLibrary, http.HandlerFunc(bookHandler.CreateContributor)))
 
 	// Contributor profile, metadata, works (instance-scoped, auth required)
-	mux.Handle("PATCH /api/v1/contributors/{contributor_id}", requireAuth(http.HandlerFunc(contributorHandler.UpdateContributor)))
-	mux.Handle("DELETE /api/v1/contributors/{contributor_id}", requireAuth(http.HandlerFunc(contributorHandler.DeleteContributor)))
+	mux.Handle("PATCH /api/v1/contributors/{contributor_id}", requireOn("contributors:update", middleware.ScopeAnyLibrary, http.HandlerFunc(contributorHandler.UpdateContributor)))
+	mux.Handle("DELETE /api/v1/contributors/{contributor_id}", requireOn("contributors:delete", middleware.ScopeAnyLibrary, http.HandlerFunc(contributorHandler.DeleteContributor)))
 	// Merging duplicate contributors. Instance admin, because contributors have
 	// no library_id: folding two names together changes what every household on
 	// the server sees, the same way editing a genre does.
@@ -414,11 +419,11 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 		requireAuth(middleware.RequireInstanceAdmin(http.HandlerFunc(contributorMergeHandler.DismissDuplicates))))
 
 	mux.Handle("GET /api/v1/contributors/{contributor_id}/photo", requireAuth(http.HandlerFunc(contributorHandler.ServeContributorPhoto)))
-	mux.Handle("PUT /api/v1/contributors/{contributor_id}/photo", requireAuth(http.HandlerFunc(contributorHandler.UploadContributorPhoto)))
-	mux.Handle("DELETE /api/v1/contributors/{contributor_id}/photo", requireAuth(http.HandlerFunc(contributorHandler.DeleteContributorPhotoHandler)))
+	mux.Handle("PUT /api/v1/contributors/{contributor_id}/photo", requireOn("contributors:update", middleware.ScopeAnyLibrary, http.HandlerFunc(contributorHandler.UploadContributorPhoto)))
+	mux.Handle("DELETE /api/v1/contributors/{contributor_id}/photo", requireOn("contributors:update", middleware.ScopeAnyLibrary, http.HandlerFunc(contributorHandler.DeleteContributorPhotoHandler)))
 	mux.Handle("GET /api/v1/contributors/{contributor_id}/metadata/fetch", requireAuth(http.HandlerFunc(contributorHandler.FetchContributorMetadata)))
-	mux.Handle("POST /api/v1/contributors/{contributor_id}/metadata/apply", requireAuth(http.HandlerFunc(contributorHandler.ApplyContributorMetadata)))
-	mux.Handle("DELETE /api/v1/contributors/{contributor_id}/works/{work_id}", requireAuth(http.HandlerFunc(contributorHandler.DeleteContributorWork)))
+	mux.Handle("POST /api/v1/contributors/{contributor_id}/metadata/apply", requireOn("contributors:update", middleware.ScopeAnyLibrary, http.HandlerFunc(contributorHandler.ApplyContributorMetadata)))
+	mux.Handle("DELETE /api/v1/contributors/{contributor_id}/works/{work_id}", requireOn("contributors:delete", middleware.ScopeAnyLibrary, http.HandlerFunc(contributorHandler.DeleteContributorWork)))
 
 	// Contributors within a library
 	mux.Handle("GET /api/v1/libraries/{library_id}/contributors/letters", requireLibraryPerm("books:read", http.HandlerFunc(contributorHandler.GetLetters)))
@@ -453,7 +458,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/books/{book_id}/editions", requireAuth(http.HandlerFunc(bookHandler.ListEditions)))
 	// Single-book re-enrichment — works for floating books too since
 	// enrichment_batches.library_id is nullable post-000009.
-	mux.Handle("POST /api/v1/books/{book_id}/enrich", requireAuth(http.HandlerFunc(bookHandler.EnrichBook)))
+	mux.Handle("POST /api/v1/books/{book_id}/enrich", requireOn("books:update", middleware.ScopeBook, http.HandlerFunc(bookHandler.EnrichBook)))
 	mux.Handle("POST /api/v1/libraries/{library_id}/books/{book_id}/cover/fetch", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.FetchBookCover)))
 	mux.Handle("PUT /api/v1/libraries/{library_id}/books/{book_id}/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.UploadBookCover)))
 	mux.Handle("DELETE /api/v1/libraries/{library_id}/books/{book_id}/cover", requireLibraryPerm("books:update", http.HandlerFunc(bookHandler.DeleteBookCover)))
