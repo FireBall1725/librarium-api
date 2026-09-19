@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -65,7 +66,8 @@ func (r *CopyLocationRepo) List(ctx context.Context, libraryID uuid.UUID) ([]*mo
 		)
 		SELECT l.id, l.library_id, l.name, l.parent_id, l.created_at,
 		       (SELECT count(*) FROM copies c
-		         WHERE c.location_id = l.id AND c.deleted_at IS NULL)
+		         WHERE c.location_id = l.id AND c.deleted_at IS NULL),
+		       l.shelf_count, l.shelf_numbering
 		  FROM copy_locations l
 		  -- LEFT, and unreachable rows sort last rather than vanishing. A node
 		  -- inside a cycle has no root to descend from, and a place that cannot
@@ -82,11 +84,11 @@ func (r *CopyLocationRepo) List(ctx context.Context, libraryID uuid.UUID) ([]*mo
 
 	out := make([]*models.CopyLocation, 0)
 	for rows.Next() {
-		var l models.CopyLocation
-		if err := rows.Scan(&l.ID, &l.LibraryID, &l.Name, &l.ParentID, &l.CreatedAt, &l.CopyCount); err != nil {
+		l, err := scanLocation(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scanning location: %w", err)
 		}
-		out = append(out, &l)
+		out = append(out, l)
 	}
 	return out, rows.Err()
 }
@@ -94,19 +96,18 @@ func (r *CopyLocationRepo) List(ctx context.Context, libraryID uuid.UUID) ([]*mo
 func (r *CopyLocationRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.CopyLocation, error) {
 	const q = `
 		SELECT l.id, l.library_id, l.name, l.parent_id, l.created_at,
-		       (SELECT count(*) FROM copies c WHERE c.location_id = l.id AND c.deleted_at IS NULL)
+		       (SELECT count(*) FROM copies c WHERE c.location_id = l.id AND c.deleted_at IS NULL),
+		       l.shelf_count, l.shelf_numbering
 		  FROM copy_locations l WHERE l.id = $1`
 
-	var l models.CopyLocation
-	err := r.db.QueryRow(ctx, q, id).
-		Scan(&l.ID, &l.LibraryID, &l.Name, &l.ParentID, &l.CreatedAt, &l.CopyCount)
+	l, err := scanLocation(r.db.QueryRow(ctx, q, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("finding location: %w", err)
 	}
-	return &l, nil
+	return l, nil
 }
 
 func (r *CopyLocationRepo) Create(ctx context.Context, libraryID uuid.UUID, name string, parentID *uuid.UUID) (*models.CopyLocation, error) {
@@ -191,9 +192,6 @@ func (r *CopyLocationRepo) Rename(ctx context.Context, id uuid.UUID, name string
 	return r.FindByID(ctx, id)
 }
 
-// Delete removes an empty location. Children are reparented to nothing by the
-// schema's ON DELETE SET NULL, which flattens rather than cascading, because
-// deleting a shelf should not delete the shelves inside it.
 // PlaceNewestCopy files the most recently added copy of an edition in a library
 // at a place. An import calls it right after recording that copy, so the newest
 // one is the copy it just made, not one a person already filed elsewhere. tx
@@ -218,6 +216,70 @@ func (r *CopyLocationRepo) PlaceNewestCopy(ctx context.Context, tx pgx.Tx, libra
 	return nil
 }
 
+// ErrBadBookcase is returned for a shelf count outside 1 to 50 or a numbering
+// that isn't top_down or bottom_up.
+var ErrBadBookcase = errors.New("a bookcase has 1 to 50 shelves, numbered top_down or bottom_up")
+
+// BookcaseChange says which bookcase fields a PATCH touched. A field that isn't
+// Set is left as it is; one that is Set with a nil value is cleared.
+type BookcaseChange struct {
+	SetCount     bool
+	Count        *int
+	SetNumbering bool
+	Numbering    *string
+}
+
+// SetBookcase writes the bookcase fields a request touched. Clearing
+// shelf_count turns the place back into a plain place; its shelves stay.
+func (r *CopyLocationRepo) SetBookcase(ctx context.Context, id uuid.UUID, c BookcaseChange) error {
+	if !c.SetCount && !c.SetNumbering {
+		return nil
+	}
+	if c.Count != nil && (*c.Count < 1 || *c.Count > 50) {
+		return ErrBadBookcase
+	}
+	if c.Numbering != nil && *c.Numbering != models.ShelfNumberingTopDown && *c.Numbering != models.ShelfNumberingBottomUp {
+		return ErrBadBookcase
+	}
+	const q = `
+		UPDATE copy_locations
+		   SET shelf_count     = CASE WHEN $2 THEN $3::smallint ELSE shelf_count END,
+		       shelf_numbering = CASE WHEN $4 THEN $5::text ELSE shelf_numbering END
+		 WHERE id = $1`
+	tag, err := r.db.Exec(ctx, q, id, c.SetCount, c.Count, c.SetNumbering, c.Numbering)
+	if err != nil {
+		return fmt.Errorf("setting bookcase: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// scanLocation reads the columns List and FindByID select, in that order.
+func scanLocation(row pgx.Row) (*models.CopyLocation, error) {
+	var (
+		l         models.CopyLocation
+		count     pgtype.Int2
+		numbering pgtype.Text
+	)
+	if err := row.Scan(&l.ID, &l.LibraryID, &l.Name, &l.ParentID, &l.CreatedAt, &l.CopyCount, &count, &numbering); err != nil {
+		return nil, err
+	}
+	if count.Valid {
+		n := int(count.Int16)
+		l.ShelfCount = &n
+	}
+	if numbering.Valid {
+		v := numbering.String
+		l.ShelfNumbering = &v
+	}
+	return &l, nil
+}
+
+// Delete removes an empty location. Children are reparented to nothing by the
+// schema's ON DELETE SET NULL, which flattens rather than cascading, because
+// deleting a shelf should not delete the shelves inside it.
 func (r *CopyLocationRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	var inUse int
 	if err := r.db.QueryRow(ctx,

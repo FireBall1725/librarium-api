@@ -7792,7 +7792,8 @@ paths:
         name: library_id
         required: true
         type: string
-      - description: The location
+      - description: The location. shelf_count (1 to 50) makes it a bookcase; shelf_numbering
+          is top_down or bottom_up.
         in: body
         name: body
         required: true
@@ -7801,6 +7802,10 @@ paths:
             name:
               type: string
             parent_id:
+              type: string
+            shelf_count:
+              type: integer
+            shelf_numbering:
               type: string
           type: object
       produces:
@@ -9901,7 +9906,8 @@ paths:
         name: location_id
         required: true
         type: string
-      - description: The new name, and optionally where to move it
+      - description: Only the keys sent change. parent_id null or empty moves it to
+          the top level; shelf_count or shelf_numbering null clears it.
         in: body
         name: body
         required: true
@@ -9910,6 +9916,10 @@ paths:
             name:
               type: string
             parent_id:
+              type: string
+            shelf_count:
+              type: integer
+            shelf_numbering:
               type: string
           type: object
       produces:

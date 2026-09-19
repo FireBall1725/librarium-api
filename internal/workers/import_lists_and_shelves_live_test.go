@@ -31,7 +31,7 @@ func TestResolveListFindsOrCreates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connecting: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close) // not defer: defers run before cleanups
 
 	userID, libraryID := seedLibrary(ctx, t, pool)
 	w := &ImportWorker{lists: repository.NewShelfRepo(pool)}
@@ -87,7 +87,7 @@ func TestAddBookToListIsAdditiveAndRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connecting: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close) // not defer: defers run before cleanups
 
 	userID, libraryID := seedLibrary(ctx, t, pool)
 	shelves := repository.NewShelfRepo(pool)
@@ -190,7 +190,7 @@ func TestResolvePlaceNests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connecting: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close) // not defer: defers run before cleanups
 
 	_, libraryID := seedLibrary(ctx, t, pool)
 	locations := repository.NewCopyLocationRepo(pool)
@@ -245,9 +245,20 @@ func seedLibrary(ctx context.Context, t *testing.T, pool *pgxpool.Pool) (userID,
 		"import-fixture-"+libraryID.String(), userID); err != nil {
 		t.Fatalf("creating library: %v", err)
 	}
+	// Lists first: they hold a foreign key on the library, and a failed delete
+	// here is logged rather than dropped, which is how fixtures piled up.
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM libraries WHERE id = $1`, libraryID)
-		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+		for _, q := range []string{
+			`DELETE FROM lists WHERE shared_library_id = $1`,
+			`DELETE FROM libraries WHERE id = $1`,
+		} {
+			if _, err := pool.Exec(ctx, q, libraryID); err != nil {
+				t.Logf("cleanup: %v", err)
+			}
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID); err != nil {
+			t.Logf("cleanup: %v", err)
+		}
 	})
 	return userID, libraryID
 }
