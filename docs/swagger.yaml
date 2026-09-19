@@ -828,10 +828,14 @@ definitions:
     properties:
       cover_url:
         type: string
+      height:
+        type: integer
       source:
         type: string
       source_display:
         type: string
+      width:
+        type: integer
     type: object
   github_com_fireball1725_librarium-api_internal_providers.FieldOption:
     properties:
@@ -839,6 +843,12 @@ definitions:
         type: string
       source_display:
         type: string
+      sources:
+        description: Sources is every provider that gave this value, first to answer
+          first.
+        items:
+          type: string
+        type: array
       value:
         type: string
     type: object
@@ -848,10 +858,16 @@ definitions:
         items:
           $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldOption'
         type: array
+      reason:
+        type: string
       source:
         type: string
       source_display:
         type: string
+      sources:
+        items:
+          type: string
+        type: array
       value:
         type: string
     type: object
@@ -868,9 +884,12 @@ definitions:
         items:
           type: string
         type: array
+      cover_reason:
+        type: string
       covers:
-        description: Covers lists available cover images from each provider, in priority
-          order.
+        description: |-
+          Covers lists each distinct cover, pre-selected one first: the largest
+          once sizes are known, else in the order the providers answered.
         items:
           $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.CoverOption'
         type: array
@@ -884,6 +903,12 @@ definitions:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
       page_count:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+      providers:
+        description: Providers says what each asked provider did, when the lookup
+          reported it.
+        items:
+          $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.ProviderStatus'
+        type: array
       publish_date:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
       publisher:
@@ -892,6 +917,18 @@ definitions:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
       title:
         $ref: '#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult'
+    type: object
+  github_com_fireball1725_librarium-api_internal_providers.ProviderStatus:
+    properties:
+      display_name:
+        type: string
+      millis:
+        description: Millis is how long it took to answer; 0 when it missed the deadline.
+        type: integer
+      name:
+        type: string
+      status:
+        type: string
     type: object
   github_com_fireball1725_librarium-api_internal_providers.SeriesResult:
     properties:
@@ -2570,7 +2607,8 @@ paths:
       - providers
   /admin/providers/order:
     get:
-      description: Returns the ordered list of provider names used when merging results.
+      description: Returns the saved provider order. Kept for older clients; lookups
+        no longer use it, each field is pre-selected from the answers.
       produces:
       - application/json
       responses:
@@ -2606,7 +2644,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Sets the ordered list of provider names used when merging results.
+      description: Saves a provider order. Kept for older clients; lookups no longer
+        use it, each field is pre-selected from the answers.
       parameters:
       - description: Ordered provider names
         in: body
@@ -9863,8 +9902,11 @@ paths:
       - lookup
   /lookup/isbn/{isbn}/merged:
     get:
-      description: Returns a single merged result across all providers with per-field
-        source attribution.
+      description: Asks every enabled provider at once and returns one merged result.
+        Each field has a pre-selected value, the reason it was chosen (agreed, only,
+        longest, most_detail, first), every provider that gave it, and the other values.
+        Covers come largest first, and providers says who answered, who had no record
+        and who missed the deadline.
       parameters:
       - description: ISBN-10 or ISBN-13
         in: path

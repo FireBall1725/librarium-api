@@ -183,7 +183,7 @@ func isUPCOrEAN(code string) bool {
 // LookupISBNMerged godoc
 //
 // @Summary     Lookup ISBN merged
-// @Description Returns a single merged result across all providers with per-field source attribution.
+// @Description Asks every enabled provider at once and returns one merged result. Each field has a pre-selected value, the reason it was chosen (agreed, only, longest, most_detail, first), every provider that gave it, and the other values. Covers come largest first, and providers says who answered, who had no record and who missed the deadline.
 // @Tags        lookup
 // @Produce     json
 // @Security    BearerAuth
@@ -209,7 +209,7 @@ func (h *ProviderHandler) LookupISBNMerged(w http.ResponseWriter, r *http.Reques
 // GetProviderOrder godoc
 //
 // @Summary     Get provider priority order (admin)
-// @Description Returns the ordered list of provider names used when merging results.
+// @Description Returns the saved provider order. Kept for older clients; lookups no longer use it, each field is pre-selected from the answers.
 // @Tags        admin,providers
 // @Produce     json
 // @Security    BearerAuth
@@ -229,7 +229,7 @@ func (h *ProviderHandler) GetProviderOrder(w http.ResponseWriter, r *http.Reques
 // SetProviderOrder godoc
 //
 // @Summary     Set provider priority order (admin)
-// @Description Sets the ordered list of provider names used when merging results.
+// @Description Saves a provider order. Kept for older clients; lookups no longer use it, each field is pre-selected from the answers.
 // @Tags        admin,providers
 // @Accept      json
 // @Security    BearerAuth
