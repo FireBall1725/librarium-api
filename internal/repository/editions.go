@@ -33,7 +33,8 @@ const editionColumns = `
 	COALESCE(isbn_10,''), COALESCE(isbn_13,''), COALESCE(description,''),
 	duration_seconds, page_count, is_primary, created_at, updated_at,
 	narrator_contributor_id,
-	(SELECT name FROM contributors WHERE id = narrator_contributor_id)
+	(SELECT name FROM contributors WHERE id = narrator_contributor_id),
+	publish_date_precision
 `
 
 // beEditionColumns is editionColumns with every column prefixed by the "be"
@@ -46,7 +47,8 @@ const beEditionColumns = `
 	COALESCE(be.isbn_10,''), COALESCE(be.isbn_13,''), COALESCE(be.description,''),
 	be.duration_seconds, be.page_count, be.is_primary, be.created_at, be.updated_at,
 	be.narrator_contributor_id,
-	(SELECT name FROM contributors WHERE id = be.narrator_contributor_id)
+	(SELECT name FROM contributors WHERE id = be.narrator_contributor_id),
+	be.publish_date_precision
 `
 
 func (r *EditionRepo) ListByBook(ctx context.Context, bookID uuid.UUID) ([]*models.BookEdition, error) {
@@ -146,6 +148,7 @@ func scanEdition(s scanner) (*models.BookEdition, error) {
 		pgPageCount             pgtype.Int4
 		pgNarratorContributorID pgtype.UUID
 		pgNarratorContribName   pgtype.Text
+		pgPrecision             pgtype.Text
 		e                       models.BookEdition
 	)
 	err := s.Scan(
@@ -154,6 +157,7 @@ func scanEdition(s scanner) (*models.BookEdition, error) {
 		&e.ISBN10, &e.ISBN13, &e.Description,
 		&pgDuration, &pgPageCount, &e.IsPrimary, &e.CreatedAt, &e.UpdatedAt,
 		&pgNarratorContributorID, &pgNarratorContribName,
+		&pgPrecision,
 	)
 	if err != nil {
 		return nil, err
@@ -178,6 +182,9 @@ func scanEdition(s scanner) (*models.BookEdition, error) {
 	}
 	if pgNarratorContribName.Valid {
 		e.NarratorContributorName = pgNarratorContribName.String
+	}
+	if pgPrecision.Valid {
+		e.PublishDatePrecision = models.DatePrecision(pgPrecision.String)
 	}
 	return &e, nil
 }

@@ -16225,6 +16225,10 @@ const docTemplate = `{
                     "description": "YYYY-MM-DD",
                     "type": "string"
                 },
+                "publish_date_precision": {
+                    "description": "PublishDatePrecision is year, month or day: how much of publish_date is real.",
+                    "type": "string"
+                },
                 "publisher": {
                     "type": "string"
                 },
