@@ -427,16 +427,16 @@ func normalizeDate(s string) string {
 	if s == "" {
 		return ""
 	}
+	// A year or a month is returned as it is, not padded to the 1st: padding
+	// turned every "1987" into 1 January 1987, which nothing downstream could
+	// tell apart from a real date. ParseFlexDate reads all three shapes.
 	for _, layout := range []string{"2006-01-02", "2006-01"} {
 		if _, err := time.Parse(layout, s); err == nil {
-			if layout == "2006-01" {
-				return s + "-01"
-			}
 			return s
 		}
 	}
 	if reYearOnly.MatchString(s) {
-		return s + "-01-01"
+		return s
 	}
 	// "Month D, YYYY" or "Mon D, YYYY" (full or abbreviated month)
 	if m := reFullDate.FindStringSubmatch(s); m != nil {
@@ -454,7 +454,7 @@ func normalizeDate(s string) string {
 	if m := reMonthYear.FindStringSubmatch(s); m != nil {
 		for _, mfmt := range []string{"January 2006", "Jan 2006"} {
 			if t, err := time.Parse(mfmt, m[1]+" "+m[2]); err == nil {
-				return t.Format("2006-01-02")
+				return t.Format("2006-01")
 			}
 		}
 	}
