@@ -42,7 +42,7 @@ the repo whose feature is shipping bumps.
 
 ## Stack
 
-Go 1.25, Postgres 16, [River](https://riverqueue.com) for background jobs,
+Go 1.27, Postgres 16, [River](https://riverqueue.com) for background jobs,
 `pgx/v5` for database access, stdlib `net/http` for routing (`ServeMux` with
 Go 1.22 patterns and `r.PathValue`), `golang-migrate` for schema, `swag` for
 OpenAPI generation. No web framework, no ORM.
