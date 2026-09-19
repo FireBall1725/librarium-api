@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -46,6 +47,24 @@ type BookService struct {
 	// are optional; SetAnswerStore wires them.
 	answers *repository.EditionAnswerRepo
 	recent  func(code string) []*providers.BookResult
+
+	// locations files a new book's copy on a shelf; see SetLocationRepo.
+	locations *repository.CopyLocationRepo
+}
+
+// SetLocationRepo lets CreateBook file the new copy on a shelf.
+func (s *BookService) SetLocationRepo(r *repository.CopyLocationRepo) { s.locations = r }
+
+// ErrLocationElsewhere is a place that isn't in the library the book is going into.
+var ErrLocationElsewhere = errors.New("that place isn't in this library")
+
+// NamedContributor is a person given by name rather than id. CreateBook finds
+// the contributor with exactly that name, or creates one, so a client adding
+// books from a lookup doesn't have to search and create each author itself.
+type NamedContributor struct {
+	Name         string
+	Role         string
+	DisplayOrder int
 }
 
 // SetAnswerStore lets a new edition keep the provider answers from the lookup
@@ -117,9 +136,34 @@ type BookRequest struct {
 	GenreIDs     []uuid.UUID
 	// Edition, if set, is created atomically with the book.
 	Edition *EditionRequest
+	// NamedContributors are added after Contributors, resolved by name.
+	NamedContributors []NamedContributor
+	// LocationID, if set, is where the copy this adds is filed. It needs an
+	// edition to find the copy by.
+	LocationID *uuid.UUID
 }
 
 func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.UUID, req BookRequest) (*models.Book, error) {
+	if req.LocationID != nil {
+		if s.locations == nil {
+			return nil, errors.New("filing on a shelf isn't set up")
+		}
+		loc, err := s.locations.FindByID(ctx, *req.LocationID)
+		if errors.Is(err, repository.ErrNotFound) || (err == nil && loc.LibraryID != libraryID) {
+			return nil, ErrLocationElsewhere
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(req.NamedContributors) > 0 {
+		resolved, err := s.resolveNamedContributors(ctx, req.NamedContributors, len(req.Contributors))
+		if err != nil {
+			return nil, err
+		}
+		req.Contributors = append(req.Contributors, resolved...)
+	}
+
 	// If an ISBN or other identifier is provided and already exists globally
 	// (in any library or floating), we reuse the existing book + edition and bump the copy count
 	// for *this* library via the junction. If this library didn't already
@@ -144,6 +188,11 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 			}
 			if incrErr := s.editions.IncrementCopyCount(ctx, libraryID, existing.ID); incrErr != nil {
 				return nil, fmt.Errorf("incrementing copy count: %w", incrErr)
+			}
+			if req.LocationID != nil {
+				if err := s.locations.PlaceNewestCopy(ctx, nil, libraryID, existing.ID, *req.LocationID); err != nil {
+					return nil, err
+				}
 			}
 			// The lookup that found it is as good for the existing edition,
 			// and fills in answers for editions added before they were kept.
@@ -210,6 +259,11 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 		if err := s.libraryBooks.SetEditionCopyCount(ctx, tx, libraryID, editionID, 1, acq); err != nil {
 			return nil, err
 		}
+		if req.LocationID != nil {
+			if err := s.locations.PlaceNewestCopy(ctx, tx, libraryID, editionID, *req.LocationID); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -220,6 +274,51 @@ func (s *BookService) CreateBook(ctx context.Context, libraryID, callerID uuid.U
 	}
 
 	return s.books.FindByID(ctx, bookID, callerID, libraryID)
+}
+
+// resolveNamedContributors finds each person by exact name (case aside), or
+// creates them, the same rule CSV import uses. Order continues after the
+// contributors given by id; a name repeated with the same role is kept once.
+func (s *BookService) resolveNamedContributors(ctx context.Context, named []NamedContributor, after int) ([]repository.ContributorInput, error) {
+	out := make([]repository.ContributorInput, 0, len(named))
+	seen := map[string]bool{}
+	for i, n := range named {
+		name := strings.TrimSpace(n.Name)
+		if name == "" {
+			continue
+		}
+		role := n.Role
+		if role == "" {
+			role = "author"
+		}
+		key := strings.ToLower(name) + "|" + role
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		var found *models.Contributor
+		hits, err := s.contributors.Search(ctx, name, 5)
+		if err != nil {
+			return nil, fmt.Errorf("finding contributor %q: %w", name, err)
+		}
+		for _, c := range hits {
+			if strings.EqualFold(c.Name, name) {
+				found = c
+				break
+			}
+		}
+		if found == nil {
+			if found, err = s.contributors.Create(ctx, uuid.New(), name, DeriveSortName(name), false); err != nil {
+				return nil, fmt.Errorf("creating contributor %q: %w", name, err)
+			}
+		}
+		order := n.DisplayOrder
+		if order == 0 {
+			order = after + i
+		}
+		out = append(out, repository.ContributorInput{ContributorID: found.ID, Role: role, DisplayOrder: order})
+	}
+	return out, nil
 }
 
 // findExistingEdition returns the edition a new book should reuse: the one

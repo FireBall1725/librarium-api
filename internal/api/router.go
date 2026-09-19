@@ -119,6 +119,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	kioskHandler := handlers.NewKioskHandler(service.NewKioskService(db, repository.NewKioskRepo(db), apiTokenRepo))
 	editionAnswerRepo := repository.NewEditionAnswerRepo(db)
 	bookSvc.SetAnswerStore(editionAnswerRepo, providerSvc.RecentAnswers)
+	bookSvc.SetLocationRepo(repository.NewCopyLocationRepo(db))
 	sourcesHandler := handlers.NewSourcesHandler(editionRepo, editionAnswerRepo, providerSvc)
 	aiHandler := handlers.NewAIHandler(aiSvc)
 	aiUserHandler := handlers.NewAIUserHandler(aiUserSvc)
