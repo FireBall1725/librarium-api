@@ -84,6 +84,9 @@ type MergedBookResult struct {
 	CoverReason string        `json:"cover_reason,omitempty"`
 	// Providers says what each asked provider did, when the lookup reported it.
 	Providers []ProviderStatus `json:"providers,omitempty"`
+	// FromISBN is the ISBN a UPC lookup was answered by, when the server
+	// worked it out from the barcode's add-on rather than trusting the UPC.
+	FromISBN string `json:"from_isbn,omitempty"`
 }
 
 // MergeBookResults combines every provider's answer. There's no priority

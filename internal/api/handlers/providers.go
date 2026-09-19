@@ -209,7 +209,7 @@ func (h *ProviderHandler) LookupISBNMerged(w http.ResponseWriter, r *http.Reques
 // LookupUPCMerged godoc
 //
 // @Summary     Lookup UPC merged
-// @Description The merged ISBN lookup for a UPC or EAN: asks every enabled provider that reads those and returns one merged result in the same shape.
+// @Description The merged ISBN lookup for a UPC or EAN, in the same shape. When a paperback's UPC comes with its 5-digit add-on and the publisher is known, the ISBN is worked out from the add-on and looked up instead, and from_isbn says so; a bare paperback UPC is shared by every book at the same price.
 // @Tags        lookup
 // @Produce     json
 // @Security    BearerAuth

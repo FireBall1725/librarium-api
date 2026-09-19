@@ -13229,7 +13229,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "The merged ISBN lookup for a UPC or EAN: asks every enabled provider that reads those and returns one merged result in the same shape.",
+                "description": "The merged ISBN lookup for a UPC or EAN, in the same shape. When a paperback's UPC comes with its 5-digit add-on and the publisher is known, the ISBN is worked out from the add-on and looked up instead, and from_isbn says so; a bare paperback UPC is shared by every book at the same price.",
                 "produces": [
                     "application/json"
                 ],
@@ -17615,6 +17615,10 @@ const docTemplate = `{
                 },
                 "description": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"
+                },
+                "from_isbn": {
+                    "description": "FromISBN is the ISBN a UPC lookup was answered by, when the server\nworked it out from the barcode's add-on rather than trusting the UPC.",
+                    "type": "string"
                 },
                 "isbn_10": {
                     "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.FieldResult"
