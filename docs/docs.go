@@ -13222,6 +13222,62 @@ const docTemplate = `{
                 }
             }
         },
+        "/lookup/upc/{code}/merged": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "The merged ISBN lookup for a UPC or EAN: asks every enabled provider that reads those and returns one merged result in the same shape.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "lookup"
+                ],
+                "summary": "Lookup UPC merged",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UPC-A or EAN-13, optionally with a 5-digit add-on",
+                        "name": "code",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_fireball1725_librarium-api_internal_providers.MergedBookResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "error": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/me/ai-prefs": {
             "get": {
                 "security": [

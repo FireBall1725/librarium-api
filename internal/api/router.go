@@ -373,6 +373,7 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	mux.Handle("GET /api/v1/lookup/isbn/{isbn}", requireAuth(http.HandlerFunc(providerHandler.LookupISBN)))
 	mux.Handle("GET /api/v1/lookup/isbn/{isbn}/merged", requireAuth(http.HandlerFunc(providerHandler.LookupISBNMerged)))
 	mux.Handle("GET /api/v1/lookup/upc/{code}", requireAuth(http.HandlerFunc(providerHandler.LookupUPC)))
+	mux.Handle("GET /api/v1/lookup/upc/{code}/merged", requireAuth(http.HandlerFunc(providerHandler.LookupUPCMerged)))
 	mux.Handle("GET /api/v1/lookup/books", requireAuth(http.HandlerFunc(providerHandler.SearchBooks)))
 	mux.Handle("GET /api/v1/lookup/series", requireAuth(http.HandlerFunc(providerHandler.SearchSeries)))
 	mux.Handle("GET /api/v1/lookup/contributors", requireAuth(http.HandlerFunc(contributorHandler.SearchExternalContributors)))

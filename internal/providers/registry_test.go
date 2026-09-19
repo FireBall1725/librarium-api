@@ -193,3 +193,15 @@ func TestLookupUPC_NoProvidersReturnsNil(t *testing.T) {
 		t.Fatalf("want nil with no UPC providers, got %+v", out)
 	}
 }
+
+// The merged UPC lookup needs to say who answered, the same as an ISBN one.
+func TestLookupUPCReport_SaysWhoAnswered(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&fakeUPCProvider{name: "upc"})
+	r.Register(&fakeISBNProvider{name: "isbn-only"})
+
+	out, statuses := r.LookupUPCReport(context.Background(), "036000291452")
+	if len(out) != 1 || len(statuses) != 1 || statuses[0].Name != "upc" {
+		t.Fatalf("results %+v, statuses %+v", out, statuses)
+	}
+}

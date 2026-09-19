@@ -327,6 +327,18 @@ func (s *ProviderService) LookupISBNMerged(ctx context.Context, isbn string) (*p
 	return merged, nil
 }
 
+// LookupUPCMerged is LookupISBNMerged for a UPC or EAN, asking the providers
+// that read those, so a scanned UPC lands in the same picker an ISBN does.
+func (s *ProviderService) LookupUPCMerged(ctx context.Context, code string) (*providers.MergedBookResult, error) {
+	results, statuses := s.registry.LookupUPCReport(ctx, code)
+	s.rememberAnswers(code, results)
+	merged := providers.MergeBookResults(results)
+	merged.Providers = statuses
+	providers.ProbeCoverSizes(ctx, coverProbeClient, merged.Covers)
+	merged.SortCoversBySize()
+	return merged, nil
+}
+
 // GetProviderOrder returns the saved provider priority order. Defaults to
 // registration order if none has been configured.
 func (s *ProviderService) GetProviderOrder(ctx context.Context) ([]string, error) {
