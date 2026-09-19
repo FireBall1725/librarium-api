@@ -95,6 +95,7 @@ var spdxByModule = map[string]string{
 	"github.com/riverqueue/river/riverdriver/riverpgxv5":       "MPL-2.0",
 	"github.com/riverqueue/river/rivershared":                  "MPL-2.0",
 	"github.com/riverqueue/river/rivertype":                    "MPL-2.0",
+	"github.com/rogpeppe/go-internal":                          "BSD-3-Clause",
 	"github.com/rivo/uniseg":                                   "MIT",
 	"github.com/robfig/cron/v3":                                "MIT",
 	"github.com/standard-webhooks/standard-webhooks/libraries": "MIT",
