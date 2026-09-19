@@ -50,6 +50,12 @@ type ProviderInfo struct {
 	// leave this nil and rely on RequiresKey; the settings page falls back
 	// to the existing single-API-key form in that case.
 	ConfigFields []ConfigField
+	// TestISBN overrides the ISBN the admin "Test" button looks up to prove
+	// the provider is reachable. Optional — leave empty to use the default,
+	// globally-available test ISBN. A region-specific provider (e.g. Finna,
+	// which only carries Finnish library holdings) must set this to an ISBN it
+	// actually has, or the test always reports a false negative.
+	TestISBN string
 }
 
 // BookResult is a normalised book record returned by a BookISBNProvider.

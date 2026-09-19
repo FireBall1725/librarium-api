@@ -148,10 +148,14 @@ func (s *ProviderService) Registry() *providers.Registry {
 // TestProvider makes a live test call to the named provider using a known ISBN
 // and returns the result title or an actionable error message.
 func (s *ProviderService) TestProvider(ctx context.Context, name string) (string, error) {
-	const testISBN = "9780439708180" // Harry Potter and the Philosopher's Stone — in every major book DB
+	// Default probe ISBN — Harry Potter and the Philosopher's Stone, in every
+	// major book DB. A region-specific provider overrides it via Info().TestISBN
+	// (e.g. Finna, which only has Finnish editions and never this UK one).
+	const defaultTestISBN = "9780439708180"
 
 	for _, p := range s.registry.All() {
-		if p.Info().Name != name {
+		info := p.Info()
+		if info.Name != name {
 			continue
 		}
 		if !p.Enabled() {
@@ -160,6 +164,10 @@ func (s *ProviderService) TestProvider(ctx context.Context, name string) (string
 		bp, ok := p.(providers.BookISBNProvider)
 		if !ok {
 			return "", fmt.Errorf("this provider does not support ISBN lookup")
+		}
+		testISBN := defaultTestISBN
+		if info.TestISBN != "" {
+			testISBN = info.TestISBN
 		}
 		result, err := bp.LookupByISBN(ctx, testISBN)
 		if err != nil {
