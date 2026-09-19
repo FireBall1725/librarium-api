@@ -11228,77 +11228,6 @@ paths:
       summary: Totals for the navigation
       tags:
       - me
-  /me/kiosk-pin:
-    delete:
-      description: Needs a signed-in session, not an API token.
-      responses:
-        "204":
-          description: No Content
-        "403":
-          description: Forbidden
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Remove my kiosk PIN
-      tags:
-      - kiosks
-    get:
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              set:
-                type: boolean
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Whether I have a kiosk PIN
-      tags:
-      - kiosks
-    put:
-      consumes:
-      - application/json
-      description: 4 to 8 digits, stored hashed like a password. Needs a signed-in
-        session, not an API token, so a kiosk session can't change it.
-      parameters:
-      - description: The PIN
-        in: body
-        name: body
-        required: true
-        schema:
-          properties:
-            pin:
-              type: string
-          type: object
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-        "403":
-          description: Forbidden
-          schema:
-            properties:
-              error:
-                type: string
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Set my kiosk PIN
-      tags:
-      - kiosks
   /me/libraries:
     get:
       description: |-
@@ -11725,6 +11654,81 @@ paths:
       security:
       - BearerAuth: []
       summary: Loans across every library the caller can read
+      tags:
+      - me
+  /me/pin:
+    delete:
+      description: Needs a signed-in session, not an API token.
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove my PIN
+      tags:
+      - me
+    get:
+      description: A PIN is a short number that identifies you for a quick sign-in
+        where typing your password isn't practical, such as a library kiosk.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              set:
+                type: boolean
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Whether I have a PIN
+      tags:
+      - me
+    put:
+      consumes:
+      - application/json
+      description: 4 to 8 digits, stored hashed like a password. Used for a quick
+        sign-in where typing a password isn't practical, such as a library kiosk.
+        Needs a signed-in session, not an API token, so a kiosk session can't change
+        it.
+      parameters:
+      - description: The PIN
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            pin:
+              type: string
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set my PIN
       tags:
       - me
   /me/series:

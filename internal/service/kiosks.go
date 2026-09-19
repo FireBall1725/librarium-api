@@ -398,8 +398,9 @@ func (s *KioskService) EndSession(ctx context.Context, c *Caller) error {
 
 // ── PINs ─────────────────────────────────────────────────────────────────────
 
-// SetPIN sets the member's kiosk PIN, hashed like a password. Only from an
-// interactive session, so a kiosk session can't change it.
+// SetPIN sets the member's PIN, hashed like a password. It's for quick
+// sign-in where a password isn't practical; the kiosk is the first user. Only
+// from an interactive session, so a kiosk session can't change it.
 func (s *KioskService) SetPIN(ctx context.Context, c *Caller, pin string) error {
 	if c == nil || c.FromToken {
 		return ErrInteractiveOnly
@@ -414,7 +415,7 @@ func (s *KioskService) SetPIN(ctx context.Context, c *Caller, pin string) error 
 	return s.kiosks.SetPINHash(ctx, c.UserID, &hash)
 }
 
-// ClearPIN removes the member's kiosk PIN.
+// ClearPIN removes the member's PIN.
 func (s *KioskService) ClearPIN(ctx context.Context, c *Caller) error {
 	if c == nil || c.FromToken {
 		return ErrInteractiveOnly
@@ -422,7 +423,7 @@ func (s *KioskService) ClearPIN(ctx context.Context, c *Caller) error {
 	return s.kiosks.SetPINHash(ctx, c.UserID, nil)
 }
 
-// HasPIN says whether the member has set a kiosk PIN.
+// HasPIN says whether the member has set a PIN.
 func (s *KioskService) HasPIN(ctx context.Context, userID uuid.UUID) (bool, error) {
 	hash, err := s.kiosks.PINHash(ctx, userID)
 	return hash != "", err

@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// KioskRepo holds kiosks, their sign-in codes and sessions, and kiosk PINs.
+// KioskRepo holds kiosks, their sign-in codes and sessions, and members' PINs.
 // See migration 44.
 type KioskRepo struct {
 	db *pgxpool.Pool
@@ -157,7 +157,7 @@ func (r *KioskRepo) IsMember(ctx context.Context, libraryID, userID uuid.UUID) (
 // Members lists who can sign in on a library's kiosk, for its picker.
 func (r *KioskRepo) Members(ctx context.Context, libraryID uuid.UUID) ([]*models.KioskMember, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT DISTINCT u.id, u.display_name, u.kiosk_pin_hash IS NOT NULL
+		SELECT DISTINCT u.id, u.display_name, u.pin_hash IS NOT NULL
 		  FROM users u JOIN user_roles ur ON ur.user_id = u.id
 		 WHERE u.is_active AND (ur.library_id = $1 OR ur.library_id IS NULL)
 		 ORDER BY u.display_name, u.id`, libraryID)
@@ -264,23 +264,23 @@ func (r *KioskRepo) EndSession(ctx context.Context, tokenID uuid.UUID) (ok bool,
 
 // ── PINs ─────────────────────────────────────────────────────────────────────
 
-// SetPINHash sets or, with nil, clears a user's kiosk PIN.
+// SetPINHash sets or, with nil, clears a user's PIN.
 func (r *KioskRepo) SetPINHash(ctx context.Context, userID uuid.UUID, hash *string) error {
-	if _, err := r.db.Exec(ctx, `UPDATE users SET kiosk_pin_hash = $2, updated_at = NOW() WHERE id = $1`, userID, hash); err != nil {
-		return fmt.Errorf("setting kiosk pin: %w", err)
+	if _, err := r.db.Exec(ctx, `UPDATE users SET pin_hash = $2, updated_at = NOW() WHERE id = $1`, userID, hash); err != nil {
+		return fmt.Errorf("setting pin: %w", err)
 	}
 	return nil
 }
 
-// PINHash reads a user's kiosk PIN hash; empty when they have none.
+// PINHash reads a user's PIN hash; empty when they have none.
 func (r *KioskRepo) PINHash(ctx context.Context, userID uuid.UUID) (string, error) {
 	var hash *string
-	err := r.db.QueryRow(ctx, `SELECT kiosk_pin_hash FROM users WHERE id = $1`, userID).Scan(&hash)
+	err := r.db.QueryRow(ctx, `SELECT pin_hash FROM users WHERE id = $1`, userID).Scan(&hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
 	if err != nil {
-		return "", fmt.Errorf("reading kiosk pin: %w", err)
+		return "", fmt.Errorf("reading pin: %w", err)
 	}
 	if hash == nil {
 		return "", nil

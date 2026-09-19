@@ -17,7 +17,7 @@ import (
 )
 
 // KioskHandler serves kiosks (iPads on a library's wall), signing members in
-// on them, and members' kiosk PINs. See plans/ipad-kiosk.md.
+// on them, and members' PINs. See plans/ipad-kiosk.md.
 type KioskHandler struct {
 	svc *service.KioskService
 }
@@ -406,15 +406,16 @@ func (h *KioskHandler) EndKioskSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GetKioskPIN godoc
+// GetPIN godoc
 //
-// @Summary     Whether I have a kiosk PIN
-// @Tags        kiosks
+// @Summary     Whether I have a PIN
+// @Description A PIN is a short number that identifies you for a quick sign-in where typing your password isn't practical, such as a library kiosk.
+// @Tags        me
 // @Produce     json
 // @Security    BearerAuth
 // @Success     200  {object}  object{set=boolean}
-// @Router      /me/kiosk-pin [get]
-func (h *KioskHandler) GetKioskPIN(w http.ResponseWriter, r *http.Request) {
+// @Router      /me/pin [get]
+func (h *KioskHandler) GetPIN(w http.ResponseWriter, r *http.Request) {
 	c := callerFrom(r)
 	if c == nil {
 		respond.Error(w, http.StatusUnauthorized, "authentication required")
@@ -428,19 +429,19 @@ func (h *KioskHandler) GetKioskPIN(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]any{"set": set})
 }
 
-// SetKioskPIN godoc
+// SetPIN godoc
 //
-// @Summary     Set my kiosk PIN
-// @Description 4 to 8 digits, stored hashed like a password. Needs a signed-in session, not an API token, so a kiosk session can't change it.
-// @Tags        kiosks
+// @Summary     Set my PIN
+// @Description 4 to 8 digits, stored hashed like a password. Used for a quick sign-in where typing a password isn't practical, such as a library kiosk. Needs a signed-in session, not an API token, so a kiosk session can't change it.
+// @Tags        me
 // @Accept      json
 // @Security    BearerAuth
 // @Param       body  body  object{pin=string}  true  "The PIN"
 // @Success     204
 // @Failure     400  {object}  object{error=string}
 // @Failure     403  {object}  object{error=string}
-// @Router      /me/kiosk-pin [put]
-func (h *KioskHandler) SetKioskPIN(w http.ResponseWriter, r *http.Request) {
+// @Router      /me/pin [put]
+func (h *KioskHandler) SetPIN(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		PIN string `json:"pin"`
 	}
@@ -455,16 +456,16 @@ func (h *KioskHandler) SetKioskPIN(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ClearKioskPIN godoc
+// ClearPIN godoc
 //
-// @Summary     Remove my kiosk PIN
+// @Summary     Remove my PIN
 // @Description Needs a signed-in session, not an API token.
-// @Tags        kiosks
+// @Tags        me
 // @Security    BearerAuth
 // @Success     204
 // @Failure     403  {object}  object{error=string}
-// @Router      /me/kiosk-pin [delete]
-func (h *KioskHandler) ClearKioskPIN(w http.ResponseWriter, r *http.Request) {
+// @Router      /me/pin [delete]
+func (h *KioskHandler) ClearPIN(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.ClearPIN(r.Context(), callerFrom(r)); err != nil {
 		kioskError(w, r, err)
 		return

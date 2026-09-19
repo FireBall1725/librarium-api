@@ -44,9 +44,10 @@ CREATE TABLE IF NOT EXISTS kiosk_sessions (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Optional, for members who'd rather tap their name than use their phone.
--- Hashed with the same scheme as passwords.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS kiosk_pin_hash TEXT;
+-- An optional PIN: a short number that identifies someone for a quick
+-- sign-in where typing a password isn't practical. The kiosk is the first
+-- place it's used. Hashed with the same scheme as passwords.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT;
 
 -- Wrong PINs, for the lockout: 5 in 5 minutes locks that member on that
 -- kiosk until they age out.
