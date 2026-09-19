@@ -607,6 +607,11 @@ func (w *ImportWorker) applyInteraction(ctx context.Context, editionID, userID u
 	startedAt, hasStarted := imports.Date(row["date_started"])
 	finishedAt, hasFinished := imports.Date(row["date_finished"])
 	isFavorite, hasFavorite := imports.Bool(row["is_favorite"])
+	// Bool reads a blank as "no", but on a re-import a blank cell must leave
+	// an existing favourite alone, and must not make an empty row write.
+	if strings.TrimSpace(row["is_favorite"]) == "" {
+		hasFavorite = false
+	}
 	progress, hasProgress := imports.Progress(
 		row["pages_read"], row["progress_percent"], row["progress_position"],
 	)
