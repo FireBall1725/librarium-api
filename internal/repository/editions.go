@@ -470,10 +470,12 @@ func (r *EditionRepo) MergeInteraction(ctx context.Context, userID, editionID uu
 		return nil, err
 	}
 
+	// $4 needs its cast: without one Postgres can't type it for the bare
+	// "$4 IS NOT NULL" and rejects the statement, so every import failed.
 	const q = `
 		INSERT INTO user_books (user_id, book_id, read_status, rating, notes, review, is_favorite,
 		                        read_status_updated_at, rating_updated_at, is_favorite_updated_at)
-		VALUES ($1, $2, COALESCE(NULLIF($3,''), 'unread'), $4, COALESCE($5,''), COALESCE($6,''),
+		VALUES ($1, $2, COALESCE(NULLIF($3,''), 'unread'), $4::int, COALESCE($5,''), COALESCE($6,''),
 		        COALESCE($7, FALSE),
 		        CASE WHEN NULLIF($3,'') IS NOT NULL THEN NOW() END,
 		        CASE WHEN $4 IS NOT NULL THEN NOW() END,
