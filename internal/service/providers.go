@@ -236,14 +236,23 @@ func (s *ProviderService) Registry() *providers.Registry {
 	return s.registry
 }
 
-// TestProvider makes a live test call to the named provider using a known ISBN
-// and returns the result title or an actionable error message.
-func (s *ProviderService) TestProvider(ctx context.Context, name string) (string, error) {
-	// Default probe ISBN — Harry Potter and the Philosopher's Stone, in every
-	// major book DB. A region-specific provider overrides it via Info().TestISBN
-	// (e.g. Finna, which only has Finnish editions and never this UK one).
-	const defaultTestISBN = "9780439708180"
+// Probes for the admin Test button, one per kind of lookup. Each is something
+// every general provider of that kind has.
+const (
+	// Harry Potter and the Philosopher's Stone, in every major book DB. A
+	// region-specific provider overrides it via Info().TestISBN (e.g. Finna,
+	// which only has Finnish editions and never this UK one).
+	defaultTestISBN = "9780439708180"
+	// Ender's Game, Tor mass-market paperback; found in UPCitemdb 2026-09-18.
+	defaultTestUPC = "037145006994"
+	// A series every manga and series source carries.
+	defaultTestSeries = "One Piece"
+)
 
+// TestProvider makes a live test call to the named provider with whatever it
+// can look up (an ISBN, a UPC, or a series name) and returns what it found or
+// an actionable error message.
+func (s *ProviderService) TestProvider(ctx context.Context, name string) (string, error) {
 	for _, p := range s.registry.All() {
 		info := p.Info()
 		if info.Name != name {
@@ -252,22 +261,40 @@ func (s *ProviderService) TestProvider(ctx context.Context, name string) (string
 		if !p.Enabled() {
 			return "", fmt.Errorf("provider is disabled — save an API key and enable it first")
 		}
-		bp, ok := p.(providers.BookISBNProvider)
-		if !ok {
-			return "", fmt.Errorf("this provider does not support ISBN lookup")
+		switch pp := p.(type) {
+		case providers.BookISBNProvider:
+			testISBN := defaultTestISBN
+			if info.TestISBN != "" {
+				testISBN = info.TestISBN
+			}
+			result, err := pp.LookupByISBN(ctx, testISBN)
+			if err != nil {
+				return "", err
+			}
+			if result == nil {
+				return "", fmt.Errorf("no result returned for test ISBN %s", testISBN)
+			}
+			return result.Title, nil
+		case providers.BookUPCProvider:
+			result, err := pp.LookupByUPC(ctx, defaultTestUPC)
+			if err != nil {
+				return "", err
+			}
+			if result == nil {
+				return "", fmt.Errorf("no result returned for test UPC %s", defaultTestUPC)
+			}
+			return result.Title, nil
+		case providers.SeriesSearchProvider:
+			results, err := pp.SearchSeries(ctx, defaultTestSeries)
+			if err != nil {
+				return "", err
+			}
+			if len(results) == 0 {
+				return "", fmt.Errorf("no result returned for test series %q", defaultTestSeries)
+			}
+			return results[0].Name, nil
 		}
-		testISBN := defaultTestISBN
-		if info.TestISBN != "" {
-			testISBN = info.TestISBN
-		}
-		result, err := bp.LookupByISBN(ctx, testISBN)
-		if err != nil {
-			return "", err
-		}
-		if result == nil {
-			return "", fmt.Errorf("no result returned for test ISBN %s", testISBN)
-		}
-		return result.Title, nil
+		return "", fmt.Errorf("this provider has nothing the test knows how to look up")
 	}
 	return "", fmt.Errorf("unknown provider %q", name)
 }
