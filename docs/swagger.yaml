@@ -7891,6 +7891,99 @@ paths:
       summary: Get an import job
       tags:
       - imports
+  /libraries/{library_id}/inventory:
+    get:
+      description: Each copy with its book's title, authors and cover, plus counts
+        for the whole library. location narrows to one place, or to copies with no
+        place when it is "none". A place's copies come by title; the rest newest first.
+      parameters:
+      - description: Library UUID
+        in: path
+        name: library_id
+        required: true
+        type: string
+      - description: A place UUID, or none
+        in: query
+        name: location
+        type: string
+      - description: With a place, count what's on the places inside it too
+        in: query
+        name: inside
+        type: boolean
+      - description: Page size, default 100, at most 500
+        in: query
+        name: limit
+        type: integer
+      - description: Offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              items:
+                items:
+                  properties:
+                    book_authors:
+                      type: string
+                    book_id:
+                      type: string
+                    book_title:
+                      type: string
+                    cover_url:
+                      type: string
+                    id:
+                      type: string
+                    location_id:
+                      type: string
+                    on_loan_to:
+                      type: string
+                  type: object
+                type: array
+              summary:
+                properties:
+                  copies:
+                    type: integer
+                  on_loan:
+                    type: integer
+                  shelved:
+                    type: integer
+                  unshelved:
+                    type: integer
+                type: object
+              total:
+                type: integer
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List a library's copies with their books, for Inventory
+      tags:
+      - copies
   /libraries/{library_id}/kiosks:
     get:
       parameters:
