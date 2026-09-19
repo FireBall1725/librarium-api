@@ -29,6 +29,9 @@ type InventoryCopy struct {
 type InventoryFilter struct {
 	LocationID *uuid.UUID
 	Unshelved  bool
+	// Inside takes the places inside LocationID too, so a room or a bookcase
+	// shows what's on its shelves rather than only what's filed on it.
+	Inside bool
 }
 
 // InventorySummary counts a library's copies for the Inventory page.
@@ -49,7 +52,21 @@ func (r *CopyRepo) ListForInventory(ctx context.Context, libraryID uuid.UUID, f 
 	switch {
 	case f.LocationID != nil:
 		args = append(args, *f.LocationID)
-		where += fmt.Sprintf(` AND c.location_id = $%d`, len(args))
+		if f.Inside {
+			// The place and everything nested under it, however deep. The
+			// depth cap stops a parent loop from running forever; the API
+			// prevents those, but a database is older than its rules.
+			where += fmt.Sprintf(` AND c.location_id IN (
+				WITH RECURSIVE inside AS (
+					SELECT id, 0 AS depth FROM copy_locations WHERE id = $%d
+					UNION ALL
+					SELECT l.id, inside.depth + 1 FROM copy_locations l
+					  JOIN inside ON l.parent_id = inside.id
+					 WHERE inside.depth < 16
+				) SELECT id FROM inside)`, len(args))
+		} else {
+			where += fmt.Sprintf(` AND c.location_id = $%d`, len(args))
+		}
 		order = `lower(b.title), c.id`
 	case f.Unshelved:
 		where += ` AND c.location_id IS NULL`
