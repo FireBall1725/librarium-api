@@ -27,7 +27,9 @@ func TestSetBookcase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connecting: %v", err)
 	}
-	defer pool.Close()
+	// A cleanup, not a defer: defers run before cleanups, so a deferred Close
+	// left the fixture delete below talking to a closed pool.
+	t.Cleanup(pool.Close)
 
 	var libraryID uuid.UUID
 	if err := pool.QueryRow(ctx, `SELECT id FROM libraries ORDER BY created_at LIMIT 1`).Scan(&libraryID); err != nil {
