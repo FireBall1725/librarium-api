@@ -100,6 +100,11 @@ func (w *MetadataWorker) ProcessBook(ctx context.Context, bookID, callerID uuid.
 	if err != nil {
 		return fmt.Errorf("ISBN lookup: %w", err)
 	}
+	// No provider answered: a rate limit, an outage, or a book nobody has.
+	// Writing anyway is how a forced refresh used to blank the whole record.
+	if mergedIsEmpty(merged) {
+		return ErrNoUpdate
+	}
 
 	// When cover_only=true, skip all text-field updates and only refresh the cover.
 	if !coverOnly {
@@ -171,12 +176,7 @@ func (w *MetadataWorker) applyMerged(
 
 	// ── Book-level fields ─────────────────────────────────────────────────────
 
-	fill := func(current, merged string) string {
-		if force || current == "" {
-			return merged
-		}
-		return current
-	}
+	fill := func(current, merged string) string { return fillField(current, merged, force) }
 
 	newTitle := fill(book.Title, fieldVal(merged.Title))
 	newSubtitle := fill(book.Subtitle, fieldVal(merged.Subtitle))
@@ -278,18 +278,7 @@ func (w *MetadataWorker) applyMerged(
 	newISBN10 := fill(primary.ISBN10, fieldVal(merged.ISBN10))
 	newISBN13 := fill(primary.ISBN13, fieldVal(merged.ISBN13))
 
-	var newPublishDate *time.Time
-	if primary.PublishDate != nil {
-		newPublishDate = primary.PublishDate
-	}
-	if (force || primary.PublishDate == nil) && merged.PublishDate != nil && merged.PublishDate.Value != "" {
-		for _, layout := range []string{"2006-01-02", "2006-01", "2006", "January 2, 2006", "Jan 2, 2006"} {
-			if t, err := time.Parse(layout, merged.PublishDate.Value); err == nil {
-				newPublishDate = &t
-				break
-			}
-		}
-	}
+	newPublishDate, newPrecision := pickPublishDate(primary.PublishDate, fieldVal(merged.PublishDate), force)
 
 	newPageCount := primary.PageCount
 	if (force || primary.PageCount == nil) && merged.PageCount != nil && merged.PageCount.Value != "" {
@@ -300,18 +289,22 @@ func (w *MetadataWorker) applyMerged(
 	}
 
 	if _, err := w.bookSvc.UpdateEdition(ctx, primary.ID, service.EditionRequest{
-		Format:          primary.Format,
-		Language:        newLanguage,
-		EditionName:     primary.EditionName,
-		Narrator:        primary.Narrator,
-		Publisher:       newPublisher,
-		PublishDate:     newPublishDate,
-		ISBN10:          newISBN10,
-		ISBN13:          newISBN13,
-		Description:     primary.Description,
-		DurationSeconds: primary.DurationSeconds,
-		PageCount:       newPageCount,
-		IsPrimary:       primary.IsPrimary,
+		Format:           primary.Format,
+		Language:         newLanguage,
+		EditionName:      primary.EditionName,
+		Narrator:         primary.Narrator,
+		Publisher:        newPublisher,
+		PublishDate:      newPublishDate,
+		PublishPrecision: newPrecision,
+		ISBN10:           newISBN10,
+		ISBN13:           newISBN13,
+		Description:      primary.Description,
+		DurationSeconds:  primary.DurationSeconds,
+		PageCount:        newPageCount,
+		IsPrimary:        primary.IsPrimary,
+		// Carried through because UpdateEdition writes every column; leaving
+		// it out cleared an audiobook's narrator on every enrichment.
+		NarratorContributorID: primary.NarratorContributorID,
 	}); err != nil {
 		return fmt.Errorf("updating edition: %w", err)
 	}
@@ -333,6 +326,47 @@ func (w *MetadataWorker) findOrCreateContributor(ctx context.Context, name strin
 }
 
 // fieldVal safely extracts the value from a nullable FieldResult.
+// fillField decides one text field. force prefers the provider's value over
+// the stored one, but a provider that sent nothing never clears what's there.
+func fillField(current, merged string, force bool) string {
+	if merged == "" {
+		return current
+	}
+	if force || current == "" {
+		return merged
+	}
+	return current
+}
+
+// mergedIsEmpty reports whether no provider returned anything usable.
+func mergedIsEmpty(m *providers.MergedBookResult) bool {
+	if m == nil {
+		return true
+	}
+	for _, f := range []*providers.FieldResult{
+		m.Title, m.Subtitle, m.Authors, m.Description, m.Publisher,
+		m.PublishDate, m.Language, m.ISBN10, m.ISBN13, m.PageCount,
+	} {
+		if fieldVal(f) != "" {
+			return false
+		}
+	}
+	return len(m.Categories) == 0 && len(m.Covers) == 0
+}
+
+// pickPublishDate returns the edition's date after enrichment and how precise
+// it is. An empty precision means "unchanged": the repository keeps the stored
+// one when the date stays the same.
+func pickPublishDate(current *time.Time, merged string, force bool) (*time.Time, models.DatePrecision) {
+	if current != nil && !force {
+		return current, ""
+	}
+	if t, precision, ok := models.ParseFlexDate(merged); ok {
+		return &t, precision
+	}
+	return current, ""
+}
+
 func fieldVal(f *providers.FieldResult) string {
 	if f == nil {
 		return ""

@@ -99,7 +99,9 @@ func (r *EditionRepo) Create(ctx context.Context, tx pgx.Tx, id, bookID uuid.UUI
 // Update rewrites an edition. The precision is derived from the date on every
 // write rather than left alone, because clearing a date on a row that had one
 // would otherwise leave a precision behind and violate
-// editions_precision_needs_date.
+// editions_precision_needs_date. A caller that keeps the same date without
+// stating a precision keeps the stored one, so a year-only date doesn't turn
+// into 1 January because someone saved the page count.
 func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, format, language, editionName, narrator, publisher string, publishDate any, publishPrecision models.DatePrecision, isbn10, isbn13, description string, durationSeconds, pageCount any, isPrimary bool, narratorContributorID any) error {
 	const q = `
 		UPDATE book_editions
@@ -109,7 +111,12 @@ func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, forma
 		    narrator                 = NULLIF($5, ''),
 		    publisher                = NULLIF($6, ''),
 		    publish_date             = $7,
-		    publish_date_precision   = CASE WHEN $7::date IS NULL THEN NULL ELSE $8 END,
+		    publish_date_precision   = CASE
+		                                   WHEN $7::date IS NULL THEN NULL
+		                                   WHEN $8 <> '' THEN $8
+		                                   WHEN publish_date = $7::date THEN COALESCE(publish_date_precision, 'day')
+		                                   ELSE 'day'
+		                               END,
 		    isbn_10                  = NULLIF($9, ''),
 		    isbn_13                  = NULLIF($10, ''),
 		    description              = NULLIF($11, ''),
@@ -118,7 +125,7 @@ func (r *EditionRepo) Update(ctx context.Context, tx pgx.Tx, id uuid.UUID, forma
 		    is_primary               = $14,
 		    narrator_contributor_id  = $15
 		WHERE id = $1`
-	_, err := tx.Exec(ctx, q, id, format, language, editionName, narrator, publisher, publishDate, precisionOrDay(publishPrecision), isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
+	_, err := tx.Exec(ctx, q, id, format, language, editionName, narrator, publisher, publishDate, string(publishPrecision), isbn10, isbn13, description, durationSeconds, pageCount, isPrimary, narratorContributorID)
 	if err != nil {
 		return fmt.Errorf("updating edition: %w", err)
 	}
