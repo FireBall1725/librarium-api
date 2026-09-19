@@ -14,14 +14,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestResolveShelfFindsOrCreates covers the half of the shelf column that can
-// go wrong quietly: a name that already exists must reuse that shelf rather
+// TestResolveListFindsOrCreates covers the half of the list column that can
+// go wrong quietly: a name that already exists must reuse that list rather
 // than create a second one with the same name, and the match is
 // case-insensitive because a spreadsheet is typed by hand.
 //
 // Skipped unless LIBRARIUM_TEST_DSN is set. Creates its own library and
 // removes it.
-func TestResolveShelfFindsOrCreates(t *testing.T) {
+func TestResolveListFindsOrCreates(t *testing.T) {
 	dsn := os.Getenv("LIBRARIUM_TEST_DSN")
 	if dsn == "" {
 		t.Skip("set LIBRARIUM_TEST_DSN to run")
@@ -34,17 +34,17 @@ func TestResolveShelfFindsOrCreates(t *testing.T) {
 	defer pool.Close()
 
 	userID, libraryID := seedLibrary(ctx, t, pool)
-	w := &ImportWorker{shelves: repository.NewShelfRepo(pool)}
+	w := &ImportWorker{lists: repository.NewShelfRepo(pool)}
 	cache := map[string]uuid.UUID{}
 
-	first, err := w.resolveShelf(ctx, libraryID, userID, "To Read", cache)
+	first, err := w.resolveList(ctx, libraryID, userID, "To Read", cache)
 	if err != nil {
 		t.Fatalf("creating a new shelf: %v", err)
 	}
 
 	// A second row naming the same shelf must land on the same one. The cache
 	// answers this one, which is the common case in a large import.
-	again, err := w.resolveShelf(ctx, libraryID, userID, "To Read", cache)
+	again, err := w.resolveList(ctx, libraryID, userID, "To Read", cache)
 	if err != nil {
 		t.Fatalf("resolving an existing shelf: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestResolveShelfFindsOrCreates(t *testing.T) {
 
 	// Different case, and a cold cache, which is the path that has to fall
 	// through to the list-and-match branch.
-	cold, err := w.resolveShelf(ctx, libraryID, userID, "to read", map[string]uuid.UUID{})
+	cold, err := w.resolveList(ctx, libraryID, userID, "to read", map[string]uuid.UUID{})
 	if err != nil {
 		t.Fatalf("resolving with a cold cache: %v", err)
 	}
@@ -74,10 +74,10 @@ func TestResolveShelfFindsOrCreates(t *testing.T) {
 	}
 }
 
-// TestAddBookToShelfIsAdditiveAndRollsBack covers the transaction boundary. An
+// TestAddBookToListIsAdditiveAndRollsBack covers the transaction boundary. An
 // import row that fails after the shelf line must leave no membership behind,
 // and a book already on the shelf must not error on a re-import.
-func TestAddBookToShelfIsAdditiveAndRollsBack(t *testing.T) {
+func TestAddBookToListIsAdditiveAndRollsBack(t *testing.T) {
 	dsn := os.Getenv("LIBRARIUM_TEST_DSN")
 	if dsn == "" {
 		t.Skip("set LIBRARIUM_TEST_DSN to run")
@@ -138,9 +138,9 @@ func TestAddBookToShelfIsAdditiveAndRollsBack(t *testing.T) {
 	}
 }
 
-// TestShelfColumnSplitsLikeTags pins the parsing the CSV column relies on, so
-// "Sci-Fi, To Read" is two shelves and stray whitespace is not a third.
-func TestShelfColumnSplitsLikeTags(t *testing.T) {
+// TestListColumnSplitsLikeTags pins the parsing the CSV column relies on, so
+// "Sci-Fi, To Read" is two lists and stray whitespace is not a third.
+func TestListColumnSplitsLikeTags(t *testing.T) {
 	tests := []struct {
 		in   string
 		want []string
@@ -172,6 +172,58 @@ func TestShelfColumnSplitsLikeTags(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// A shelf path is a place on the Shelves page, found or created one level at a
+// time. The same name under a different parent is a different place.
+//
+// Skipped unless LIBRARIUM_TEST_DSN is set. Creates its own library and
+// removes it.
+func TestResolvePlaceNests(t *testing.T) {
+	dsn := os.Getenv("LIBRARIUM_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set LIBRARIUM_TEST_DSN to run")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connecting: %v", err)
+	}
+	defer pool.Close()
+
+	_, libraryID := seedLibrary(ctx, t, pool)
+	locations := repository.NewCopyLocationRepo(pool)
+	w := &ImportWorker{locations: locations}
+
+	top, err := w.resolvePlace(ctx, libraryID, "Office > Bookcase 2 > Top shelf", map[string]uuid.UUID{})
+	if err != nil {
+		t.Fatalf("creating a path: %v", err)
+	}
+	// Cold cache, different case and spacing: the same three places.
+	again, err := w.resolvePlace(ctx, libraryID, "office>bookcase 2 >  TOP SHELF", map[string]uuid.UUID{})
+	if err != nil || again != top {
+		t.Fatalf("same path resolved to %s (err %v), want %s", again, err, top)
+	}
+	// "Top shelf" under Office rather than under Bookcase 2 is another place.
+	other, err := w.resolvePlace(ctx, libraryID, "Office > Top shelf", map[string]uuid.UUID{})
+	if err != nil || other == top {
+		t.Fatalf("a same-named place under another parent was reused: %s (err %v)", other, err)
+	}
+
+	all, err := locations.List(ctx, libraryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 4 {
+		names := make([]string, len(all))
+		for i, l := range all {
+			names[i] = l.Name
+		}
+		t.Errorf("want 4 places (Office, Bookcase 2, two Top shelf), got %v", names)
+	}
+	if _, err := w.resolvePlace(ctx, libraryID, " > ", map[string]uuid.UUID{}); err == nil {
+		t.Error("an empty path should be an error, not a nameless place")
 	}
 }
 
