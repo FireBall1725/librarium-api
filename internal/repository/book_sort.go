@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 FireBall1725
 //
-// Sorting the book list by up to three things at once.
+// Sorting the book list by up to four things at once.
 //
 // "By author" alone leaves each author's books in whatever order the database
 // finds them, which is not how anyone shelves. Author, then series, then title
@@ -36,6 +36,8 @@ const (
 	SortAuthor SortField = "author"
 	// SortSeries is the series name, then the book's number in it.
 	SortSeries SortField = "series"
+	// SortShelf is where a copy sits: the place's path, "Library › Fiction".
+	SortShelf SortField = "shelf"
 	// SortAdded is when a copy first arrived in one of the caller's libraries.
 	SortAdded SortField = "added"
 	// SortYear is the primary edition's publish date.
@@ -48,9 +50,9 @@ const (
 	SortMediaType SortField = "media_type"
 )
 
-// MaxSortKeys is how many levels a sort may have. Author, series, title is
-// three, and nothing on a shelf has needed a fourth.
-const MaxSortKeys = 3
+// MaxSortKeys is how many levels a sort may have. Shelf, author, series,
+// title is four: each bookcase in the order its books stand on it.
+const MaxSortKeys = 4
 
 // SortKey is one level of a sort.
 type SortKey struct {
@@ -66,6 +68,7 @@ var sortFieldNames = map[string]SortField{
 	"title":        SortTitle,
 	"author":       SortAuthor,
 	"series":       SortSeries,
+	"shelf":        SortShelf,
 	"added":        SortAdded,
 	"year":         SortYear,
 	"publish_date": SortYear,
@@ -184,16 +187,25 @@ const titleLetterSQL = `(SELECT CASE WHEN f ~ '^[0-9]' THEN '#' ELSE upper(f) EN
 // in the reader's own time zone, which the server does not know.
 const isoTimeSQL = `to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
+// sortScope is the part of the filter a sort has to know about. A book in two
+// series sorts by the one being looked at, so Robot Series filtered shows Robot
+// Series numbers even for a book that is also in Foundation; a book with copies
+// on two shelves sorts under the shelf being looked at, the same way.
+type sortScope struct {
+	series    []uuid.UUID
+	locations []uuid.UUID
+}
+
+func scopeOf(opts ListBooksOpts) sortScope {
+	return sortScope{series: opts.SeriesIDs, locations: opts.Selection.Locations}
+}
+
 // buildSortPlan turns keys into SQL for a query over `books b` joined to
 // `media_types mt`, with the caller's library scope bound as $1.
 //
-// seriesIDs is the series filter, if any. A book in two series sorts by the one
-// being looked at, so Robot Series filtered shows Robot Series numbers even for
-// a book that is also in Foundation.
-//
 // Every plan ends on title then id, so books that tie on every chosen key still
 // come back in the same order on every page.
-func buildSortPlan(keys []SortKey, collation string, argIdx int, seriesIDs []uuid.UUID) sortPlan {
+func buildSortPlan(keys []SortKey, collation string, argIdx int, scope sortScope) sortPlan {
 	if len(keys) == 0 {
 		keys = []SortKey{{Field: SortTitle}}
 	}
@@ -240,9 +252,9 @@ func buildSortPlan(keys []SortKey, collation string, argIdx int, seriesIDs []uui
 
 		case SortSeries:
 			pick := ""
-			if len(seriesIDs) > 0 {
+			if len(scope.series) > 0 {
 				pick = fmt.Sprintf("(bs.series_id = ANY($%d)) DESC, ", p.next)
-				p.args = append(p.args, seriesIDs)
+				p.args = append(p.args, scope.series)
 				p.next++
 			}
 			// Series are per library, so only ones in the caller's scope count.
@@ -265,6 +277,33 @@ func buildSortPlan(keys []SortKey, collation string, argIdx int, seriesIDs []uui
 					"natural_sort_key(s_ser.name, s_lang.language)"+coll+" "+dir(k),
 					"s_ser.position "+dir(k)+" NULLS LAST")
 			}
+
+		case SortShelf:
+			// The copy's place as a path, up to three deep (room, bookcase,
+			// shelf). Places carry no order of their own, so they sort by name,
+			// with numbers read as numbers so Shelf 2 comes before Shelf 10.
+			// 'und' is no language: a place name keeps its "The".
+			pick := ""
+			if len(scope.locations) > 0 {
+				pick = fmt.Sprintf("(l.id = ANY($%d) OR l.parent_id = ANY($%d)) DESC, ", p.next, p.next)
+				p.args = append(p.args, scope.locations)
+				p.next++
+			}
+			joins = append(joins, `LEFT JOIN LATERAL (
+		SELECT concat_ws(' › ', gp.name, pa.name, l.name) AS path
+		FROM copies cp
+		JOIN copy_locations l ON l.id = cp.location_id
+		LEFT JOIN copy_locations pa ON pa.id = l.parent_id
+		LEFT JOIN copy_locations gp ON gp.id = pa.parent_id
+		WHERE cp.book_id = b.id AND cp.library_id = ANY($1) AND cp.deleted_at IS NULL
+		ORDER BY `+pick+`natural_sort_key(concat_ws(' › ', gp.name, pa.name, l.name), 'und')
+		LIMIT 1
+	) s_shelf ON true`)
+			// A book on no shelf goes last either way, like a standalone after
+			// the series.
+			terms = append(terms,
+				"(s_shelf.path IS NULL) ASC",
+				"natural_sort_key(s_shelf.path, 'und')"+coll+" "+dir(k))
 
 		case SortAdded:
 			// A wishlisted or suggested book has no copy, so no date, and goes last.
@@ -305,6 +344,8 @@ func headingFor(k SortKey) string {
 	switch k.Field {
 	case SortAuthor:
 		return "COALESCE(s_auth.display, '')"
+	case SortShelf:
+		return "COALESCE(s_shelf.path, '')"
 	case SortSeries:
 		if k.Mixed {
 			// Mixed in, a standalone is its own heading, the way it is its own

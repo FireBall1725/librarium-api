@@ -31,8 +31,8 @@ func TestParseSortKeys(t *testing.T) {
 			{Field: SortAuthor}, {Field: SortTitle, Desc: true}}},
 		{"unknown fields dropped", "colour,title", "", []SortKey{{Field: SortTitle}}},
 		{"repeats dropped", "title,title-desc", "", []SortKey{{Field: SortTitle}}},
-		{"three levels at most", "author,series,title,year", "", []SortKey{
-			{Field: SortAuthor}, {Field: SortSeries}, {Field: SortTitle}}},
+		{"four levels at most", "shelf,author,series,title,year", "", []SortKey{
+			{Field: SortShelf}, {Field: SortAuthor}, {Field: SortSeries}, {Field: SortTitle}}},
 		{"nothing usable", "colour,,", "", nil},
 	}
 	for _, c := range cases {
@@ -46,7 +46,7 @@ func TestParseSortKeys(t *testing.T) {
 }
 
 func TestBuildSortPlanDefaultsToTitle(t *testing.T) {
-	p := buildSortPlan(nil, "", 4, nil)
+	p := buildSortPlan(nil, "", 4, sortScope{})
 	if !strings.HasPrefix(p.order, "natural_sort_key(b.title, s_lang.language) ASC") {
 		t.Errorf("default order = %q, want title first", p.order)
 	}
@@ -60,7 +60,7 @@ func TestBuildSortPlanDefaultsToTitle(t *testing.T) {
 
 func TestBuildSortPlanShelfOrder(t *testing.T) {
 	keys := []SortKey{{Field: SortAuthor}, {Field: SortSeries}, {Field: SortTitle, Desc: true}}
-	p := buildSortPlan(keys, "fr-x-icu", 3, nil)
+	p := buildSortPlan(keys, "fr-x-icu", 3, sortScope{})
 
 	for _, want := range []string{"s_lang", "s_auth", "s_ser"} {
 		if !strings.Contains(p.join, ") "+want+" ON true") {
@@ -84,14 +84,14 @@ func TestBuildSortPlanShelfOrder(t *testing.T) {
 }
 
 func TestBuildSortPlanStandalonesStayAfterWhenReversed(t *testing.T) {
-	p := buildSortPlan([]SortKey{{Field: SortSeries, Desc: true}}, "", 2, nil)
+	p := buildSortPlan([]SortKey{{Field: SortSeries, Desc: true}}, "", 2, sortScope{})
 	if !strings.Contains(p.order, "(s_ser.id IS NULL) ASC, natural_sort_key(s_ser.name, s_lang.language) DESC") {
 		t.Errorf("reversing series should not move standalones first: %q", p.order)
 	}
 }
 
 func TestBuildSortPlanMixedSeries(t *testing.T) {
-	p := buildSortPlan([]SortKey{{Field: SortSeries, Mixed: true}}, "", 2, nil)
+	p := buildSortPlan([]SortKey{{Field: SortSeries, Mixed: true}}, "", 2, sortScope{})
 	if strings.Contains(p.order, "IS NULL") {
 		t.Errorf("mixed should not split standalones out: %q", p.order)
 	}
@@ -102,7 +102,7 @@ func TestBuildSortPlanMixedSeries(t *testing.T) {
 
 func TestBuildSortPlanPrefersFilteredSeries(t *testing.T) {
 	id := uuid.New()
-	p := buildSortPlan([]SortKey{{Field: SortSeries}}, "", 5, []uuid.UUID{id})
+	p := buildSortPlan([]SortKey{{Field: SortSeries}}, "", 5, sortScope{series: []uuid.UUID{id}})
 	if !strings.Contains(p.join, "(bs.series_id = ANY($5)) DESC") {
 		t.Errorf("series join should prefer the filtered series via $5:\n%s", p.join)
 	}
@@ -112,7 +112,7 @@ func TestBuildSortPlanPrefersFilteredSeries(t *testing.T) {
 }
 
 func TestBuildSortPlanDatesGoLastWhenMissing(t *testing.T) {
-	p := buildSortPlan([]SortKey{{Field: SortAdded, Desc: true}, {Field: SortYear}}, "", 2, nil)
+	p := buildSortPlan([]SortKey{{Field: SortAdded, Desc: true}, {Field: SortYear}}, "", 2, sortScope{})
 	if strings.Count(p.order, "NULLS LAST") != 2 {
 		t.Errorf("added and year should both put missing dates last: %q", p.order)
 	}
@@ -132,15 +132,16 @@ func TestHeadingFollowsTheFirstLevel(t *testing.T) {
 		{SortKey{Field: SortYear}, "extract(year FROM s_year.at)"},
 		{SortKey{Field: SortAdded}, "s_add.at AT TIME ZONE 'UTC'"},
 		{SortKey{Field: SortTitle}, "sort_title(b.title, s_lang.language)"},
+		{SortKey{Field: SortShelf}, "s_shelf.path"},
 	}
 	for _, c := range cases {
-		p := buildSortPlan([]SortKey{c.key, {Field: SortTitle}}, "", 2, nil)
+		p := buildSortPlan([]SortKey{c.key, {Field: SortTitle}}, "", 2, sortScope{})
 		if !strings.Contains(p.heading, c.want) {
 			t.Errorf("%+v heading = %q, want it to contain %q", c.key, p.heading, c.want)
 		}
 	}
 	// No sort is title, so the heading is a letter.
-	if p := buildSortPlan(nil, "", 2, nil); !strings.Contains(p.heading, "upper(f)") {
+	if p := buildSortPlan(nil, "", 2, sortScope{}); !strings.Contains(p.heading, "upper(f)") {
 		t.Errorf("default heading = %q, want the title letter", p.heading)
 	}
 }
@@ -152,5 +153,19 @@ func TestSortCollationRejectsUnknownLanguages(t *testing.T) {
 		if got := r.sortCollation(lang); got != "" {
 			t.Errorf("sortCollation(%q) = %q, want empty", lang, got)
 		}
+	}
+}
+
+func TestBuildSortPlanShelf(t *testing.T) {
+	loc := uuid.New()
+	p := buildSortPlan([]SortKey{{Field: SortShelf, Desc: true}}, "", 3, sortScope{locations: []uuid.UUID{loc}})
+	if !strings.Contains(p.order, "(s_shelf.path IS NULL) ASC, natural_sort_key(s_shelf.path, 'und') DESC") {
+		t.Errorf("unshelved books should stay last when reversed: %q", p.order)
+	}
+	if !strings.Contains(p.join, "(l.id = ANY($3) OR l.parent_id = ANY($3)) DESC") {
+		t.Errorf("shelf join should prefer the filtered place via $3:\n%s", p.join)
+	}
+	if p.next != 4 || len(p.args) != 1 {
+		t.Errorf("want one bound arg and next=4, got next=%d args=%v", p.next, p.args)
 	}
 }

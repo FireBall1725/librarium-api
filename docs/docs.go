@@ -14586,7 +14586,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Up to three levels, comma separated, each title, author, series, added, year, created_at or media_type, with -desc to reverse and -mixed on series to sort standalone books among the series. Default title; one series filtered and no sort means series order",
+                        "description": "Up to four levels, comma separated, each title, author, series, shelf, added, year, created_at or media_type, with -desc to reverse and -mixed on series to sort standalone books among the series. Default title; one series filtered and no sort means series order",
                         "name": "sort",
                         "in": "query"
                     },

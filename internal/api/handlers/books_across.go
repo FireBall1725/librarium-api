@@ -135,7 +135,7 @@ func libraryIDsFromQuery(r *http.Request) []uuid.UUID {
 // @Param       contributor  query string false "Contributor UUIDs, comma separated"
 // @Param       series    query string false "Series UUIDs, comma separated"
 // @Param       location  query string false "Location UUIDs, comma separated; matches anything inside them too"
-// @Param       sort      query string false "Up to three levels, comma separated, each title, author, series, added, year, created_at or media_type, with -desc to reverse and -mixed on series to sort standalone books among the series. Default title; one series filtered and no sort means series order"
+// @Param       sort      query string false "Up to four levels, comma separated, each title, author, series, shelf, added, year, created_at or media_type, with -desc to reverse and -mixed on series to sort standalone books among the series. Default title; one series filtered and no sort means series order"
 // @Param       sort_dir  query string false "asc or desc, for levels that do not give their own direction"
 // @Param       lang      query string false "The reader's language tag, e.g. fr-FR, which sets how text sorts"
 // @Param       headings  query string false "1 to add sort_heading to each item: the first sort level's author name, series name, title letter, year, or an ISO time for added and created_at. Empty text means none (no author, no series, no date)"

@@ -116,7 +116,7 @@ func (r *BookRepo) ListGroupedBySeries(
 	// first book. Unused, and not computed, when entries sort by label.
 	rankExpr, sortJoin, headingExpr := "0", "", "NULL::text"
 	if !byLabel {
-		plan := buildSortPlan(keys, r.sortCollation(opts.Lang), argIdx, opts.SeriesIDs)
+		plan := buildSortPlan(keys, r.sortCollation(opts.Lang), argIdx, scopeOf(opts))
 		args = append(args, plan.args...)
 		argIdx = plan.next
 		rankExpr = "row_number() OVER (ORDER BY " + plan.order + ")"

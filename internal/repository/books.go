@@ -1048,7 +1048,7 @@ func (r *BookRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, opts 
 	if len(keys) == 0 {
 		keys = ParseSortKeys(opts.Sort, opts.SortDir)
 	}
-	plan := buildSortPlan(keys, r.sortCollation(opts.Lang), argIdx, opts.SeriesIDs)
+	plan := buildSortPlan(keys, r.sortCollation(opts.Lang), argIdx, scopeOf(opts))
 	args = append(args, plan.args...)
 	argIdx = plan.next
 	args = append(args, opts.PerPage, offset)
@@ -1088,7 +1088,7 @@ func (r *BookRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, opts 
 func (r *BookRepo) fillSortHeadings(
 	ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts, keys []SortKey, books []*models.Book,
 ) error {
-	plan := buildSortPlan(keys, "", 2, opts.SeriesIDs)
+	plan := buildSortPlan(keys, "", 2, scopeOf(opts))
 	ids := make([]uuid.UUID, len(books))
 	for i, b := range books {
 		ids[i] = b.ID
