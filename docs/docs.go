@@ -14583,6 +14583,30 @@ const docTemplate = `{
                         "description": "Location UUIDs, comma separated; matches anything inside them too",
                         "name": "location",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Up to four levels, comma separated, each title, author, series, shelf, added, year, created_at or media_type, with -desc to reverse and -mixed on series to sort standalone books among the series. Default title; one series filtered and no sort means series order",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "asc or desc, for levels that do not give their own direction",
+                        "name": "sort_dir",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The reader's language tag, e.g. fr-FR, which sets how text sorts",
+                        "name": "lang",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 to add sort_heading to each item: the first sort level's author name, series name, title letter, year, or an ISO time for added and created_at. Empty text means none (no author, no series, no date)",
+                        "name": "headings",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -14723,6 +14747,30 @@ const docTemplate = `{
                         "type": "integer",
                         "description": "Entries per page",
                         "name": "per_page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Same as /me/books. A title sort orders entries by name; any other sort puts each series where its first book falls",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "asc or desc, for levels that do not give their own direction",
+                        "name": "sort_dir",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "The reader's language tag, which sets how text sorts",
+                        "name": "lang",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 to add sort_heading to each entry, as on /me/books; a series takes its first book's",
+                        "name": "headings",
                         "in": "query"
                     }
                 ],

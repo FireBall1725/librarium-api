@@ -301,14 +301,25 @@ func parseListBooksOpts(r *http.Request) (repository.ListBooksOpts, string, erro
 		callerID = claims.UserID
 	}
 
+	seriesIDs := seriesIDsFromQuery(r)
+	sortKeys := repository.ParseSortKeys(sort, sortDir)
+	// Opened on one series with no sort asked for, the question is reading
+	// order. A sort the caller picked still wins.
+	if len(sortKeys) == 0 && len(seriesIDs) == 1 {
+		sortKeys = repository.SeriesOrder()
+	}
+
 	return repository.ListBooksOpts{
 		Query:      q,
-		SeriesIDs:  seriesIDsFromQuery(r),
+		SeriesIDs:  seriesIDs,
 		ShelfIDs:   parseFacetSelection(r).Shelves,
 		Page:       page,
 		PerPage:    perPage,
 		Sort:       sort,
 		SortDir:    sortDir,
+		SortKeys:   sortKeys,
+		Lang:       r.URL.Query().Get("lang"),
+		Headings:   r.URL.Query().Get("headings") == "1",
 		Letter:     letter,
 		TagFilter:  tagFilter,
 		TypeFilter: typeFilter,

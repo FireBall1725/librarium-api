@@ -11170,6 +11170,27 @@ paths:
         in: query
         name: location
         type: string
+      - description: Up to four levels, comma separated, each title, author, series,
+          shelf, added, year, created_at or media_type, with -desc to reverse and
+          -mixed on series to sort standalone books among the series. Default title;
+          one series filtered and no sort means series order
+        in: query
+        name: sort
+        type: string
+      - description: asc or desc, for levels that do not give their own direction
+        in: query
+        name: sort_dir
+        type: string
+      - description: The reader's language tag, e.g. fr-FR, which sets how text sorts
+        in: query
+        name: lang
+        type: string
+      - description: '1 to add sort_heading to each item: the first sort level''s
+          author name, series name, title letter, year, or an ISO time for added and
+          created_at. Empty text means none (no author, no series, no date)'
+        in: query
+        name: headings
+        type: string
       produces:
       - application/json
       responses:
@@ -11265,6 +11286,24 @@ paths:
         in: query
         name: per_page
         type: integer
+      - description: Same as /me/books. A title sort orders entries by name; any other
+          sort puts each series where its first book falls
+        in: query
+        name: sort
+        type: string
+      - description: asc or desc, for levels that do not give their own direction
+        in: query
+        name: sort_dir
+        type: string
+      - description: The reader's language tag, which sets how text sorts
+        in: query
+        name: lang
+        type: string
+      - description: 1 to add sort_heading to each entry, as on /me/books; a series
+          takes its first book's
+        in: query
+        name: headings
+        type: string
       produces:
       - application/json
       responses:
