@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/fireball1725/librarium-api/internal/models"
 	"github.com/google/uuid"
@@ -19,6 +20,10 @@ import (
 
 type BookRepo struct {
 	db *pgxpool.Pool
+
+	// The ICU collations this Postgres has, read once. See sortCollation.
+	collOnce sync.Once
+	colls    map[string]bool
 }
 
 func NewBookRepo(db *pgxpool.Pool) *BookRepo {
@@ -512,6 +517,13 @@ type ListBooksOpts struct {
 	// dimension with its own selection removed, which is impossible once the
 	// conditions have been flattened into one WHERE string.
 	Selection FacetSelection
+
+	// SortKeys is the sort itself, parsed from Sort and SortDir (see
+	// ParseSortKeys). Empty means title A to Z.
+	SortKeys []SortKey
+	// Lang is the reader's language tag, which picks the collation text sorts
+	// under. Empty uses the database default.
+	Lang string
 }
 
 // bookFilter is the WHERE clause for a book query, plus the args it binds.
@@ -1007,34 +1019,6 @@ func (r *BookRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, opts 
 	}
 	offset := (opts.Page - 1) * opts.PerPage
 
-	// Validate sort — title sort uses natural_sort_key() which strips leading articles,
-	// lowercases, and pads digit sequences so #2 sorts before #10.
-	sortCol := "natural_sort_key(b.title)"
-	switch opts.Sort {
-	case "created_at":
-		sortCol = "b.created_at"
-	case "media_type":
-		sortCol = "lower(mt.display_name)"
-	case "publish_date":
-		sortCol = "(SELECT be.publish_date FROM book_editions be WHERE be.book_id = b.id AND be.is_primary = true AND be.publish_date IS NOT NULL LIMIT 1)"
-	case "author":
-		// Sort by the first contributor's lowercased name (display
-		// order ascending so the "primary" credit wins). Books with
-		// no contributors fall to the end via NULLS LAST below.
-		sortCol = `(
-			SELECT lower(c.name)
-			FROM book_contributors bc
-			JOIN contributors c ON c.id = bc.contributor_id
-			WHERE bc.book_id = b.id
-			ORDER BY bc.display_order, c.name
-			LIMIT 1
-		)`
-	}
-	sortDir := "ASC"
-	if opts.SortDir == "desc" {
-		sortDir = "DESC"
-	}
-
 	f := r.buildBookFilter(libraryIDs, opts)
 	where, scopeJoin, args, argIdx := f.where, f.scopeJoin, f.args, f.nextArg
 
@@ -1056,14 +1040,18 @@ func (r *BookRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, opts 
 		selectQuery = booksSelect(0, 1, true, true)
 	}
 
-	// List
-	args = append(args, opts.PerPage, offset)
-	nullsClause := ""
-	if opts.Sort == "publish_date" || opts.Sort == "author" {
-		nullsClause = " NULLS LAST"
+	// List. The sort's joins go on the list query only; the count does not
+	// need them.
+	keys := opts.SortKeys
+	if len(keys) == 0 {
+		keys = ParseSortKeys(opts.Sort, opts.SortDir)
 	}
-	listQ := selectQuery + scopeJoin + where +
-		fmt.Sprintf(" ORDER BY %s %s%s LIMIT $%d OFFSET $%d", sortCol, sortDir, nullsClause, argIdx, argIdx+1)
+	plan := buildSortPlan(keys, r.sortCollation(opts.Lang), argIdx, opts.SeriesIDs)
+	args = append(args, plan.args...)
+	argIdx = plan.next
+	args = append(args, opts.PerPage, offset)
+	listQ := selectQuery + scopeJoin + plan.join + where +
+		fmt.Sprintf(" ORDER BY %s LIMIT $%d OFFSET $%d", plan.order, argIdx, argIdx+1)
 
 	rows, err := r.db.Query(ctx, listQ, args...)
 	if err != nil {
