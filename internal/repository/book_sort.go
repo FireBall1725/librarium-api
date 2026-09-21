@@ -168,9 +168,21 @@ func (r *BookRepo) sortCollation(lang string) string {
 type sortPlan struct {
 	join  string
 	order string
-	args  []any
-	next  int
+	// heading is the text of the heading a book falls under for the first
+	// level, as SQL returning text, never NULL. See headingFor.
+	heading string
+	args    []any
+	next    int
 }
+
+// titleLetterSQL is the letter a title files under: the first character once
+// its article is gone, upper-cased, with every digit filed together under #.
+const titleLetterSQL = `(SELECT CASE WHEN f ~ '^[0-9]' THEN '#' ELSE upper(f) END
+		FROM (SELECT left(sort_title(%s, %s), 1) AS f) h)`
+
+// isoTimeSQL renders a timestamp for a heading. The client turns it into a day
+// in the reader's own time zone, which the server does not know.
+const isoTimeSQL = `to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 // buildSortPlan turns keys into SQL for a query over `books b` joined to
 // `media_types mt`, with the caller's library scope bound as $1.
@@ -215,7 +227,7 @@ func buildSortPlan(keys []SortKey, collation string, argIdx int, seriesIDs []uui
 			// The first credited author, falling back to the first contributor
 			// of any role for a book with no author credit, such as an art book.
 			joins = append(joins, `LEFT JOIN LATERAL (
-		SELECT COALESCE(NULLIF(c.sort_name, ''), c.name) AS name
+		SELECT COALESCE(NULLIF(c.sort_name, ''), c.name) AS name, c.name AS display
 		FROM book_contributors bc
 		JOIN contributors c ON c.id = bc.contributor_id
 		WHERE bc.book_id = b.id
@@ -256,17 +268,19 @@ func buildSortPlan(keys []SortKey, collation string, argIdx int, seriesIDs []uui
 
 		case SortAdded:
 			// A wishlisted or suggested book has no copy, so no date, and goes last.
-			terms = append(terms, `(
-		SELECT min(cp.created_at) FROM copies cp
+			joins = append(joins, `LEFT JOIN LATERAL (
+		SELECT min(cp.created_at) AS at FROM copies cp
 		WHERE cp.book_id = b.id AND cp.library_id = ANY($1) AND cp.deleted_at IS NULL
-	) `+dir(k)+" NULLS LAST")
+	) s_add ON true`)
+			terms = append(terms, "s_add.at "+dir(k)+" NULLS LAST")
 
 		case SortYear:
-			terms = append(terms, `(
-		SELECT be.publish_date FROM book_editions be
+			joins = append(joins, `LEFT JOIN LATERAL (
+		SELECT be.publish_date AS at FROM book_editions be
 		WHERE be.book_id = b.id AND be.is_primary = true AND be.publish_date IS NOT NULL
 		LIMIT 1
-	) `+dir(k)+" NULLS LAST")
+	) s_year ON true`)
+			terms = append(terms, "s_year.at "+dir(k)+" NULLS LAST")
 
 		case SortCreated:
 			terms = append(terms, "b.created_at "+dir(k))
@@ -279,5 +293,33 @@ func buildSortPlan(keys []SortKey, collation string, argIdx int, seriesIDs []uui
 
 	p.join = " " + strings.Join(joins, " ") + " "
 	p.order = strings.Join(terms, ", ")
+	p.heading = headingFor(keys[0])
 	return p
+}
+
+// headingFor is the heading SQL for a first level. It reads the same joins the
+// order does, so a book is headed by the author or series it was sorted by,
+// not by another one it also has. Empty text means none: no author, not in a
+// series, no date. The client names that in the reader's language.
+func headingFor(k SortKey) string {
+	switch k.Field {
+	case SortAuthor:
+		return "COALESCE(s_auth.display, '')"
+	case SortSeries:
+		if k.Mixed {
+			// Mixed in, a standalone is its own heading, the way it is its own
+			// entry among the series names.
+			return "COALESCE(s_ser.name, b.title)"
+		}
+		return "COALESCE(s_ser.name, '')"
+	case SortAdded:
+		return "COALESCE(" + fmt.Sprintf(isoTimeSQL, "s_add.at") + ", '')"
+	case SortYear:
+		return "COALESCE(extract(year FROM s_year.at)::int::text, '')"
+	case SortCreated:
+		return fmt.Sprintf(isoTimeSQL, "b.created_at")
+	case SortMediaType:
+		return "mt.display_name"
+	}
+	return fmt.Sprintf(titleLetterSQL, "b.title", "s_lang.language")
 }

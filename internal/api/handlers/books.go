@@ -319,6 +319,7 @@ func parseListBooksOpts(r *http.Request) (repository.ListBooksOpts, string, erro
 		SortDir:    sortDir,
 		SortKeys:   sortKeys,
 		Lang:       r.URL.Query().Get("lang"),
+		Headings:   r.URL.Query().Get("headings") == "1",
 		Letter:     letter,
 		TagFilter:  tagFilter,
 		TypeFilter: typeFilter,

@@ -79,6 +79,10 @@ type Book struct {
 	// it a missing volume rendered exactly like a book on the shelf, which is a
 	// cover you could pick up and a cover you could not, drawn identically.
 	Ownership string `json:"ownership"`
+	// SortHeading is the heading this book falls under for the list's first
+	// sort level: an author's name, a series, a letter, a year. Set only when
+	// the list is asked for headings.
+	SortHeading string `json:"-"`
 }
 
 // BookLibraryRef is a lightweight reference to a library that holds this book.

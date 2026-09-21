@@ -138,6 +138,7 @@ func libraryIDsFromQuery(r *http.Request) []uuid.UUID {
 // @Param       sort      query string false "Up to three levels, comma separated, each title, author, series, added, year, created_at or media_type, with -desc to reverse and -mixed on series to sort standalone books among the series. Default title; one series filtered and no sort means series order"
 // @Param       sort_dir  query string false "asc or desc, for levels that do not give their own direction"
 // @Param       lang      query string false "The reader's language tag, e.g. fr-FR, which sets how text sorts"
+// @Param       headings  query string false "1 to add sort_heading to each item: the first sort level's author name, series name, title letter, year, or an ISO time for added and created_at. Empty text means none (no author, no series, no date)"
 // @Success     200  {object}  object{items=[]object,total=int,page=int,per_page=int}
 // @Failure     401  {object}  object{error=string}
 // @Router      /me/books [get]
@@ -181,7 +182,11 @@ func (h *BookHandler) ListMyBooks(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]map[string]any, 0, len(books))
 	for _, b := range books {
-		items = append(items, bookBody(b))
+		body := bookBody(b)
+		if opts.Headings {
+			body["sort_heading"] = b.SortHeading
+		}
+		items = append(items, body)
 	}
 	respond.JSON(w, http.StatusOK, map[string]any{
 		"items":    items,
@@ -337,6 +342,7 @@ func parseFacetSelection(r *http.Request) repository.FacetSelection {
 // @Param       sort      query string false "Same as /me/books. A title sort orders entries by name; any other sort puts each series where its first book falls"
 // @Param       sort_dir  query string false "asc or desc, for levels that do not give their own direction"
 // @Param       lang      query string false "The reader's language tag, which sets how text sorts"
+// @Param       headings  query string false "1 to add sort_heading to each entry, as on /me/books; a series takes its first book's"
 // @Success     200  {object}  object{items=[]object,total=int,book_total=int,page=int,per_page=int}
 // @Failure     401  {object}  object{error=string}
 // @Router      /me/books/grouped [get]
@@ -371,13 +377,21 @@ func (h *BookHandler) ListMyBooksGrouped(w http.ResponseWriter, r *http.Request)
 	items := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
 		if e.Series != nil {
-			items = append(items, seriesGroupBody(e.Series))
+			body := seriesGroupBody(e.Series)
+			if opts.Headings {
+				body["sort_heading"] = e.Series.Heading
+			}
+			items = append(items, body)
 			continue
 		}
 		if e.Book != nil {
 			// The same body the ungrouped list sends, so a standalone entry and
 			// a row on /me/books are the same shape and the client renders one.
-			items = append(items, map[string]any{"kind": "book", "book": bookBody(e.Book)})
+			entry := map[string]any{"kind": "book", "book": bookBody(e.Book)}
+			if opts.Headings {
+				entry["sort_heading"] = e.Book.SortHeading
+			}
+			items = append(items, entry)
 		}
 	}
 

@@ -62,6 +62,9 @@ type SeriesGroup struct {
 	// position that actually has one.
 	CoverBookID    *uuid.UUID
 	CoverUpdatedAt *time.Time
+	// Heading is the heading the group falls under, taken from its first book
+	// in the sort. Set only when the list is asked for headings.
+	Heading string
 }
 
 // GroupedEntry is either a series or a single book. Exactly one is non-nil.
@@ -111,19 +114,23 @@ func (r *BookRepo) ListGroupedBySeries(
 
 	// Where each book falls in the sorted list, for placing groups by their
 	// first book. Unused, and not computed, when entries sort by label.
-	rankExpr, sortJoin := "0", ""
+	rankExpr, sortJoin, headingExpr := "0", "", "NULL::text"
 	if !byLabel {
 		plan := buildSortPlan(keys, r.sortCollation(opts.Lang), argIdx, opts.SeriesIDs)
 		args = append(args, plan.args...)
 		argIdx = plan.next
 		rankExpr = "row_number() OVER (ORDER BY " + plan.order + ")"
 		sortJoin = plan.join
+		if opts.Headings {
+			headingExpr = plan.heading
+		}
 	}
 
 	// The filtered set, each book tagged with the series it groups under.
 	matched := `
 	matched AS (
-		SELECT b.id AS book_id, ` + seriesKeyExpr + ` AS series_id, ` + rankExpr + ` AS rank
+		SELECT b.id AS book_id, ` + seriesKeyExpr + ` AS series_id, ` + rankExpr + ` AS rank,
+			` + headingExpr + ` AS heading
 		FROM books b
 		JOIN media_types mt ON mt.id = b.media_type_id
 		` + f.scopeJoin + sortJoin + f.where + `
@@ -132,13 +139,14 @@ func (r *BookRepo) ListGroupedBySeries(
 	// One row per entry: a series, or a book that is in none.
 	entriesCTE := `
 	entries AS (
-		SELECT 'series' AS kind, m.series_id AS id, s.name AS label, count(*)::int AS matched, min(m.rank) AS rank
+		SELECT 'series' AS kind, m.series_id AS id, s.name AS label, count(*)::int AS matched, min(m.rank) AS rank,
+			(array_agg(m.heading ORDER BY m.rank))[1] AS heading
 		FROM matched m
 		JOIN series s ON s.id = m.series_id
 		WHERE m.series_id IS NOT NULL
 		GROUP BY m.series_id, s.name
 		UNION ALL
-		SELECT 'book', m.book_id, b.title, 1, m.rank
+		SELECT 'book', m.book_id, b.title, 1, m.rank, m.heading
 		FROM matched m
 		JOIN books b ON b.id = m.book_id
 		WHERE m.series_id IS NULL
@@ -161,7 +169,7 @@ func (r *BookRepo) ListGroupedBySeries(
 
 	args = append(args, opts.PerPage, offset)
 	pageQ := "WITH " + matched + ", " + entriesCTE + fmt.Sprintf(`
-	SELECT kind, id, matched FROM entries
+	SELECT kind, id, matched, COALESCE(heading, `+fmt.Sprintf(titleLetterSQL, "label", "'en'")+`) FROM entries
 	ORDER BY %s
 	LIMIT $%d OFFSET $%d`, orderBy, argIdx, argIdx+1)
 
@@ -174,12 +182,13 @@ func (r *BookRepo) ListGroupedBySeries(
 		kind    string
 		id      uuid.UUID
 		matched int
+		heading string
 	}
 	var refs []ref
 	var seriesIDs, bookIDs []uuid.UUID
 	for rows.Next() {
 		var x ref
-		if err := rows.Scan(&x.kind, &x.id, &x.matched); err != nil {
+		if err := rows.Scan(&x.kind, &x.id, &x.matched, &x.heading); err != nil {
 			rows.Close()
 			return nil, 0, 0, err
 		}
@@ -213,10 +222,16 @@ func (r *BookRepo) ListGroupedBySeries(
 				continue
 			}
 			g.Matched = x.matched
+			if opts.Headings {
+				g.Heading = x.heading
+			}
 			entries = append(entries, GroupedEntry{Series: g})
 			continue
 		}
 		if b, ok := books[x.id]; ok {
+			if opts.Headings {
+				b.SortHeading = x.heading
+			}
 			entries = append(entries, GroupedEntry{Book: b})
 		}
 	}

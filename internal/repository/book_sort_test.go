@@ -116,8 +116,32 @@ func TestBuildSortPlanDatesGoLastWhenMissing(t *testing.T) {
 	if strings.Count(p.order, "NULLS LAST") != 2 {
 		t.Errorf("added and year should both put missing dates last: %q", p.order)
 	}
-	if !strings.Contains(p.order, "cp.library_id = ANY($1)") {
-		t.Errorf("added should only count copies in the caller's libraries: %q", p.order)
+	if !strings.Contains(p.join, "cp.library_id = ANY($1)") {
+		t.Errorf("added should only count copies in the caller's libraries:\n%s", p.join)
+	}
+}
+
+func TestHeadingFollowsTheFirstLevel(t *testing.T) {
+	cases := []struct {
+		key  SortKey
+		want string
+	}{
+		{SortKey{Field: SortAuthor}, "s_auth.display"},
+		{SortKey{Field: SortSeries}, "COALESCE(s_ser.name, '')"},
+		{SortKey{Field: SortSeries, Mixed: true}, "COALESCE(s_ser.name, b.title)"},
+		{SortKey{Field: SortYear}, "extract(year FROM s_year.at)"},
+		{SortKey{Field: SortAdded}, "s_add.at AT TIME ZONE 'UTC'"},
+		{SortKey{Field: SortTitle}, "sort_title(b.title, s_lang.language)"},
+	}
+	for _, c := range cases {
+		p := buildSortPlan([]SortKey{c.key, {Field: SortTitle}}, "", 2, nil)
+		if !strings.Contains(p.heading, c.want) {
+			t.Errorf("%+v heading = %q, want it to contain %q", c.key, p.heading, c.want)
+		}
+	}
+	// No sort is title, so the heading is a letter.
+	if p := buildSortPlan(nil, "", 2, nil); !strings.Contains(p.heading, "upper(f)") {
+		t.Errorf("default heading = %q, want the title letter", p.heading)
 	}
 }
 

@@ -14601,6 +14601,12 @@ const docTemplate = `{
                         "description": "The reader's language tag, e.g. fr-FR, which sets how text sorts",
                         "name": "lang",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 to add sort_heading to each item: the first sort level's author name, series name, title letter, year, or an ISO time for added and created_at. Empty text means none (no author, no series, no date)",
+                        "name": "headings",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -14759,6 +14765,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "The reader's language tag, which sets how text sorts",
                         "name": "lang",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 to add sort_heading to each entry, as on /me/books; a series takes its first book's",
+                        "name": "headings",
                         "in": "query"
                     }
                 ],

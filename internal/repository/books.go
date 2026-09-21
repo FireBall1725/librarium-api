@@ -524,6 +524,8 @@ type ListBooksOpts struct {
 	// Lang is the reader's language tag, which picks the collation text sorts
 	// under. Empty uses the database default.
 	Lang string
+	// Headings asks for each book's SortHeading.
+	Headings bool
 }
 
 // bookFilter is the WHERE clause for a book query, plus the args it binds.
@@ -1070,7 +1072,55 @@ func (r *BookRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, opts 
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
+	if opts.Headings && len(books) > 0 {
+		if err := r.fillSortHeadings(ctx, libraryIDs, opts, keys, books); err != nil {
+			return nil, 0, err
+		}
+	}
 	return books, total, nil
+}
+
+// fillSortHeadings sets SortHeading on a page of books.
+//
+// A second query over just this page's ids rather than a column on the list:
+// the list SELECT is scanned by hand in several places, and one more column
+// there means changing every one of them for a value only this page wants.
+func (r *BookRepo) fillSortHeadings(
+	ctx context.Context, libraryIDs []uuid.UUID, opts ListBooksOpts, keys []SortKey, books []*models.Book,
+) error {
+	plan := buildSortPlan(keys, "", 2, opts.SeriesIDs)
+	ids := make([]uuid.UUID, len(books))
+	for i, b := range books {
+		ids[i] = b.ID
+	}
+	args := append([]any{libraryIDs}, plan.args...)
+	args = append(args, ids)
+	// $1 is the library scope the series and added joins read. A title or year
+	// heading never touches it, and Postgres will not guess the type of a
+	// parameter nothing uses, so it is named here either way.
+	q := "SELECT b.id, " + plan.heading + " FROM books b JOIN media_types mt ON mt.id = b.media_type_id" +
+		plan.join + fmt.Sprintf("WHERE b.id = ANY($%d) AND $1::uuid[] IS NOT NULL", plan.next)
+	rows, err := r.db.Query(ctx, q, args...)
+	if err != nil {
+		return fmt.Errorf("loading sort headings: %w", err)
+	}
+	defer rows.Close()
+	byID := make(map[uuid.UUID]string, len(books))
+	for rows.Next() {
+		var id uuid.UUID
+		var h string
+		if err := rows.Scan(&id, &h); err != nil {
+			return err
+		}
+		byID[id] = h
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, b := range books {
+		b.SortHeading = byID[b.ID]
+	}
+	return nil
 }
 
 // SearchSuggestions returns up to 5 book titles in the library whose

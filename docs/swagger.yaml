@@ -11185,6 +11185,12 @@ paths:
         in: query
         name: lang
         type: string
+      - description: '1 to add sort_heading to each item: the first sort level''s
+          author name, series name, title letter, year, or an ISO time for added and
+          created_at. Empty text means none (no author, no series, no date)'
+        in: query
+        name: headings
+        type: string
       produces:
       - application/json
       responses:
@@ -11292,6 +11298,11 @@ paths:
       - description: The reader's language tag, which sets how text sorts
         in: query
         name: lang
+        type: string
+      - description: 1 to add sort_heading to each entry, as on /me/books; a series
+          takes its first book's
+        in: query
+        name: headings
         type: string
       produces:
       - application/json
