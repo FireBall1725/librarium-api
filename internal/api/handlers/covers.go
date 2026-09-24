@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/fireball1725/librarium-api/internal/api/middleware"
@@ -112,6 +111,7 @@ func (h *BookHandler) FetchBookCover(w http.ResponseWriter, r *http.Request) {
 // @Success     204
 // @Failure     400  {object}  object{error=string}
 // @Failure     401  {object}  object{error=string}
+// @Failure     413  {object}  object{error=string}
 // @Router      /libraries/{library_id}/books/{book_id}/cover [put]
 func (h *BookHandler) UploadBookCover(w http.ResponseWriter, r *http.Request) {
 	bookID, err := uuid.Parse(r.PathValue("book_id"))
@@ -147,12 +147,15 @@ func (h *BookHandler) UploadBookCover(w http.ResponseWriter, r *http.Request) {
 
 	// Stitch the bytes consumed during sniffing back onto the front of the
 	// stream so the persisted file is byte-identical to what was uploaded.
-	rest, err := io.ReadAll(io.LimitReader(file, (10<<20)-int64(len(head))))
+	data, err := uploads.ReadRest(file, head, uploads.MaxImageBytes)
+	if errors.Is(err, uploads.ErrTooLarge) {
+		respond.Error(w, http.StatusRequestEntityTooLarge, "image must be 10 MB or smaller")
+		return
+	}
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
 	}
-	data := append(head, rest...)
 
 	if err := h.svc.StoreCoverFromUpload(r.Context(), bookID, claims.UserID, data, mime); err != nil {
 		respond.ServerError(w, r, err)

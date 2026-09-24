@@ -149,3 +149,22 @@ func TestSniffEditionFile_RejectsImage(t *testing.T) {
 		t.Errorf("SniffEditionFile(PNG): err = %v, want ErrUnsupportedType", err)
 	}
 }
+
+func TestReadRest_RefusesInsteadOfTruncating(t *testing.T) {
+	const max = 1024
+	file := bytes.Repeat([]byte{0xAB}, max)
+	head := file[:512]
+
+	got, err := ReadRest(bytes.NewReader(file[512:]), head, max)
+	if err != nil {
+		t.Fatalf("a file at the limit: %v", err)
+	}
+	if !bytes.Equal(got, file) {
+		t.Fatalf("got %d bytes back, want the %d that were sent", len(got), len(file))
+	}
+
+	over := append(bytes.Clone(file), 0xAB)
+	if _, err := ReadRest(bytes.NewReader(over[512:]), over[:512], max); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("a file one byte over the limit: got %v, want ErrTooLarge", err)
+	}
+}

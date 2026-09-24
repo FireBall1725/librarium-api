@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -273,6 +272,7 @@ func (h *ContributorHandler) GetContributor(w http.ResponseWriter, r *http.Reque
 // @Param       contributor_id  path      string  true  "Contributor UUID"
 // @Param       photo           formData  file    true  "Photo file"
 // @Success     204
+// @Failure     413  {object}  object{error=string}
 // @Router      /contributors/{contributor_id}/photo [put]
 func (h *ContributorHandler) UploadContributorPhoto(w http.ResponseWriter, r *http.Request) {
 	contributorID, err := uuid.Parse(r.PathValue("contributor_id"))
@@ -303,12 +303,15 @@ func (h *ContributorHandler) UploadContributorPhoto(w http.ResponseWriter, r *ht
 		return
 	}
 
-	rest, err := io.ReadAll(io.LimitReader(file, (10<<20)-int64(len(head))))
+	data, err := uploads.ReadRest(file, head, uploads.MaxImageBytes)
+	if errors.Is(err, uploads.ErrTooLarge) {
+		respond.Error(w, http.StatusRequestEntityTooLarge, "image must be 10 MB or smaller")
+		return
+	}
 	if err != nil {
 		respond.ServerError(w, r, err)
 		return
 	}
-	data := append(head, rest...)
 
 	if err := h.svc.StorePhotoFromUpload(r.Context(), contributorID, claims.UserID, data, mime); err != nil {
 		respond.ServerError(w, r, err)
