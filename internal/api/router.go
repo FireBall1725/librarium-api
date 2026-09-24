@@ -186,8 +186,9 @@ func NewRouter(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, riverC
 	}
 	// requireLibraryPerm chains auth then library permission check
 	// These check token scopes, so a kiosk's scoped token is held to them.
+	// RequireInLibrary then checks every id in the path belongs to that library.
 	requireLibraryPerm := func(perm string, h http.Handler) http.Handler {
-		return authOnly(clientGate(middleware.RequireLibraryPermission(db, perm)(h)))
+		return authOnly(clientGate(middleware.RequireLibraryPermission(db, perm)(middleware.RequireInLibrary(db)(h))))
 	}
 
 	mux := http.NewServeMux()
