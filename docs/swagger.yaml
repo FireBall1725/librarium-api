@@ -4519,6 +4519,13 @@ paths:
       responses:
         "204":
           description: No Content
+        "413":
+          description: Request Entity Too Large
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
       security:
       - BearerAuth: []
       summary: Upload contributor photo
@@ -6438,6 +6445,13 @@ paths:
             type: object
         "401":
           description: Unauthorized
+          schema:
+            properties:
+              error:
+                type: string
+            type: object
+        "413":
+          description: Request Entity Too Large
           schema:
             properties:
               error:

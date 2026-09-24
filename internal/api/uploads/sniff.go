@@ -22,6 +22,26 @@ import (
 // match the allowlist for that endpoint.
 var ErrUnsupportedType = errors.New("unsupported file type")
 
+// ErrTooLarge is returned when an upload is over the endpoint's size limit.
+var ErrTooLarge = errors.New("file too large")
+
+// MaxImageBytes is the largest cover or contributor photo accepted.
+const MaxImageBytes = 10 << 20
+
+// ReadRest reads the remainder of an upload after sniffing and returns the
+// whole file, head included. A file over max is refused rather than cut short:
+// a truncated image was stored and served as a broken cover.
+func ReadRest(r io.Reader, head []byte, max int64) ([]byte, error) {
+	rest, err := io.ReadAll(io.LimitReader(r, max-int64(len(head))+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(head)+len(rest)) > max {
+		return nil, ErrTooLarge
+	}
+	return append(head, rest...), nil
+}
+
 // allowedImageTypes is the closed set of cover / contributor-photo MIME
 // types we accept. SVG is intentionally excluded — it can carry script.
 var allowedImageTypes = map[string]struct{}{
