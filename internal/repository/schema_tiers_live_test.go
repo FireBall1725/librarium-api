@@ -3077,9 +3077,15 @@ func TestSeriesIndexFiltersAndSortsOnTheServer(t *testing.T) {
 	}
 
 	// And the default is still by name, which is what every existing caller
-	// expects to get back when it asks for nothing.
+	// expects to get back when it asks for nothing. Compared in the database,
+	// so the leading article and the collation match the query's own.
 	for i := 1; i < len(all); i++ {
-		if strings.ToLower(all[i-1].Name) > strings.ToLower(all[i].Name) {
+		var outOfOrder bool
+		if err := pool.QueryRow(ctx, `SELECT natural_sort_key($1) > natural_sort_key($2)`,
+			all[i-1].Name, all[i].Name).Scan(&outOfOrder); err != nil {
+			t.Fatal(err)
+		}
+		if outOfOrder {
 			t.Fatalf("the default order is not by name: %q before %q", all[i-1].Name, all[i].Name)
 		}
 	}

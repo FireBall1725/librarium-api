@@ -209,6 +209,10 @@ func (r *SeriesRepo) ListAcrossFiltered(
 // without paying for the whole thing.
 const defaultPreviewBooks = 4
 
+// seriesNameKey files a series name like a book title, without a leading The,
+// A or An. English, since original_language is the source work's, not the name's.
+const seriesNameKey = "natural_sort_key(s.name)"
+
 func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, callerID uuid.UUID, search, tagFilter string, previewBooks int, f SeriesFilter) ([]*models.Series, error) {
 	if previewBooks <= 0 {
 		previewBooks = defaultPreviewBooks
@@ -313,25 +317,25 @@ func (r *SeriesRepo) listScoped(ctx context.Context, libraryIDs []uuid.UUID, cal
 	// progress falls to the end rather than heading a list it says nothing
 	// about. Name is the tiebreak everywhere, which keeps the order stable
 	// across reloads when the sort key ties.
-	order := " ORDER BY lower(s.name) " + dir
+	order := " ORDER BY " + seriesNameKey + " " + dir + ", s.id"
 	switch f.Sort {
 	case "volumes":
-		order = " ORDER BY " + seriesBookCountValue + " " + dir + " NULLS LAST, lower(s.name) ASC"
+		order = " ORDER BY " + seriesBookCountValue + " " + dir + " NULLS LAST, " + seriesNameKey + " ASC, s.id"
 	case "missing":
 		order = " ORDER BY GREATEST(COALESCE(s.total_count, 0) - " + seriesBookCountValue + ", 0) " +
-			dir + " NULLS LAST, lower(s.name) ASC"
+			dir + " NULLS LAST, " + seriesNameKey + " ASC, s.id"
 	case "read":
 		if callerArg > 0 {
-			order = " ORDER BY " + seriesReadCountExpr(callerArg) + " " + dir + " NULLS LAST, lower(s.name) ASC"
+			order = " ORDER BY " + seriesReadCountExpr(callerArg) + " " + dir + " NULLS LAST, " + seriesNameKey + " ASC, s.id"
 		}
 	case "rating":
 		// NULLS LAST both ways. A run nobody has rated is not the worst run;
 		// it is a run with nothing to say, and it belongs at the end whichever
 		// direction the reader asked for.
 		order = " ORDER BY " + seriesAvgRatingScalar("$1") + " " + dir +
-			" NULLS LAST, lower(s.name) ASC"
+			" NULLS LAST, " + seriesNameKey + " ASC, s.id"
 	case "recent":
-		order = " ORDER BY s.updated_at " + dir + ", lower(s.name) ASC"
+		order = " ORDER BY s.updated_at " + dir + ", " + seriesNameKey + " ASC, s.id"
 	}
 
 	q := `
